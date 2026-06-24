@@ -249,3 +249,78 @@ TEST_CASE("ProjectSaveLoad state_json describes timeline", "[t10]") {
     REQUIRE(json.find("\"length\"") != std::string::npos);
     REQUIRE(json.find(clip) != std::string::npos);
 }
+
+TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12]") {
+    std::string clip = make_test_clip("e2e");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    // ---- Build a 2-track timeline through AppController (same path
+    //      the RPC method handlers take). ----
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+
+    auto v1 = app.track_add(vedit::TrackKind::Video, "V1");
+    auto v2 = app.track_add(vedit::TrackKind::Video, "V2");
+    REQUIRE(v1.valid());
+    REQUIRE(v2.valid());
+    REQUIRE(app.track_count() == 2);
+
+    // Track 0: two clips.
+    auto id1 = app.clip_append(v1, mi);
+    auto id2 = app.clip_append(v1, mi);
+    REQUIRE(id1.valid());
+    REQUIRE(id2.valid());
+
+    // Track 1: one clip, then split.
+    auto id3 = app.clip_append(v2, mi);
+    REQUIRE(id3.valid());
+    const auto* c3 = app.project().timeline().clip(id3);
+    REQUIRE(c3 != nullptr);
+    auto id4 = app.clip_split(id3, c3->start + c3->length / 2);
+    REQUIRE(id4.valid());
+    REQUIRE(id4 != id3);
+
+    // ---- Save to XML and reload into a fresh AppController ----
+    std::string xml_path = "/tmp/vedit_m1_e2e.xml";
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), xml_path));
+
+    vedit::AppController app2;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(app2.project(), xml_path));
+    REQUIRE(app2.track_count() == 2);
+    // Clip count: v1 had 2, v2 had 2 (split) = 4 total.
+    REQUIRE(app2.project().timeline().clip_count() == 4);
+
+    // ---- Export both projects and verify they produce valid files ----
+    vedit::ExportService svc;
+    std::string out1 = "/tmp/vedit_m1_e2e_orig.mp4";
+    std::string out2 = "/tmp/vedit_m1_e2e_reload.mp4";
+    REQUIRE(svc.render(*app.project().producer(), app.profile(), out1));
+    REQUIRE(svc.render(*app2.project().producer(), app2.profile(), out2));
+
+    // Verify both outputs exist and have the same duration.
+    auto probe_dur = [](const std::string& path) -> double {
+        std::string cmd = "ffprobe -v error -show_entries format=duration "
+                          "-of csv=p=0 " + path + " 2>&1";
+        FILE* f = popen(cmd.c_str(), "r");
+        if (!f) return -1;
+        char buf[64] = {0};
+        double d = -1;
+        if (fgets(buf, sizeof(buf), f)) d = std::atof(buf);
+        pclose(f);
+        return d;
+    };
+    double d1 = probe_dur(out1);
+    double d2 = probe_dur(out2);
+    REQUIRE(d1 > 0);
+    // Reloaded project should produce same-duration output (within
+    // rounding tolerance of the probe).
+    REQUIRE(std::abs(d1 - d2) < 0.1);
+
+    // ---- state.json describes the timeline completely ----
+    std::string json = vedit::ProjectSaveLoad::state_json(app.project());
+    REQUIRE(json.find("\"tracks\"") != std::string::npos);
+    REQUIRE(json.find("\"clips\"") != std::string::npos);
+    REQUIRE(json.find("\"V1\"") != std::string::npos);
+    REQUIRE(json.find("\"V2\"") != std::string::npos);
+}
