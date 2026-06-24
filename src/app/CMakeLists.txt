@@ -8,5 +8,3 @@ target_link_libraries(vedit PRIVATE
     nfd::nfd
     PkgConfig::SDL2
 )
-# OpenGL for the GL3 backend
-target_link_libraries(vedit PRIVATE GL EGL)

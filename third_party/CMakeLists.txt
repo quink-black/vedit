@@ -11,7 +11,7 @@ set(IMGUI_INCLUDE_DIR  "/usr/include/imgui/backends")
 
 add_library(vedit_imgui_backends STATIC
     ${IMGUI_BACKEND_DIR}/imgui_impl_sdl2.cpp
-    ${IMGUI_BACKEND_DIR}/imgui_impl_opengl3.cpp
+    ${IMGUI_BACKEND_DIR}/imgui_impl_sdlrenderer2.cpp
 )
 target_link_libraries(vedit_imgui_backends PUBLIC
     PkgConfig::IMGUI

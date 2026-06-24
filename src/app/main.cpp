@@ -7,10 +7,9 @@
 #include <vector>
 
 #include <SDL.h>
-#include <SDL_opengl.h>
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
-#include <imgui_impl_opengl3.h>
+#include <imgui_impl_sdlrenderer2.h>
 #include <nfd.h>
 
 #include "core/mlt_runtime.h"
@@ -225,7 +224,7 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
 }
 
 static void draw_preview_panel(vedit::AppController& app, GuiState& gui,
-                               GLuint tex, int tex_w, int tex_h) {
+                               SDL_Texture* tex, int tex_w, int tex_h) {
     ImGui::TextUnformatted("Preview");
     ImGui::Separator();
     int64_t dur = app.project().timeline().duration();
@@ -244,7 +243,7 @@ static void draw_preview_panel(vedit::AppController& app, GuiState& gui,
         if (draw_h > avail.y) { draw_h = avail.y; draw_w = draw_h * aspect; }
         if (draw_w < 1) draw_w = 1;
         if (draw_h < 1) draw_h = 1;
-        ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<intptr_t>(tex)),
+        ImGui::Image(reinterpret_cast<ImTextureID>(tex),
                      ImVec2(draw_w, draw_h));
     } else {
         ImGui::TextDisabled("No preview yet.\nAdd a clip to the timeline.");
@@ -672,24 +671,89 @@ int main(int, char**) {
         return 1;
     }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     SDL_Window* window = SDL_CreateWindow(
         "vedit", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1400, 860, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+        1400, 860, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::fprintf(stderr, "SDL_CreateWindow failed\n"); SDL_Quit(); return 1; }
-    SDL_GLContext gl = SDL_GL_CreateContext(window);
-    if (!gl) { std::fprintf(stderr, "GL context failed\n"); SDL_DestroyWindow(window); SDL_Quit(); return 1; }
-    SDL_GL_SetSwapInterval(1);
+    SDL_Renderer* renderer = SDL_CreateRenderer(
+        window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer) {
+        std::fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window); SDL_Quit(); return 1;
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
-    ImGui_ImplSDL2_InitForOpenGL(window, gl);
-    ImGui_ImplOpenGL3_Init("#version 130");
+
+    // DPI handling for HiDPI displays (e.g. a 4K panel run at 150%).
+    //
+    // ui_scale is how much larger the whole UI should be drawn.
+    //   * X11 has no per-window backing scale: the renderer output
+    //     equals the logical window size even on a 4K panel, so the
+    //     output/window ratio is always 1. The real density comes from
+    //     SDL_GetDisplayDPI (96 dpi == 1.0 baseline; 144 dpi == 1.5).
+    //   * macOS / Wayland report a backing scale via output/window;
+    //     there the renderer already magnifies, so only the font atlas
+    //     needs to be rasterized denser (handled by atlas_scale below).
+    // Use the display DPI as the UI scale, but never less than the
+    // backing scale, so neither display model is left at 1.0.
+    ImGuiIO& io = ImGui::GetIO();
+    int out_w = 0, out_h = 0;
+    SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
+    int win_w = 0, win_h = 0;
+    SDL_GetWindowSize(window, &win_w, &win_h);
+    float backing_scale = (win_w > 0) ? static_cast<float>(out_w) / win_w : 1.0f;
+
+    float ui_scale = 1.0f;
+    float ddpi = 0.0f;
+    int display_index = SDL_GetWindowDisplayIndex(window);
+    if (display_index >= 0 &&
+            SDL_GetDisplayDPI(display_index, &ddpi, nullptr, nullptr) == 0 &&
+            ddpi > 0.0f) {
+        ui_scale = ddpi / 96.0f;
+    }
+    if (ui_scale < backing_scale) ui_scale = backing_scale;
+    if (ui_scale < 1.0f) ui_scale = 1.0f;
+
+    // Rasterize the font atlas at physical pixel density so glyphs stay
+    // crisp: that is ui_scale logical magnification times whatever the
+    // renderer already upscales (backing_scale). FontGlobalScale then
+    // brings the atlas back to the ui_scale-magnified logical size.
+    const float base_font_size = 16.0f;
+    const float atlas_density = ui_scale * backing_scale;
+    const float pixel_font_size = base_font_size * atlas_density;
+    static const char* kFontCandidates[] = {
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    };
+    ImFont* ui_font = nullptr;
+    for (const char* path : kFontCandidates) {
+        if (FILE* probe = std::fopen(path, "rb")) {
+            std::fclose(probe);
+            ImFontConfig cfg;
+            cfg.OversampleH = 2;
+            cfg.OversampleV = 2;
+            ui_font = io.Fonts->AddFontFromFileTTF(path, pixel_font_size, &cfg);
+            if (ui_font) break;
+        }
+    }
+    if (!ui_font) {
+        ImFontConfig cfg;
+        cfg.SizePixels = pixel_font_size;
+        io.Fonts->AddFontDefault(&cfg);
+    }
+    // The atlas is rasterized at base * ui_scale * backing_scale.
+    // Dividing by backing_scale leaves the font at ui_scale-magnified
+    // logical size: on X11 (backing 1.0) the font ends up ui_scale
+    // bigger on screen; on macOS the renderer's own backing upscale
+    // supplies the rest. ScaleAllSizes grows widget metrics to match.
+    io.FontGlobalScale = 1.0f / backing_scale;
+    ImGui::GetStyle().ScaleAllSizes(ui_scale);
+
+    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer2_Init(renderer);
 
     vedit::MltRuntime mlt;
     mlt.init();
@@ -711,12 +775,9 @@ int main(int, char**) {
 
     GuiState gui;
 
-    GLuint preview_tex = 0;
-    glGenTextures(1, &preview_tex);
-    glBindTexture(GL_TEXTURE_2D, preview_tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    // Preview frame texture. Created lazily / recreated when the frame
+    // size changes; streaming so per-frame pixel updates are cheap.
+    SDL_Texture* preview_tex = nullptr;
     int tex_w = 0, tex_h = 0;
 
     bool running = true;
@@ -750,19 +811,20 @@ int main(int, char**) {
         int fw = 0, fh = 0;
         const uint8_t* fimg = nullptr;
         if (app.player().current_frame(fw, fh, fimg) && fimg && fw > 0 && fh > 0) {
-            glBindTexture(GL_TEXTURE_2D, preview_tex);
-            if (fw != tex_w || fh != tex_h) {
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, fimg);
+            if (!preview_tex || fw != tex_w || fh != tex_h) {
+                if (preview_tex) SDL_DestroyTexture(preview_tex);
+                preview_tex = SDL_CreateTexture(
+                    renderer, SDL_PIXELFORMAT_ABGR8888,
+                    SDL_TEXTUREACCESS_STREAMING, fw, fh);
                 tex_w = fw; tex_h = fh;
-            } else {
-                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fw, fh,
-                                GL_RGBA, GL_UNSIGNED_BYTE, fimg);
             }
-            glBindTexture(GL_TEXTURE_2D, 0);
+            if (preview_tex) {
+                // MLT delivers tightly packed RGBA; pitch is width * 4.
+                SDL_UpdateTexture(preview_tex, nullptr, fimg, fw * 4);
+            }
         }
 
-        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
@@ -841,7 +903,14 @@ int main(int, char**) {
         draw_preview_panel(app, gui, preview_tex, tex_w, tex_h);
         ImGui::EndChild();
 
-        ImGui::BeginChild("transport", ImVec2(0, 36), ImGuiChildFlags_Border);
+        // Transport bar height must follow the (DPI-scaled) widget
+        // metrics, not a fixed pixel count: one button row plus the
+        // child's top and bottom window padding. A hardcoded height
+        // clipped the controls once ScaleAllSizes enlarged them.
+        float transport_h = ImGui::GetFrameHeightWithSpacing()
+                          + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        ImGui::BeginChild("transport", ImVec2(0, transport_h),
+                          ImGuiChildFlags_Border);
         draw_transport_panel(app, gui);
         ImGui::EndChild();
 
@@ -851,10 +920,13 @@ int main(int, char**) {
 
         ImGui::End();
 
-        // Status line.
+        // Status line. Offsets derive from the scaled frame height so
+        // the chip is not clipped at the window edge on HiDPI.
+        float margin = ImGui::GetStyle().FramePadding.x + 4.0f;
         ImGui::SetNextWindowBgAlpha(0.85f);
-        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 8,
-                                       vp->WorkPos.y + vp->WorkSize.y - 28));
+        ImGui::SetNextWindowPos(ImVec2(
+            vp->WorkPos.x + margin,
+            vp->WorkPos.y + vp->WorkSize.y - ImGui::GetFrameHeight() - margin));
         ImGui::Begin("##status", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
@@ -863,23 +935,20 @@ int main(int, char**) {
         ImGui::End();
 
         ImGui::Render();
-        int ww = 0, wh = 0;
-        SDL_GL_GetDrawableSize(window, &ww, &wh);
-        glViewport(0, 0, ww, wh);
-        glClearColor(0.07f, 0.07f, 0.09f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        SDL_GL_SwapWindow(window);
+        SDL_SetRenderDrawColor(renderer, 18, 18, 23, 255);
+        SDL_RenderClear(renderer);
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData());
+        SDL_RenderPresent(renderer);
     }
 
     app.pause();
     rpc_server.stop();
-    if (preview_tex) glDeleteTextures(1, &preview_tex);
-    ImGui_ImplOpenGL3_Shutdown();
+    if (preview_tex) SDL_DestroyTexture(preview_tex);
+    ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     NFD_Quit();
-    SDL_GL_DeleteContext(gl);
+    SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
