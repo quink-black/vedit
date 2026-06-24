@@ -1,0 +1,18 @@
+# build artifacts
+build/
+/out/
+compile_commands.json
+
+# IDE / tooling
+.cache/
+.vscode/
+.idea/
+*.swp
+
+# test media (regenerated, not source)
+test_sample.mp4
+
+# OS
+.DS_Store
+Thumbs.db
+imgui.ini
