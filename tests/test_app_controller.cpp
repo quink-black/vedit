@@ -7,20 +7,10 @@
 #include "domain/export_service.h"
 #include "domain/ids.h"
 #include "domain/project_save_load.h"
+#include "test_support.h"
 
-namespace {
-
-std::string make_test_clip(const std::string& tag) {
-    std::string path = "/tmp/vedit_t8_" + tag + ".mp4";
-    std::string cmd =
-        "ffmpeg -y -loglevel error -f lavfi -i testsrc=duration=2:size=160x120:rate=25 "
-        "-f lavfi -i sine=frequency=440:duration=2 -c:v libx264 -pix_fmt yuv420p "
-        "-c:a aac -shortest " + path;
-    if (std::system(cmd.c_str()) != 0) return "";
-    return path;
-}
-
-} // namespace
+using vedit::test::make_test_clip;
+using vedit::test::unique_temp_path;
 
 TEST_CASE("AppController imports and builds a timeline", "[t8]") {
     std::string clip = make_test_clip("import");
@@ -153,7 +143,7 @@ TEST_CASE("AppController track remove cleans up clips", "[t8]") {
     REQUIRE(app.project().timeline().clip(id) == nullptr);
 }
 
-TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9]") {
+TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9][export]") {
     std::string clip = make_test_clip("export");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
@@ -168,7 +158,7 @@ TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9]") {
     // progressive.
     REQUIRE(app.profile().progressive() == 1);
 
-    std::string out = "/tmp/vedit_t9_export.mp4";
+    std::string out = unique_temp_path("vedit-test", "t9_export", ".mp4");
     vedit::ExportService svc;
     double progress = -1;
     REQUIRE(svc.render(*app.project().producer(), app.profile(), out,
@@ -187,7 +177,7 @@ TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9]") {
     REQUIRE(progress >= 0.0);  // progress callback fired
 }
 
-TEST_CASE("ExportService get_frame saves a single PNG", "[t9]") {
+TEST_CASE("ExportService get_frame saves a single PNG", "[t9][export]") {
     std::string clip = make_test_clip("frame");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
@@ -196,7 +186,7 @@ TEST_CASE("ExportService get_frame saves a single PNG", "[t9]") {
     auto v1 = app.track_add(vedit::TrackKind::Video);
     app.clip_append(v1, mi);
 
-    std::string out = "/tmp/vedit_t9_frame.png";
+    std::string out = unique_temp_path("vedit-test", "t9_frame", ".png");
     vedit::ExportService svc;
     REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 0, out));
 
@@ -225,7 +215,7 @@ TEST_CASE("ProjectSaveLoad save and load XML round-trip", "[t10]") {
     REQUIRE(app.track_count() == 2);
 
     // Save.
-    std::string xml_path = "/tmp/vedit_t10_roundtrip.xml";
+    std::string xml_path = unique_temp_path("vedit-test", "t10_roundtrip", ".xml");
     REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), xml_path));
 
     // Load into a fresh AppController.
@@ -253,7 +243,7 @@ TEST_CASE("ProjectSaveLoad state_json describes timeline", "[t10]") {
     REQUIRE(json.find(clip) != std::string::npos);
 }
 
-TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12]") {
+TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12][export]") {
     std::string clip = make_test_clip("e2e");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
@@ -285,7 +275,7 @@ TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12]") {
     REQUIRE(id4 != id3);
 
     // ---- Save to XML and reload into a fresh AppController ----
-    std::string xml_path = "/tmp/vedit_m1_e2e.xml";
+    std::string xml_path = unique_temp_path("vedit-test", "m1_e2e", ".xml");
     REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), xml_path));
 
     vedit::AppController app2;
@@ -296,8 +286,8 @@ TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12]") {
 
     // ---- Export both projects and verify they produce valid files ----
     vedit::ExportService svc;
-    std::string out1 = "/tmp/vedit_m1_e2e_orig.mp4";
-    std::string out2 = "/tmp/vedit_m1_e2e_reload.mp4";
+    std::string out1 = unique_temp_path("vedit-test", "m1_e2e_orig", ".mp4");
+    std::string out2 = unique_temp_path("vedit-test", "m1_e2e_reload", ".mp4");
     REQUIRE(svc.render(*app.project().producer(), app.profile(), out1));
     REQUIRE(svc.render(*app2.project().producer(), app2.profile(), out2));
 

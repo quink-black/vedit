@@ -7,21 +7,9 @@
 #include "domain/player_controller.h"
 #include "domain/project_model.h"
 #include "domain/timeline_model.h"
+#include "test_support.h"
 
-namespace {
-
-// Generates a short test clip on disk. Returns its path.
-std::string make_test_clip(const std::string& tag) {
-    std::string path = "/tmp/vedit_t4_" + tag + ".mp4";
-    std::string cmd =
-        "ffmpeg -y -loglevel error -f lavfi -i testsrc=duration=2:size=160x120:rate=25 "
-        "-f lavfi -i sine=frequency=440:duration=2 -c:v libx264 -pix_fmt yuv420p "
-        "-c:a aac -shortest " + path;
-    if (std::system(cmd.c_str()) != 0) return "";
-    return path;
-}
-
-} // namespace
+using vedit::test::make_test_clip;
 
 TEST_CASE("ProjectModel wires profile+library+timeline", "[domain]") {
     vedit::ProjectModel pm;
