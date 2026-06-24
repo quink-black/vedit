@@ -6,6 +6,7 @@
 #include "domain/app_controller.h"
 #include "domain/export_service.h"
 #include "domain/ids.h"
+#include "domain/project_save_load.h"
 
 namespace {
 
@@ -203,4 +204,48 @@ TEST_CASE("ExportService get_frame saves a single PNG", "[t9]") {
     long sz = ftell(f);
     fclose(f);
     REQUIRE(sz > 100);  // any valid PNG is > 100 bytes
+}
+
+TEST_CASE("ProjectSaveLoad save and load XML round-trip", "[t10]") {
+    std::string clip = make_test_clip("save");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    // Build a 2-track timeline.
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    auto id1 = app.clip_append(v1, mi);
+    auto id2 = app.clip_append(v2, mi);
+    REQUIRE(id1.valid());
+    REQUIRE(id2.valid());
+    REQUIRE(app.track_count() == 2);
+
+    // Save.
+    std::string xml_path = "/tmp/vedit_t10_roundtrip.xml";
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), xml_path));
+
+    // Load into a fresh AppController.
+    vedit::AppController app2;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(app2.project(), xml_path));
+    REQUIRE(app2.track_count() == 2);
+    REQUIRE(app2.project().timeline().clip_count() == 2);
+    REQUIRE(app2.project().timeline().duration() > 0);
+}
+
+TEST_CASE("ProjectSaveLoad state_json describes timeline", "[t10]") {
+    std::string clip = make_test_clip("json");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    std::string json = vedit::ProjectSaveLoad::state_json(app.project());
+    REQUIRE(json.find("\"tracks\"") != std::string::npos);
+    REQUIRE(json.find("\"clips\"") != std::string::npos);
+    REQUIRE(json.find("\"start\"") != std::string::npos);
+    REQUIRE(json.find("\"length\"") != std::string::npos);
+    REQUIRE(json.find(clip) != std::string::npos);
 }
