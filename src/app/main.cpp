@@ -116,6 +116,7 @@ struct GuiState {
     double project_fps = 25.0;
     float zoom = 8.0f;  // pixels per frame on the timeline
     bool zoom_auto = true;  // re-fit zoom to the panel until the user touches it
+    int64_t last_fit_duration = -1;  // duration when we last auto-fit
 
     DragMode drag = DragMode::None;
     vedit::ClipId drag_clip{0};
@@ -288,18 +289,19 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(140);
 
-    // Auto-fit zoom so the whole timeline is visible until the user
-    // touches the Zoom slider. This prevents clip right-edges from
-    // being scrolled out of view (which made the right trim handle
-    // invisible/ungrabbable).
-    int64_t dur_for_fit = std::max<int64_t>(1, app.project().timeline().duration());
-    if (gui.zoom_auto) {
-        // Reserve label width + padding; fit the rest to the panel.
+    // Auto-fit: only re-fit when the user presses "Fit" or when content
+    // first appears. We do NOT re-fit every frame, and we freeze auto-fit
+    // entirely while a drag is in progress — otherwise duration changes
+    // (move/trim) made zoom jump under the cursor, which felt like a
+    // spring. The user gets linear, stable behavior during edits.
+    int64_t dur_now = std::max<int64_t>(1, app.project().timeline().duration());
+    bool editing = (gui.drag != DragMode::None);
+    if (gui.zoom_auto && !editing && dur_now != gui.last_fit_duration) {
         float avail_w = ImGui::GetContentRegionAvail().x;
         float usable = std::max(120.0f, avail_w - 64.0f - 40.0f);
-        float fit = usable / static_cast<float>(dur_for_fit);
-        // Clamp into the slider range so the slider stays consistent.
+        float fit = usable / static_cast<float>(dur_now);
         gui.zoom = std::clamp(fit, 1.0f, 30.0f);
+        gui.last_fit_duration = dur_now;
     }
 
     // Plain language: "Zoom", not "px/f".
@@ -310,7 +312,8 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Fit")) {
-        gui.zoom_auto = true;  // re-fit to show the whole timeline
+        gui.zoom_auto = true;
+        gui.last_fit_duration = -1;  // force re-fit on next frame
     }
 
     ImGui::SameLine();
