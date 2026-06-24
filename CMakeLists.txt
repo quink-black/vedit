@@ -13,7 +13,7 @@ endif()
 option(VEDIT_BUILD_TESTS "Build unit tests" ON)
 option(VEDIT_ENABLE_SANITIZERS "Enable ASan+UBSan (Debug only)" ON)
 
-if(ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(VEDIT_ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-fsanitize=address -fsanitize=undefined -g)
     add_link_options(-fsanitize=address -fsanitize=undefined)
 endif()
@@ -24,6 +24,23 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 find_package(Threads REQUIRED)
+
+# Asio (standalone, header-only) -- transport for the in-process JSON-RPC
+# server (vedit_rpc). Resolved at top level so the `asio::asio` target is
+# visible from every subdirectory. Detection mirrors idiff: find_path first,
+# fall back to FetchContent if absent.
+find_path(ASIO_INCLUDE_DIR asio.hpp
+    HINTS /usr/local/include /usr/include
+    DOC "Path to standalone Asio headers (asio.hpp)")
+if(ASIO_INCLUDE_DIR)
+    message(STATUS "Found system Asio: ${ASIO_INCLUDE_DIR}")
+    add_library(asio_asio INTERFACE)
+    target_include_directories(asio_asio INTERFACE "${ASIO_INCLUDE_DIR}")
+    target_compile_definitions(asio_asio INTERFACE ASIO_STANDALONE)
+    add_library(asio::asio ALIAS asio_asio)
+else()
+    message(FATAL_ERROR "Asio not found. Install libasio-dev (apt) or equivalent.")
+endif()
 
 if(VEDIT_BUILD_TESTS)
     pkg_check_modules(CATCH2 REQUIRED IMPORTED_TARGET catch2-with-main)

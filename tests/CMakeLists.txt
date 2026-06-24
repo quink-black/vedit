@@ -3,6 +3,7 @@ add_executable(vedit_tests
     test_domain.cpp
     test_app_controller.cpp
     test_rpc.cpp
+    test_rpc_server.cpp
 )
 target_link_libraries(vedit_tests PRIVATE
     vedit_rpc
@@ -16,4 +17,4 @@ target_compile_definitions(vedit_tests PRIVATE
 )
 include(CTest)
 add_test(NAME vedit_tests COMMAND vedit_tests)
-set_tests_properties(vedit_tests PROPERTIES TIMEOUT 30)
+set_tests_properties(vedit_tests PROPERTIES TIMEOUT 60)

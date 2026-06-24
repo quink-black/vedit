@@ -85,6 +85,10 @@ TEST_CASE("Split clip produces two clips with distinct stable ids",
     auto id = tl.append_clip(v1, mi);
     const auto* info = tl.clip(id);
     REQUIRE(info != nullptr);
+    // Capture the values we need before split_clip() mutates the view;
+    // rebuild_clip_view() inside split invalidates `info`.
+    const auto orig_length = info->length;
+    const auto orig_start = info->start;
 
     // Split in the middle.
     auto right_id = tl.split_clip(id, info->start + info->length / 2);
@@ -96,7 +100,7 @@ TEST_CASE("Split clip produces two clips with distinct stable ids",
     const auto* right = tl.clip(right_id);
     REQUIRE(left != nullptr);
     REQUIRE(right != nullptr);
-    REQUIRE(left->length + right->length == info->length);
+    REQUIRE(left->length + right->length == orig_length);
     REQUIRE(right->start == left->start + left->length);
     // Both clips resolve to the same source media.
     REQUIRE(left->media_index == mi);
@@ -176,12 +180,13 @@ TEST_CASE("Insert at position pads with blank when past end", "[domain][t5]") {
     int64_t orig_len = c1->length;
 
     // Insert at position well past the end -> blank-padded, clip lands
-    // exactly at the requested position.
-    auto id2 = tl.insert_clip(v1, mi, c1->length + 20);
+    // exactly at the requested position. Capture orig_len first:
+    // insert_clip -> rebuild_clip_view invalidates c1.
+    auto id2 = tl.insert_clip(v1, mi, orig_len + 20);
     REQUIRE(id2.valid());
     const auto* c2 = tl.clip(id2);
     REQUIRE(c2 != nullptr);
-    REQUIRE(c2->start == c1->length + 20);
+    REQUIRE(c2->start == orig_len + 20);
     REQUIRE(c2->length == orig_len);
 }
 

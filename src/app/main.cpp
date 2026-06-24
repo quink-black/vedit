@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -703,10 +704,10 @@ int main(int, char**) {
 
     vedit::rpc::Dispatcher dispatcher;
     vedit::rpc::register_methods(dispatcher, app);
-    vedit::rpc::RpcServer rpc_server;
-    rpc_server.start([&](const std::string& req) {
-        return dispatcher.handle_request(req);
-    });
+    std::string socket_path =
+        "/tmp/vedit-" + std::to_string(getpid()) + ".sock";
+    vedit::rpc::RpcServer rpc_server(socket_path, dispatcher);
+    rpc_server.start();
 
     GuiState gui;
 
