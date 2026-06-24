@@ -10,6 +10,7 @@
 #include "test_support.h"
 
 using vedit::test::make_test_clip;
+using vedit::test::make_test_clip_sized;
 using vedit::test::unique_temp_path;
 
 TEST_CASE("AppController imports and builds a timeline", "[t8]") {
@@ -197,6 +198,44 @@ TEST_CASE("ExportService get_frame saves a single PNG", "[t9][export]") {
     long sz = ftell(f);
     fclose(f);
     REQUIRE(sz > 100);  // any valid PNG is > 100 bytes
+}
+
+// Regression: the project profile used to stay at the MLT default
+// (DV/DVD PAL 720x576) regardless of source dimensions. Importing a
+// 864x486 clip exported as 720x576. The profile must sync to the
+// source so export preserves resolution.
+TEST_CASE("ExportService preserves source resolution, not PAL default", "[t9][export]") {
+    // 640x360 is not the MLT default (720x576), so a pass here proves
+    // the profile was synced from the source rather than left default.
+    std::string clip = make_test_clip_sized("resolution", 640, 360);
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    REQUIRE(app.profile().width() == 640);
+    REQUIRE(app.profile().height() == 360);
+    REQUIRE(app.profile().progressive() == 1);
+
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    std::string out = unique_temp_path("vedit-test", "t9_resolution", ".mp4");
+    vedit::ExportService svc;
+    REQUIRE(svc.render(*app.project().producer(), app.profile(), out));
+
+    // The exported file must carry the source dimensions, not 720x576.
+    std::string cmd = "ffprobe -v error -show_entries stream=codec_name,width,height "
+                      "-of csv " + out + " 2>&1";
+    FILE* f = popen(cmd.c_str(), "r");
+    REQUIRE(f != nullptr);
+    std::string probe;
+    char buf[256] = {0};
+    while (fgets(buf, sizeof(buf), f)) probe += buf;
+    pclose(f);
+    REQUIRE(probe.find("h264") != std::string::npos);
+    REQUIRE(probe.find("640") != std::string::npos);
+    REQUIRE(probe.find("360") != std::string::npos);
 }
 
 TEST_CASE("ProjectSaveLoad save and load XML round-trip", "[t10]") {

@@ -16,6 +16,7 @@
 //      process and corrupts under parallelism. unique_temp_path()
 //      stamps the pid so each process gets its own file.
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
@@ -42,6 +43,25 @@ inline std::string make_test_clip(const std::string& tag) {
         "-i testsrc=duration=2:size=160x120:rate=25 "
         "-f lavfi -i sine=frequency=440:duration=2 -c:v libx264 "
         "-pix_fmt yuv420p -c:a aac -shortest " + path;
+    if (std::system(cmd.c_str()) != 0) return "";
+    return path;
+}
+
+// Like make_test_clip, but with an explicit size. Used by tests that
+// must verify the export preserves source dimensions (regression for
+// the profile-not-synced-to-source bug, where a 864x486 source
+// exported as 720x576 PAL).
+inline std::string make_test_clip_sized(const std::string& tag,
+                                        int width, int height) {
+    std::string path = unique_temp_path("vedit-testclip", tag, ".mp4");
+    char size[32];
+    std::snprintf(size, sizeof(size), "%dx%d", width, height);
+    std::string cmd =
+        "ffmpeg -y -loglevel error -f lavfi "
+        "-i testsrc=duration=2:size=";
+    cmd += size;
+    cmd += ":rate=25 -f lavfi -i sine=frequency=440:duration=2 "
+           "-c:v libx264 -pix_fmt yuv420p -c:a aac -shortest " + path;
     if (std::system(cmd.c_str()) != 0) return "";
     return path;
 }
