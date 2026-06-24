@@ -6,9 +6,30 @@
 #include "domain/ids.h"
 #include "domain/project_save_load.h"
 
+#include <unistd.h>
+
 namespace vedit::rpc {
 
 void register_methods(Dispatcher& d, AppController& app) {
+    // ---- app.identity ----
+    //
+    // Single round-trip the MCP server uses to confirm a socket at
+    // /tmp/vedit-*.sock actually belongs to a vedit instance (vs. a
+    // stray file), and to tell a multi-instance UI which window the
+    // agent is talking to. The socket path mirrors main.cpp; if the
+    // path construction ever diverges, factor it into AppController.
+    d.register_method("app.identity", [&](const nlohmann::json&) {
+        int pid = ::getpid();
+        std::string socket = std::string("/tmp/vedit-")
+                           + std::to_string(pid) + ".sock";
+        return nlohmann::json{
+            {"name",   "vedit"},
+            {"pid",    pid},
+            {"socket", socket},
+            {"label",  std::string("vedit:") + std::to_string(pid)}
+        };
+    });
+
     // ---- state.get ----
     d.register_method("state.get", [&](const nlohmann::json&) {
         return nlohmann::json::parse(ProjectSaveLoad::state_json(app.project()));
