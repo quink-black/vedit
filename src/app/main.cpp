@@ -450,14 +450,23 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                         IM_COL32(220, 220, 230, 200), rng);
             dl->PopClipRect();
 
-            // Hover hit-test.
+            // Hover hit-test. Only count the clip body (x >= tl_x0); the
+            // track-label cell to the left is reserved for track selection.
+            // Edge zones must not overlap: if the clip is too narrow for two
+            // distinct edge zones, the whole clip is a Move (no trim) so the
+            // user is never stuck "trimming when they meant to move".
+            float clip_w = cx1 - cx0;
+            bool has_room_for_edges = clip_w > edge_grab * 2 + 4;
             if (gui.drag == DragMode::None && canvas_hovered &&
                 mouse.y >= y0 && mouse.y <= y1 &&
-                mouse.x >= cx0 - edge_grab && mouse.x <= cx1 + edge_grab) {
+                mouse.x >= std::max(cx0, tl_x0) && mouse.x <= cx1) {
                 hover_clip = c.id;
-                if (mouse.x <= cx0 + edge_grab) hover_mode = DragMode::TrimLeft;
-                else if (mouse.x >= cx1 - edge_grab) hover_mode = DragMode::TrimRight;
-                else hover_mode = DragMode::Move;
+                if (has_room_for_edges && mouse.x <= cx0 + edge_grab)
+                    hover_mode = DragMode::TrimLeft;
+                else if (has_room_for_edges && mouse.x >= cx1 - edge_grab)
+                    hover_mode = DragMode::TrimRight;
+                else
+                    hover_mode = DragMode::Move;
             }
         }
     }
