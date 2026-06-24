@@ -115,6 +115,7 @@ struct GuiState {
     std::string status = "Open a video to begin (File > Open).";
     double project_fps = 25.0;
     float zoom = 8.0f;  // pixels per frame on the timeline
+    bool zoom_auto = true;  // re-fit zoom to the panel until the user touches it
 
     DragMode drag = DragMode::None;
     vedit::ClipId drag_clip{0};
@@ -284,8 +285,31 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     ImGui::TextUnformatted("Timeline");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(140);
+
+    // Auto-fit zoom so the whole timeline is visible until the user
+    // touches the Zoom slider. This prevents clip right-edges from
+    // being scrolled out of view (which made the right trim handle
+    // invisible/ungrabbable).
+    int64_t dur_for_fit = std::max<int64_t>(1, app.project().timeline().duration());
+    if (gui.zoom_auto) {
+        // Reserve label width + padding; fit the rest to the panel.
+        float avail_w = ImGui::GetContentRegionAvail().x;
+        float usable = std::max(120.0f, avail_w - 64.0f - 40.0f);
+        float fit = usable / static_cast<float>(dur_for_fit);
+        // Clamp into the slider range so the slider stays consistent.
+        gui.zoom = std::clamp(fit, 1.0f, 30.0f);
+    }
+
     // Plain language: "Zoom", not "px/f".
+    float prev_zoom = gui.zoom;
     ImGui::SliderFloat("Zoom", &gui.zoom, 1.0f, 30.0f, "%.0f");
+    if (gui.zoom != prev_zoom) {
+        gui.zoom_auto = false;  // user took manual control
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Fit")) {
+        gui.zoom_auto = true;  // re-fit to show the whole timeline
+    }
 
     ImGui::SameLine();
     bool has_sel = gui.selected_clip.valid() &&
@@ -354,6 +378,17 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     bool mouse_down = ImGui::IsMouseDown(0);
     bool mouse_released = ImGui::IsMouseReleased(0);
     ImVec2 mouse = ImGui::GetIO().MousePos;
+
+    // Mouse-wheel zoom while hovering the timeline (Ctrl+wheel). Without
+    // this the user can only zoom via the slider, and "zoom in to trim a
+    // short clip" is painful.
+    if (canvas_hovered) {
+        float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f) {
+            gui.zoom_auto = false;
+            gui.zoom = std::clamp(gui.zoom * (1.0f + 0.1f * wheel), 1.0f, 30.0f);
+        }
+    }
 
     float tl_x0 = origin.x + label_w;
     float lanes_y0 = origin.y + ruler_h;
