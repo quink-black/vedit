@@ -2,8 +2,10 @@
 
 namespace vedit {
 
-struct ProjectModel::Impl {};
-ProjectModel::ProjectModel() : impl_(std::make_unique<Impl>()) {}
+ProjectModel::ProjectModel()
+    : library_(std::make_unique<MediaLibrary>(profile_)),
+      timeline_(std::make_unique<TimelineModel>(profile_, *library_)) {}
+
 ProjectModel::~ProjectModel() = default;
 
 } // namespace vedit
