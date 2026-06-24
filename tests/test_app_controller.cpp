@@ -162,25 +162,28 @@ TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9]") {
     auto v1 = app.track_add(vedit::TrackKind::Video);
     app.clip_append(v1, mi);
 
+    // Regression: the default MLT profile is interlaced (progressive=0),
+    // which made libx264 refuse to encode ("interlace + weightp is not
+    // implemented") and produced an empty file. ProjectModel must force
+    // progressive.
+    REQUIRE(app.profile().progressive() == 1);
+
     std::string out = "/tmp/vedit_t9_export.mp4";
     vedit::ExportService svc;
     double progress = -1;
     REQUIRE(svc.render(*app.project().producer(), app.profile(), out,
                        [&](double p) { progress = p; }));
 
-    // Verify the output exists and has expected properties via ffprobe.
-    std::string cmd = "ffprobe -v error -show_entries format=duration:stream=width,height "
-                      "-of csv=p=0 " + out + " 2>&1";
+    // The exported file must contain a video stream (not empty).
+    std::string cmd = "ffprobe -v error -show_entries format=duration:stream=codec_name,width,height "
+                      "-of csv " + out + " 2>&1";
     FILE* f = popen(cmd.c_str(), "r");
     REQUIRE(f != nullptr);
+    std::string probe;
     char buf[256] = {0};
-    if (fgets(buf, sizeof(buf), f)) {
-        // CSV: width,height,duration (two lines for streams + format)
-        std::string s(buf);
-        REQUIRE_FALSE(s.empty());
-        REQUIRE(s.find(",") != std::string::npos);
-    }
+    while (fgets(buf, sizeof(buf), f)) probe += buf;
     pclose(f);
+    REQUIRE(probe.find("h264") != std::string::npos);  // has a video stream
     REQUIRE(progress >= 0.0);  // progress callback fired
 }
 

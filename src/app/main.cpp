@@ -227,7 +227,9 @@ static void draw_preview_panel(vedit::AppController& app, GuiState& gui,
     ImGui::TextUnformatted("Preview");
     ImGui::Separator();
     int64_t dur = app.project().timeline().duration();
-    ImGui::Text("%s  /  %s",
+    // Position / Duration — the total length is driven by the longest
+    // track (add/move/trim clips to change it; the export matches this).
+    ImGui::Text("Position %s   Duration %s",
                 timecode(app.position(), gui.project_fps).c_str(),
                 timecode(dur, gui.project_fps).c_str());
 
@@ -811,7 +813,9 @@ int main(int, char**) {
                     "3. Drag a clip to move it; drag its edges to shorten/lengthen.\n"
                     "4. Click the ruler (top of timeline) to scrub the preview.\n"
                     "5. Right-click a clip or track for delete / cut actions.\n"
-                    "6. Upper video tracks overlay lower ones (like layers).\n"
+                    "6. Upper video tracks overlay lower ones (like layers).\n\n"
+                    "Total duration = the longest track's length. Add, move, or\n"
+                    "trim clips to change it; the exported video matches it.\n\n"
                     "7. File > Export video to render an MP4.");
                 ImGui::EndMenu();
             }
