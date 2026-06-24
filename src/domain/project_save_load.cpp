@@ -13,6 +13,38 @@
 
 namespace vedit {
 
+namespace {
+
+// Escape a string for inclusion in a JSON string literal. Paths and
+// names can contain backslashes (Windows) or quotes; without escaping
+// the emitted JSON would be malformed.
+std::string json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 4);
+    for (char ch : s) {
+        switch (ch) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(ch) < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
+                    out += buf;
+                } else {
+                    out += ch;
+                }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     Mlt::Producer* producer = project.producer();
     if (!producer || !producer->is_valid()) {
@@ -119,22 +151,49 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project) {
     MediaLibrary& lib = project.library();
 
     std::ostringstream ss;
-    ss << "{\"tracks\":[";
+    ss << "{";
+
+    // Library: list every imported source with its probed metadata.
+    // The MCP agent needs this to know which media_index to pass to
+    // clip.append/insert and to choose sources by dimension/duration.
+    ss << "\"library\":[";
+    for (int i = 0; i < lib.count(); ++i) {
+        if (i > 0) ss << ",";
+        const auto* item = lib.item(i);
+        if (!item) { ss << "null"; continue; }
+        ss << "{\"index\":" << i << ",";
+        ss << "\"path\":\"" << json_escape(item->path) << "\",";
+        ss << "\"name\":\"" << json_escape(item->name) << "\",";
+        ss << "\"width\":" << item->width << ",";
+        ss << "\"height\":" << item->height << ",";
+        ss << "\"fps\":" << item->fps << ",";
+        ss << "\"duration_sec\":" << item->duration_sec << ",";
+        ss << "\"frame_count\":" << item->frame_count << ",";
+        ss << "\"has_video\":" << (item->has_video ? 1 : 0) << ",";
+        ss << "\"has_audio\":" << (item->has_audio ? 1 : 0);
+        ss << "}";
+    }
+    ss << "],";
+
+    // Tracks with their clips. Each clip carries its stable ClipId and
+    // media_index so the agent can target it via clip.remove/move/trim.
+    ss << "\"tracks\":[";
     auto tracks = tl.tracks();
     for (size_t t = 0; t < tracks.size(); ++t) {
         if (t > 0) ss << ",";
-        ss << "{\"name\":\"" << tracks[t].name << "\",";
+        ss << "{\"id\":" << tracks[t].id.value << ",";
+        ss << "\"name\":\"" << json_escape(tracks[t].name) << "\",";
         ss << "\"kind\":\"" << (tracks[t].kind == TrackKind::Video ? "video" : "audio") << "\",";
         ss << "\"clips\":[";
         auto clips = tl.clips_on_track(tracks[t].id);
         for (size_t c = 0; c < clips.size(); ++c) {
             if (c > 0) ss << ",";
-            ss << "{\"start\":" << clips[c].start << ",";
+            ss << "{\"id\":" << clips[c].id.value << ",";
+            ss << "\"media_index\":" << clips[c].media_index << ",";
+            ss << "\"start\":" << clips[c].start << ",";
             ss << "\"length\":" << clips[c].length << ",";
             ss << "\"in\":" << clips[c].in_point << ",";
-            ss << "\"out\":" << clips[c].out_point << ",";
-            const auto* item = lib.item(clips[c].media_index);
-            ss << "\"media\":\"" << (item ? item->path : "") << "\"";
+            ss << "\"out\":" << clips[c].out_point;
             ss << "}";
         }
         ss << "]}";

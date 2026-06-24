@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <Mlt.h>
+#include <nlohmann/json.hpp>
 #include <cstdlib>
 
 #include "domain/app_controller.h"
@@ -280,6 +281,23 @@ TEST_CASE("ProjectSaveLoad state_json describes timeline", "[t10]") {
     REQUIRE(json.find("\"start\"") != std::string::npos);
     REQUIRE(json.find("\"length\"") != std::string::npos);
     REQUIRE(json.find(clip) != std::string::npos);
+
+    // The MCP agent needs library + clip ids to drive edits.
+    REQUIRE(json.find("\"library\"") != std::string::npos);
+    REQUIRE(json.find("\"media_index\"") != std::string::npos);
+    REQUIRE(json.find("\"id\":1") != std::string::npos);
+
+    // The JSON must be parseable (no malformed output).
+    nlohmann::json parsed = nlohmann::json::parse(json);
+    REQUIRE(parsed.contains("library"));
+    REQUIRE(parsed.contains("tracks"));
+    REQUIRE(parsed["library"].size() == 1);
+    REQUIRE(parsed["library"][0]["index"] == 0);
+    REQUIRE(parsed["tracks"].size() == 1);
+    REQUIRE(parsed["tracks"][0].contains("id"));
+    REQUIRE(parsed["tracks"][0]["clips"].size() == 1);
+    REQUIRE(parsed["tracks"][0]["clips"][0].contains("id"));
+    REQUIRE(parsed["tracks"][0]["clips"][0].contains("media_index"));
 }
 
 TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12][export]") {
