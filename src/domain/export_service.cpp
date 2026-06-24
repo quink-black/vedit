@@ -45,6 +45,17 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     consumer.set("preset", "medium");
     consumer.set("threads", 0);           // auto
 
+    // Reset the producer to a clean render state. The preview consumer
+    // runs with terminate_on_pause and, when it reaches the end of the
+    // timeline, leaves the producer paused at the last frame with
+    // speed 0. An export consumer (also terminate_on_pause) inheriting
+    // speed 0 sees "already paused" and stops before emitting a single
+    // frame, producing a valid-but-empty 262-byte MP4. Restore forward
+    // playback and rewind to the start so export always renders the
+    // whole timeline regardless of where preview left the playhead.
+    producer.set_speed(1.0);
+    producer.seek(0);
+
     consumer.connect(producer);
 
     // Progress reporting via consumer-frame-show.
