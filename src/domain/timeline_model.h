@@ -73,7 +73,11 @@ public:
     ClipId append_clip(TrackId track, int media_index,
                        int64_t in_point = -1, int64_t out_point = -1);
 
-    // Insert at a timeline position (frames from track start).
+    // Insert at a timeline position (frames from track start). If
+    // `position` falls inside an existing clip, the clip is appended
+    // after the last clip instead (M1 does not auto-split on insert;
+    // use split_clip + insert into the gap for that). Pads with blank
+    // when `position` is past the current end.
     ClipId insert_clip(TrackId track, int media_index, int64_t position,
                        int64_t in_point = -1, int64_t out_point = -1);
 

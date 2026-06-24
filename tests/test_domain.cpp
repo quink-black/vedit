@@ -159,3 +159,106 @@ TEST_CASE("MediaLibrary dedupes by path", "[domain]") {
     REQUIRE(item->width == 160);
     REQUIRE(item->height == 120);
 }
+
+TEST_CASE("Insert at position pads with blank when past end", "[domain][t5]") {
+    std::string clip = make_test_clip("insert");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video);
+    int mi = pm.library().import(clip);
+
+    auto id1 = tl.append_clip(v1, mi);
+    const auto* c1 = tl.clip(id1);
+    REQUIRE(c1 != nullptr);
+    int64_t orig_len = c1->length;
+
+    // Insert at position well past the end -> blank-padded, clip lands
+    // exactly at the requested position.
+    auto id2 = tl.insert_clip(v1, mi, c1->length + 20);
+    REQUIRE(id2.valid());
+    const auto* c2 = tl.clip(id2);
+    REQUIRE(c2 != nullptr);
+    REQUIRE(c2->start == c1->length + 20);
+    REQUIRE(c2->length == orig_len);
+}
+
+TEST_CASE("Same-track move reorders clip", "[domain][t5]") {
+    std::string clip = make_test_clip("movesame");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video);
+    int mi = pm.library().import(clip);
+
+    auto id1 = tl.append_clip(v1, mi);
+    auto id2 = tl.append_clip(v1, mi);
+    const auto* c2 = tl.clip(id2);
+    int64_t len = c2->length;
+
+    // Move clip2 to position 0 -- it should now start at 0, clip1
+    // shifts after it. Clip id2 must remain stable and resolvable.
+    REQUIRE(tl.move_clip(id2, v1, 0));
+    const auto* c2_after = tl.clip(id2);
+    REQUIRE(c2_after != nullptr);
+    REQUIRE(c2_after->start == 0);
+    REQUIRE(c2_after->length == len);
+    // id1 still resolvable (stable id survives the move of another clip).
+    REQUIRE(tl.clip(id1) != nullptr);
+}
+
+TEST_CASE("Cross-track move preserves clip id and media", "[domain][t5]") {
+    std::string clip = make_test_clip("movex");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video, "V1");
+    auto v2 = tl.add_track(vedit::TrackKind::Video, "V2");
+    int mi = pm.library().import(clip);
+
+    auto id = tl.append_clip(v1, mi);
+    const auto* c = tl.clip(id);
+    REQUIRE(c != nullptr);
+    int64_t len = c->length;
+
+    // Move from v1 to v2 at position 10.
+    REQUIRE(tl.move_clip(id, v2, 10));
+    const auto* c_after = tl.clip(id);
+    REQUIRE(c_after != nullptr);
+    REQUIRE(c_after->track_id == v2);
+    REQUIRE(c_after->start == 10);
+    REQUIRE(c_after->length == len);
+    REQUIRE(c_after->media_index == mi);
+    // v1 no longer has this clip.
+    auto on_v1 = tl.clips_on_track(v1);
+    REQUIRE(on_v1.empty());
+    auto on_v2 = tl.clips_on_track(v2);
+    REQUIRE(on_v2.size() == 1);
+    REQUIRE(on_v2[0].id == id);
+}
+
+TEST_CASE("Trim clip changes in/out and length", "[domain][t5]") {
+    std::string clip = make_test_clip("trim");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video);
+    int mi = pm.library().import(clip);
+
+    auto id = tl.append_clip(v1, mi);
+    const auto* c = tl.clip(id);
+    REQUIRE(c != nullptr);
+    int64_t orig_len = c->length;
+    int64_t orig_in = c->in_point;
+
+    // Trim the in-point forward by 5 frames.
+    REQUIRE(tl.trim_clip(id, orig_in + 5, c->out_point));
+    const auto* c_after = tl.clip(id);
+    REQUIRE(c_after != nullptr);
+    REQUIRE(c_after->in_point == orig_in + 5);
+    REQUIRE(c_after->length == orig_len - 5);
+}

@@ -33,6 +33,23 @@ void stamp_media_index(Mlt::Producer& cut, int idx) {
     cut.set(kMediaIdxProp, idx);
 }
 
+// Create a cut of a library producer with our stable id stamps.
+// Returns a new'd Producer (caller owns) or nullptr. in/out are parent
+// frame numbers; -1 means 0 / end-of-source.
+Mlt::Producer* make_stamped_cut(MediaLibrary& lib, int media_index,
+                                int64_t in_point, int64_t out_point,
+                                int64_t clip_id) {
+    Mlt::Producer* parent = lib.producer(media_index);
+    if (!parent || !parent->is_valid()) return nullptr;
+    int in = in_point < 0 ? 0 : static_cast<int>(in_point);
+    int out = out_point < 0 ? -1 : static_cast<int>(out_point);
+    Mlt::Producer* cut = parent->cut(in, out);
+    if (!cut || !cut->is_valid()) { delete cut; return nullptr; }
+    stamp_clip_id(*cut, clip_id);
+    stamp_media_index(*cut, media_index);
+    return cut;
+}
+
 } // namespace
 
 TimelineModel::TimelineModel(Mlt::Profile& profile, MediaLibrary& library)
@@ -127,22 +144,15 @@ ClipId TimelineModel::append_clip(TrackId track, int media_index,
     auto* ts = find_track(track);
     if (!ts || media_index < 0) return ClipId{0};
 
-    // We need a cut of the library producer. MediaLibrary owns the
-    // parent; we make a cut so in/out is independent per clip.
-    Mlt::Producer* parent = library_.producer(media_index);
-    if (!parent || !parent->is_valid()) return ClipId{0};
-
-    Mlt::Producer* cut = parent->cut(static_cast<int>(in_point < 0 ? 0 : in_point),
-                                     static_cast<int>(out_point < 0 ? -1 : out_point));
-    if (!cut || !cut->is_valid()) { delete cut; return ClipId{0}; }
-
     ClipId id = next_clip_id();
-    stamp_clip_id(*cut, id.value);
-    stamp_media_index(*cut, media_index);
-    int in = in_point < 0 ? 0 : static_cast<int>(in_point);
-    int out = out_point < 0 ? parent->get_length() - 1 : static_cast<int>(out_point);
-    // The cut already carries in/out; append uses the cut's own range.
-    if (ts->playlist->append(*cut, in, out) < 0) {
+    Mlt::Producer* cut = make_stamped_cut(library_, media_index,
+                                          in_point, out_point, id.value);
+    if (!cut) return ClipId{0};
+
+    // Pass -1/-1 so MLT uses the cut's own in/out (the cut already
+    // encodes the source range; passing parent-relative in/out again
+    // would be redundant and fragile).
+    if (ts->playlist->append(*cut, -1, -1) < 0) {
         delete cut;
         return ClipId{0};
     }
@@ -154,11 +164,26 @@ ClipId TimelineModel::append_clip(TrackId track, int media_index,
 ClipId TimelineModel::insert_clip(TrackId track, int media_index,
                                   int64_t position, int64_t in_point,
                                   int64_t out_point) {
-    // For T4 we implement append-first; insert_at uses playlist indices.
-    // A full position-based insert lands in T5. Here we just append and
-    // let rebuild compute starts; insert-by-position is exercised in T5.
-    (void)position;
-    return append_clip(track, media_index, in_point, out_point);
+    auto* ts = find_track(track);
+    if (!ts || media_index < 0 || position < 0) return ClipId{0};
+
+    ClipId id = next_clip_id();
+    Mlt::Producer* cut = make_stamped_cut(library_, media_index,
+                                          in_point, out_point, id.value);
+    if (!cut) return ClipId{0};
+
+    // insert_at only honors position when there is already content at
+    // it; on a short/empty playlist it appends at the end. Pad with a
+    // blank first so the clip lands exactly at `position`.
+    int64_t current_len = ts->playlist->get_length();
+    if (position > current_len) {
+        ts->playlist->blank(static_cast<int>(position - current_len));
+    }
+    int idx = ts->playlist->insert_at(static_cast<int>(position), *cut, 0);
+    delete cut;
+    if (idx < 0) return ClipId{0};
+    rebuild_clip_view();
+    return id;
 }
 
 bool TimelineModel::remove_clip(ClipId id) {
@@ -182,11 +207,53 @@ bool TimelineModel::remove_clip(ClipId id) {
     return false;
 }
 
-bool TimelineModel::move_clip(ClipId /*id*/, TrackId /*dest_track*/,
-                              int64_t /*dest_position*/) {
-    // Cross-track / position-aware move lands in T5 with the full edit
-    // op set. T4 establishes the model + id mapping + append/remove.
-    return false;
+bool TimelineModel::move_clip(ClipId id, TrackId dest_track,
+                              int64_t dest_position) {
+    auto found = clips_.find(id.value);
+    if (found == clips_.end()) return false;
+    int src_tidx = track_index(found->second.track_id);
+    int dst_tidx = track_index(dest_track);
+    if (src_tidx < 0 || dst_tidx < 0 || dest_position < 0) return false;
+
+    // Locate the clip's playlist index on the source track.
+    auto& src_pl = tracks_[src_tidx].playlist;
+    int src_idx = -1;
+    for (int i = 0; i < src_pl->count(); ++i) {
+        Mlt::Producer* cut = src_pl->get_clip(i);
+        int64_t cid = cut ? read_clip_id(*cut) : 0;
+        delete cut;
+        if (cid == id.value) { src_idx = i; break; }
+    }
+    if (src_idx < 0) return false;
+
+    const int64_t media_index = found->second.media_index;
+    const int64_t in_point = found->second.in_point;
+    const int64_t out_point = found->second.out_point;
+
+    if (src_tidx == dst_tidx) {
+        // Same-track move: use playlist->move, then pad/handle position
+        // via insert_at semantics. For M1, move-within-track reorders
+        // the clip to dest_position by remove + insert_at.
+        src_pl->remove(src_idx);
+    } else {
+        // Cross-track: remove from source, insert into dest.
+        src_pl->remove(src_idx);
+    }
+
+    // Re-stamp a fresh cut (the removed cut's id is gone with it).
+    Mlt::Producer* cut = make_stamped_cut(library_, static_cast<int>(media_index),
+                                          in_point, out_point, id.value);
+    if (!cut) return false;
+    auto& dst_pl = tracks_[dst_tidx].playlist;
+    int64_t dst_len = dst_pl->get_length();
+    if (dest_position > dst_len) {
+        dst_pl->blank(static_cast<int>(dest_position - dst_len));
+    }
+    int idx = dst_pl->insert_at(static_cast<int>(dest_position), *cut, 0);
+    delete cut;
+    if (idx < 0) return false;
+    rebuild_clip_view();
+    return true;
 }
 
 bool TimelineModel::trim_clip(ClipId id, int64_t new_in, int64_t new_out) {
