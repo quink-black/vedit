@@ -176,4 +176,34 @@ bool PreviewRenderer::pull_latest_frame(mlt_image_format& out_format,
     return true;
 }
 
+bool PreviewRenderer::render_frame_at(Mlt::Producer& producer, int64_t position,
+                                      int& out_width, int& out_height,
+                                      const uint8_t*& out_image) {
+    if (!producer.is_valid()) return false;
+    // Pull one frame directly from the producer at the requested
+    // position. No realtime consumer involved.
+    producer.seek(static_cast<int>(position));
+    Mlt::Frame* frame = producer.get_frame();
+    if (!frame || !frame->is_valid()) {
+        delete frame;
+        return false;
+    }
+    // Force RGBA so the GUI can upload it as a GL texture directly.
+    mlt_image_format fmt = mlt_image_rgba;
+    int w = 0, h = 0;
+    uint8_t* image = frame->get_image(fmt, w, h);
+    if (!image || w <= 0 || h <= 0) {
+        delete frame;
+        return false;
+    }
+    const size_t bytes = static_cast<size_t>(w) * h * 4;
+    sync_buffer_.assign(image, image + bytes);
+    delete frame;
+
+    out_width = w;
+    out_height = h;
+    out_image = sync_buffer_.data();
+    return true;
+}
+
 } // namespace vedit

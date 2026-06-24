@@ -72,6 +72,20 @@ public:
                            const uint8_t*& out_image,
                            int64_t& out_position);
 
+    // Synchronously render a single frame at `position` from `producer`,
+    // converted to RGBA. Returns false on failure. The returned buffer
+    // is owned by the renderer and valid until the next
+    // render_frame_at() or pull_latest_frame() call.
+    //
+    // This does NOT use the realtime consumer — it pulls one frame
+    // directly from the producer. Used for paused preview, scrubbing,
+    // and "show the frame as soon as a clip is added" (no playback
+    // required to see a picture). Must be called on the main thread
+    // and not while the realtime consumer is running.
+    bool render_frame_at(Mlt::Producer& producer, int64_t position,
+                         int& out_width, int& out_height,
+                         const uint8_t*& out_image);
+
 private:
     // MLT consumer-thread callback. Static because mlt_listener is a C
     // function pointer; it forwards to the instance via the user-data
@@ -100,6 +114,10 @@ private:
     // pull_latest_frame(). Kept alive so the caller can finish drawing
     // it; overwritten on the next pull.
     std::vector<uint8_t> delivered_buffer_;
+
+    // Buffer for synchronous single-frame rendering (render_frame_at).
+    // Main-thread only; never touched by the consumer thread.
+    std::vector<uint8_t> sync_buffer_;
 
     bool running_ = false;
     std::atomic<bool> stopping_{false};

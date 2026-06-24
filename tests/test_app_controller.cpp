@@ -324,3 +324,76 @@ TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12]") {
     REQUIRE(json.find("\"V1\"") != std::string::npos);
     REQUIRE(json.find("\"V2\"") != std::string::npos);
 }
+
+// Regression: the GUI's core interaction was broken — after adding a
+// clip, the preview stayed blank because frames only appeared during
+// playback. These tests lock in the "always a picture" behaviour:
+// current_frame() must return a frame while PAUSED.
+
+TEST_CASE("Preview shows a frame while paused (no playback)", "[t13][preview]") {
+    std::string clip = make_test_clip("preview_paused");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    app.player().set_audio_consumer("null");
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto track = app.track_add(vedit::TrackKind::Video, "V1");
+    auto cid = app.clip_append(track, mi);
+    REQUIRE(cid.valid());
+    REQUIRE(app.project().timeline().duration() > 0);
+
+    // Not playing — but a preview frame must still be available.
+    REQUIRE_FALSE(app.is_playing());
+    int w = 0, h = 0;
+    const uint8_t* img = nullptr;
+    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(w > 0);
+    REQUIRE(h > 0);
+    REQUIRE(img != nullptr);
+}
+
+TEST_CASE("Scrubbing while paused updates the preview", "[t13][preview]") {
+    std::string clip = make_test_clip("preview_scrub");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    app.player().set_audio_consumer("null");
+    int mi = app.library_import(clip);
+    auto track = app.track_add(vedit::TrackKind::Video, "V1");
+    app.clip_append(track, mi);
+
+    int w = 0, h = 0;
+    const uint8_t* img = nullptr;
+
+    app.seek(0);
+    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(app.position() == 0);
+
+    app.seek(20);
+    REQUIRE(app.position() == 20);
+    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(img != nullptr);
+}
+
+TEST_CASE("Adding a second clip refreshes the paused preview", "[t13][preview]") {
+    std::string clip = make_test_clip("preview_refresh");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    app.player().set_audio_consumer("null");
+    int mi = app.library_import(clip);
+    auto track = app.track_add(vedit::TrackKind::Video, "V1");
+    app.clip_append(track, mi);
+    int64_t dur1 = app.project().timeline().duration();
+
+    app.clip_append(track, mi);
+    int64_t dur2 = app.project().timeline().duration();
+    REQUIRE(dur2 > dur1);  // timeline grew
+
+    // Preview still works after the edit (refresh() was called).
+    int w = 0, h = 0;
+    const uint8_t* img = nullptr;
+    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(img != nullptr);
+}
