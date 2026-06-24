@@ -59,6 +59,13 @@ public:
         return running_ && !self_stopped_.load(std::memory_order_acquire);
     }
 
+    // True if MLT stopped the consumer itself at clip end while the
+    // renderer still believes it is running. The owner must call stop()
+    // to reset this before start() can rebuild the consumer.
+    bool has_self_stopped() const {
+        return running_ && self_stopped_.load(std::memory_order_acquire);
+    }
+
     // Consumer-stopped callback (for terminate_on_pause end detection).
     static void on_consumer_stopped(mlt_consumer /*c*/, PreviewRenderer* self,
                                     mlt_event_data /*data*/);

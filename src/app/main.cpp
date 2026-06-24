@@ -808,6 +808,19 @@ int main(int, char**) {
 
         rpc_server.drain();
 
+        // If playback reached EOF (consumer self-stopped with
+        // terminate_on_pause), the GUI's is_playing() is already false
+        // but the consumer thread + running_ flag linger until an
+        // explicit stop. Tear it down here so the producer is in a
+        // clean state for the next Play/Seek, and the freeze frame
+        // shown matches the final frame. Without this, Play after EOF
+        // was flaky: the first click early-returned in start() (running_
+        // still true), the second rebuilt the consumer against a
+        // producer still holding the stale speed/position.
+        if (app.player().has_self_stopped()) {
+            app.pause();
+        }
+
         int fw = 0, fh = 0;
         const uint8_t* fimg = nullptr;
         if (app.player().current_frame(fw, fh, fimg) && fimg && fw > 0 && fh > 0) {

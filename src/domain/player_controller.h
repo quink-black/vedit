@@ -36,6 +36,12 @@ public:
     // True while the realtime consumer is running.
     bool is_playing() const;
 
+    // True if playback reached end-of-clip and the consumer self-stopped,
+    // but the renderer has not yet been torn down. The GUI main loop uses
+    // this to call pause() once and join the consumer thread, so the next
+    // Play/Seek operates on a clean producer.
+    bool has_self_stopped() const { return renderer_.has_self_stopped(); }
+
     // Seek to an absolute timeline frame. While paused this renders a
     // freeze frame at the new position immediately (scrubbing).
     void seek(int64_t frame);

@@ -19,10 +19,22 @@ bool PlayerController::play() {
         Logger::log(Logger::Level::Warn, "PlayerController: no producer to play");
         return false;
     }
+    // The realtime consumer self-stops at clip end (terminate_on_pause).
+    // When that happens running_ stays true but is_running() is false,
+    // so PreviewRenderer::start() would early-return and playback would
+    // never resume. Tear the consumer down first so start() rebuilds it.
+    if (renderer_.has_self_stopped()) {
+        renderer_.stop();
+        // Reached the end last time: rewind so Play restarts from the
+        // top instead of sitting on the final frame.
+        int64_t dur = project_.timeline().duration();
+        if (dur > 0 && position_ >= dur - 1) position_ = 0;
+    }
     // Always (re)point at the current tractor and seek to the playhead
     // so playback resumes from where the user left off.
     renderer_.set_producer(producer);
     attached_ = true;
+    producer->set_speed(1.0);
     producer->seek(static_cast<int>(position_));
     freeze_valid_ = false;  // realtime frames take over now
     return renderer_.start();

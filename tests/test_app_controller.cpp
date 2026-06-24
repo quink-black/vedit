@@ -2,7 +2,9 @@
 
 #include <Mlt.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <cstdlib>
+#include <thread>
 
 #include "domain/app_controller.h"
 #include "domain/export_service.h"
@@ -448,9 +450,50 @@ TEST_CASE("Adding a second clip refreshes the paused preview", "[t13][preview]")
     REQUIRE(img != nullptr);
 }
 
-// Regression: multi-track was broken in the GUI — "+track" added empty
-// tracks you couldn't put clips on, and track naming used the global id
-// counter (V1 V2 A3 V4). These lock in correct multi-track behaviour.
+// Regression: after playback reached EOF (consumer self-stopped with
+// terminate_on_pause), the producer was left with speed 0 at the last
+// frame. Export then ran the avformat consumer with terminate_on_pause
+// too, which saw "already paused" and produced a valid-but-empty
+// 262-byte MP4. Export must rewind and restore forward playback so the
+// full timeline renders regardless of where preview left the playhead.
+TEST_CASE("Export works after playback reached EOF", "[t9][export]") {
+    std::string clip = make_test_clip("eof");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    app.player().set_audio_consumer("null");
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    // Play to EOF. The 2s test clip under "null" audio consumer runs
+    // out well under this timeout; spin until the consumer self-stops.
+    REQUIRE(app.play());
+    for (int i = 0; i < 200 && app.is_playing(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE_FALSE(app.is_playing());  // reached EOF
+    app.pause();
+
+    // Now export from this state. Before the fix this produced an
+    // empty 262-byte file; it must produce a real, non-empty MP4.
+    std::string out = unique_temp_path("vedit-test", "t9_eof", ".mp4");
+    vedit::ExportService svc;
+    REQUIRE(svc.render(*app.project().producer(), app.profile(), out));
+
+    FILE* f = fopen(out.c_str(), "rb");
+    REQUIRE(f != nullptr);
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fclose(f);
+    REQUIRE(sz > 10000);  // real video, not the 262-byte empty shell
+
+    // And playback must be restartable from this state (Play after EOF
+    // was flaky: the first click did nothing, the second worked).
+    REQUIRE(app.play());
+    REQUIRE(app.is_playing());
+    app.pause();
+}
 
 TEST_CASE("Tracks are named per type (V1/V2, A1/A2)", "[t14][multitrack]") {
     vedit::AppController app;
