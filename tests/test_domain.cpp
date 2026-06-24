@@ -264,6 +264,36 @@ TEST_CASE("Trim clip changes in/out and length", "[domain][t5]") {
     REQUIRE(c_after->length == orig_len - 5);
 }
 
+TEST_CASE("Left-edge trim moves timeline start (NLE semantics)", "[domain][t13]") {
+    // Regression: trimming the left edge must move the clip's timeline
+    // start by the same delta so the left edge visually follows the
+    // mouse (right edge stays fixed). Previously resize_clip kept
+    // start unchanged, making the left trim handle look frozen.
+    std::string clip = make_test_clip("trimleft");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video);
+    int mi = pm.library().import(clip);
+
+    auto id = tl.append_clip(v1, mi);
+    const auto* c = tl.clip(id);
+    REQUIRE(c != nullptr);
+    int64_t orig_start = c->start;
+    int64_t orig_in = c->in_point;
+    int64_t orig_out = c->out_point;
+
+    // Trim left edge: in 0 -> 20. start must move +20, out unchanged.
+    REQUIRE(tl.trim_clip(id, orig_in + 20, orig_out));
+    const auto* after = tl.clip(id);
+    REQUIRE(after != nullptr);
+    REQUIRE(after->in_point == orig_in + 20);
+    REQUIRE(after->out_point == orig_out);              // right edge fixed
+    REQUIRE(after->start == orig_start + 20);           // left edge moved
+    REQUIRE(after->length == orig_out - (orig_in + 20) + 1);
+}
+
 TEST_CASE("Two tracks compose through the tractor", "[domain][t6]") {
     std::string clip = make_test_clip("compose");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

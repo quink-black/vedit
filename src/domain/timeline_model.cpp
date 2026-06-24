@@ -272,19 +272,51 @@ bool TimelineModel::trim_clip(ClipId id, int64_t new_in, int64_t new_out) {
     int tidx = track_index(found->second.track_id);
     if (tidx < 0) return false;
     auto& pl = tracks_[tidx].playlist;
+
+    const int64_t old_in = found->second.in_point;
+    const int64_t old_start = found->second.start;
+    const int64_t media_index = found->second.media_index;
+
+    // Standard NLE semantics: when the LEFT edge is trimmed (new_in
+    // changes), the clip's timeline start moves by the same delta so
+    // the left edge visually follows the mouse while the right edge
+    // stays fixed. MLT's resize_clip alone keeps the clip's playlist
+    // position (and thus its timeline start) unchanged — only the
+    // in/out and length change — which looks like "the yellow handle
+    // doesn't move". We remove + reinsert at the moved start to keep
+    // both the stable ClipId and the NLE-correct visual.
+    int64_t delta = new_in - old_in;
+    int64_t new_start = old_start + delta;
+    if (new_start < 0) {
+        // Clamp: don't let the clip start before the timeline origin.
+        new_in -= new_start;  // equivalently, pull in back by |new_start|
+        new_start = 0;
+    }
+
+    // Locate and remove the existing clip entry.
+    int idx = -1;
     for (int i = 0; i < pl->count(); ++i) {
         Mlt::Producer* cut = pl->get_clip(i);
-        if (!cut) continue;
-        int64_t cid = read_clip_id(*cut);
+        int64_t cid = cut ? read_clip_id(*cut) : 0;
         delete cut;
-        if (cid == id.value) {
-            pl->resize_clip(i, static_cast<int>(new_in),
-                            static_cast<int>(new_out));
-            rebuild_clip_view();
-            return true;
-        }
+        if (cid == id.value) { idx = i; break; }
     }
-    return false;
+    if (idx < 0) return false;
+    pl->remove(idx);
+
+    // Re-stamp a fresh cut with the new in/out and the SAME stable id,
+    // then insert at the moved timeline start so the left edge tracks.
+    Mlt::Producer* cut = make_stamped_cut(library_, static_cast<int>(media_index),
+                                          new_in, new_out, id.value);
+    if (!cut) return false;
+    if (new_start > pl->get_length()) {
+        pl->blank(static_cast<int>(new_start - pl->get_length()));
+    }
+    int new_idx = pl->insert_at(static_cast<int>(new_start), *cut, 0);
+    delete cut;
+    if (new_idx < 0) return false;
+    rebuild_clip_view();
+    return true;
 }
 
 ClipId TimelineModel::split_clip(ClipId id, int64_t at_timeline_position) {
