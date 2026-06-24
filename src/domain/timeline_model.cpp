@@ -77,10 +77,18 @@ TrackId TimelineModel::add_track(TrackKind kind, const std::string& name) {
     TrackState ts;
     ts.info.id = next_track_id();
     ts.info.kind = kind;
-    ts.info.name = name.empty()
-                       ? (kind == TrackKind::Video ? "V" : "A") +
-                             std::to_string(ts.info.id.value)
-                       : name;
+    if (name.empty()) {
+        // Number tracks per type (V1, V2, ... / A1, A2, ...) rather than
+        // by the global id counter, which would yield V1 V2 A3 V4.
+        int same_kind = 1;
+        for (const auto& existing : tracks_) {
+            if (existing.info.kind == kind) ++same_kind;
+        }
+        ts.info.name = (kind == TrackKind::Video ? "V" : "A") +
+                       std::to_string(same_kind);
+    } else {
+        ts.info.name = name;
+    }
     ts.playlist = std::make_unique<Mlt::Playlist>(profile_);
     ts.playlist->set(kTrackIdProp, static_cast<int>(ts.info.id.value));
 

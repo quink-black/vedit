@@ -397,3 +397,60 @@ TEST_CASE("Adding a second clip refreshes the paused preview", "[t13][preview]")
     REQUIRE(app.player().current_frame(w, h, img));
     REQUIRE(img != nullptr);
 }
+
+// Regression: multi-track was broken in the GUI — "+track" added empty
+// tracks you couldn't put clips on, and track naming used the global id
+// counter (V1 V2 A3 V4). These lock in correct multi-track behaviour.
+
+TEST_CASE("Tracks are named per type (V1/V2, A1/A2)", "[t14][multitrack]") {
+    vedit::AppController app;
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    auto a1 = app.track_add(vedit::TrackKind::Audio);
+    auto v3 = app.track_add(vedit::TrackKind::Video);
+    auto& tl = app.project().timeline();
+    REQUIRE(tl.track(v1)->name == "V1");
+    REQUIRE(tl.track(v2)->name == "V2");
+    REQUIRE(tl.track(a1)->name == "A1");
+    REQUIRE(tl.track(v3)->name == "V3");
+}
+
+TEST_CASE("Clips can be added to a non-first track", "[t14][multitrack]") {
+    std::string clip = make_test_clip("nonfirst");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    auto v3 = app.track_add(vedit::TrackKind::Video);
+
+    // Add to V2 and V3, not V1 — the user's broken case.
+    auto c2 = app.clip_append(v2, mi);
+    auto c3 = app.clip_append(v3, mi);
+    REQUIRE(c2.valid());
+    REQUIRE(c3.valid());
+
+    auto& tl = app.project().timeline();
+    REQUIRE(tl.clips_on_track(v1).empty());
+    REQUIRE(tl.clips_on_track(v2).size() == 1);
+    REQUIRE(tl.clips_on_track(v3).size() == 1);
+}
+
+TEST_CASE("Clip moves across tracks via the controller", "[t14][multitrack]") {
+    std::string clip = make_test_clip("xtrack");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    auto c = app.clip_append(v2, mi);
+    REQUIRE(c.valid());
+
+    REQUIRE(app.clip_move(c, v1, 0));
+    auto& tl = app.project().timeline();
+    REQUIRE(tl.clips_on_track(v1).size() == 1);
+    REQUIRE(tl.clips_on_track(v2).empty());
+    REQUIRE(tl.clip(c)->track_id == v1);
+}
