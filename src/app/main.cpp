@@ -14,6 +14,9 @@
 #include "domain/app_controller.h"
 #include "domain/ids.h"
 #include "domain/timeline_model.h"
+#include "rpc/rpc_dispatcher.h"
+#include "rpc/rpc_methods.h"
+#include "rpc/rpc_server.h"
 #include "util/logger.h"
 
 // ============= helpers ======================================================
@@ -135,6 +138,17 @@ int main(int, char**) {
     if (const char* ac = std::getenv("VEDIT_AUDIO_CONSUMER"))
         app.player().set_audio_consumer(ac);
 
+    // JSON-RPC server (Unix domain socket) so external agents can drive
+    // the same AppController that the GUI uses.
+    vedit::rpc::Dispatcher dispatcher;
+    vedit::rpc::register_methods(dispatcher, app);
+    vedit::rpc::RpcServer rpc_server;
+    bool rpc_started = rpc_server.start(
+        [&](const std::string& req) { return dispatcher.handle_request(req); });
+    if (rpc_started) {
+        vedit::Logger::log(vedit::Logger::Level::Info, "RPC server started");
+    }
+
     // Preview texture for the renderer.
     GLuint preview_tex = 0;
     glGenTextures(1, &preview_tex);
@@ -183,6 +197,10 @@ int main(int, char**) {
                 glBindTexture(GL_TEXTURE_2D, 0);
             }
         }
+
+        // Drain incoming RPC requests on the main thread so handlers
+        // can safely touch AppController state.
+        rpc_server.drain();
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
@@ -302,6 +320,7 @@ int main(int, char**) {
     }
 
     app.pause();
+    rpc_server.stop();
     if (preview_tex) glDeleteTextures(1, &preview_tex);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();

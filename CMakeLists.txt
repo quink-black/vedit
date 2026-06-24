@@ -34,6 +34,7 @@ add_subdirectory(third_party)
 add_subdirectory(src/util)
 add_subdirectory(src/core)
 add_subdirectory(src/domain)
+add_subdirectory(src/rpc)
 add_subdirectory(src/app)
 
 if(VEDIT_BUILD_TESTS)

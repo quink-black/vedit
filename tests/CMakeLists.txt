@@ -2,8 +2,10 @@ add_executable(vedit_tests
     test_smoke.cpp
     test_domain.cpp
     test_app_controller.cpp
+    test_rpc.cpp
 )
 target_link_libraries(vedit_tests PRIVATE
+    vedit_rpc
     vedit_domain
     vedit_core
     vedit_util
