@@ -22,3 +22,22 @@ target_include_directories(vedit_imgui_backends PUBLIC
     /usr/include/imgui
 )
 target_compile_definitions(vedit_imgui_backends PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
+
+# ---- Native File Dialog Extended (NFD) ----
+# System-native file open/save dialogs. Try the system package first
+# (matches idiff's pattern); fall back to building from source via
+# FetchContent so a fresh checkout always works.
+find_package(nfd QUIET)
+if(NOT nfd_FOUND)
+    message(STATUS "nfd not found on system -- will build from source")
+    include(FetchContent)
+    FetchContent_Declare(
+        nativefiledialog-extended
+        GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
+        GIT_TAG        master
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(nativefiledialog-extended)
+else()
+    message(STATUS "Found system nfd: ${nfd_DIR}")
+endif()

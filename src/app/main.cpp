@@ -12,6 +12,7 @@
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_opengl3.h>
+#include <nfd.h>
 
 #include "core/mlt_runtime.h"
 #include "domain/app_controller.h"
@@ -45,39 +46,48 @@ static std::string timecode(int64_t frame, double fps) {
     return buf;
 }
 
-// Open a native file-open dialog via zenity (fork+exec). Returns the
-// selected path or empty string if cancelled / zenity unavailable.
+// Native file-open dialog via NFD (nativefiledialog-extended). Returns
+// the selected path or an empty string if cancelled / failed. Call
+// NFD_Init() once before any dialog (done in main).
 static std::string open_file_dialog() {
-    FILE* pipe = popen(
-        "zenity --file-selection "
-        "--title='Open video file' "
-        "--file-filter='Video | *.mp4 *.mkv *.mov *.avi *.webm *.m4v' "
-        "--file-filter='All files | *' 2>/dev/null",
-        "r");
-    if (!pipe) return "";
+    nfdfilteritem_t filters[] = {
+        { "Video", "mp4,mkv,mov,avi,webm,m4v" },
+        { "All files", "*" },
+    };
+    nfdchar_t* out = nullptr;
+    nfdresult_t res = NFD_OpenDialog(
+        &out, filters, sizeof(filters) / sizeof(filters[0]), nullptr);
     std::string result;
-    char buf[1024];
-    while (fgets(buf, sizeof(buf), pipe)) result += buf;
-    pclose(pipe);
-    // Strip trailing newline.
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-        result.pop_back();
+    if (res == NFD_OKAY && out) {
+        result = out;
+        NFD_FreePath(out);
+    } else if (res == NFD_ERROR) {
+        const char* err = NFD_GetError();
+        vedit::Logger::log(vedit::Logger::Level::Warn,
+                           err ? err : "NFD open dialog error");
+    }
     return result;
 }
 
+// Native save dialog via NFD. `default_name` is the suggested filename
+// (e.g. "export.mp4"); the returned path may need an extension appended.
 static std::string save_file_dialog(const char* default_name) {
-    std::string cmd =
-        "zenity --file-selection --save --confirm-overwrite "
-        "--title='Export video' --filename='" + std::string(default_name) +
-        "' 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return "";
+    nfdfilteritem_t filters[] = {
+        { "MP4 video", "mp4" },
+    };
+    nfdchar_t* out = nullptr;
+    nfdresult_t res = NFD_SaveDialog(
+        &out, filters, sizeof(filters) / sizeof(filters[0]), nullptr,
+        default_name ? default_name : "export.mp4");
     std::string result;
-    char buf[1024];
-    while (fgets(buf, sizeof(buf), pipe)) result += buf;
-    pclose(pipe);
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-        result.pop_back();
+    if (res == NFD_OKAY && out) {
+        result = out;
+        NFD_FreePath(out);
+    } else if (res == NFD_ERROR) {
+        const char* err = NFD_GetError();
+        vedit::Logger::log(vedit::Logger::Level::Warn,
+                           err ? err : "NFD save dialog error");
+    }
     return result;
 }
 
@@ -528,6 +538,8 @@ int main(int, char**) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+    // Enable drag-and-drop of files onto the window.
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -552,6 +564,13 @@ int main(int, char**) {
     vedit::AppController app;
     if (const char* ac = std::getenv("VEDIT_AUDIO_CONSUMER"))
         app.player().set_audio_consumer(ac);
+
+    // NFD provides system-native file open/save dialogs. Must be
+    // initialised before any NFD_OpenDialog / NFD_SaveDialog call.
+    if (NFD_Init() != NFD_OKAY) {
+        vedit::Logger::log(vedit::Logger::Level::Warn,
+                           "NFD_Init failed; file dialogs will not work");
+    }
 
     vedit::rpc::Dispatcher dispatcher;
     vedit::rpc::register_methods(dispatcher, app);
@@ -580,6 +599,21 @@ int main(int, char**) {
                 event.window.event == SDL_WINDOWEVENT_CLOSE &&
                 event.window.windowID == SDL_GetWindowID(window))
                 running = false;
+            // Drag-and-drop a file onto the window -> import it.
+            if (event.type == SDL_DROPFILE && event.drop.file) {
+                std::string path = event.drop.file;
+                SDL_free(event.drop.file);
+                int idx = app.library_import(path);
+                if (idx >= 0) {
+                    gui.selected_media = idx;
+                    const auto* item = app.project().library().item(idx);
+                    if (item && item->fps > 0) gui.project_fps = item->fps;
+                    gui.status = "Imported " + basename_of(path) +
+                                 "  (drag onto the timeline or double-click in Media).";
+                } else {
+                    gui.status = "Could not open: " + path;
+                }
+            }
         }
 
         rpc_server.drain();
@@ -711,6 +745,7 @@ int main(int, char**) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    NFD_Quit();
     SDL_GL_DeleteContext(gl);
     SDL_DestroyWindow(window);
     SDL_Quit();
