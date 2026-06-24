@@ -2,8 +2,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
-#include <array>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -33,6 +31,7 @@ static std::string basename_of(const std::string& path) {
     return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
+// Human-readable timecode HH:MM:SS.ff at a given fps.
 static std::string timecode(int64_t frame, double fps) {
     if (fps <= 0) fps = 25.0;
     if (frame < 0) frame = 0;
@@ -46,9 +45,18 @@ static std::string timecode(int64_t frame, double fps) {
     return buf;
 }
 
-// Native file-open dialog via NFD (nativefiledialog-extended). Returns
-// the selected path or an empty string if cancelled / failed. Call
-// NFD_Init() once before any dialog (done in main).
+// Format seconds as M:SS for the ruler so it reads like a clock, not frames.
+static std::string ruler_label(int64_t frame, double fps) {
+    if (fps <= 0) fps = 25.0;
+    int total_sec = static_cast<int>(frame / fps);
+    int m = total_sec / 60;
+    int s = total_sec % 60;
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d:%02d", m, s);
+    return buf;
+}
+
+// Native file-open dialog via NFD.
 static std::string open_file_dialog() {
     nfdfilteritem_t filters[] = {
         { "Video", "mp4,mkv,mov,avi,webm,m4v" },
@@ -69,12 +77,8 @@ static std::string open_file_dialog() {
     return result;
 }
 
-// Native save dialog via NFD. `default_name` is the suggested filename
-// (e.g. "export.mp4"); the returned path may need an extension appended.
 static std::string save_file_dialog(const char* default_name) {
-    nfdfilteritem_t filters[] = {
-        { "MP4 video", "mp4" },
-    };
+    nfdfilteritem_t filters[] = { { "MP4 video", "mp4" } };
     nfdchar_t* out = nullptr;
     nfdresult_t res = NFD_SaveDialog(
         &out, filters, sizeof(filters) / sizeof(filters[0]), nullptr,
@@ -91,43 +95,45 @@ static std::string save_file_dialog(const char* default_name) {
     return result;
 }
 
+// Ensure the export path ends with .mp4 (NFD may not append it).
+static std::string ensure_mp4_ext(std::string path) {
+    if (path.size() < 4 || path.compare(path.size() - 4, 4, ".mp4") != 0)
+        path += ".mp4";
+    return path;
+}
+
 // ============================================================================
 // GUI state
 // ============================================================================
 
-// What kind of drag is in progress on the timeline.
 enum class DragMode { None, Move, TrimLeft, TrimRight, Scrub };
 
 struct GuiState {
     int selected_media = -1;
     vedit::ClipId selected_clip{0};
-    vedit::TrackId active_track{0};   // target track for "add clip"
+    vedit::TrackId active_track{0};
     std::string status = "Open a video to begin (File > Open).";
     double project_fps = 25.0;
-    float zoom = 6.0f;  // pixels per frame on the timeline
+    float zoom = 8.0f;  // pixels per frame on the timeline
 
-    // Drag state for clip move/trim.
     DragMode drag = DragMode::None;
     vedit::ClipId drag_clip{0};
-    int64_t drag_grab_offset = 0;     // frames between clip start and grab point
+    int64_t drag_grab_offset = 0;
     int64_t drag_orig_in = 0;
     int64_t drag_orig_out = 0;
     int64_t drag_orig_start = 0;
+    int64_t drag_source_len = 0;  // source clip length, for trim clamping
 };
 
 // ============================================================================
-// Panels
+// Media → timeline
 // ============================================================================
 
-// Resolve the track a new clip should go on: the active track if it's
-// still valid, otherwise the first track, auto-creating a video track if
-// the timeline is empty.
 static vedit::TrackId resolve_target_track(vedit::AppController& app,
                                            GuiState& gui) {
     auto& tl = app.project().timeline();
-    if (gui.active_track.valid() && tl.track(gui.active_track) != nullptr) {
+    if (gui.active_track.valid() && tl.track(gui.active_track) != nullptr)
         return gui.active_track;
-    }
     if (tl.track_count() == 0) {
         auto id = app.track_add(vedit::TrackKind::Video);
         gui.active_track = id;
@@ -138,7 +144,6 @@ static vedit::TrackId resolve_target_track(vedit::AppController& app,
     return first;
 }
 
-// Append the selected media to the active track at the end of that track.
 static void add_media_to_timeline(vedit::AppController& app, GuiState& gui,
                                   int media_index) {
     if (media_index < 0) return;
@@ -154,6 +159,10 @@ static void add_media_to_timeline(vedit::AppController& app, GuiState& gui,
     }
 }
 
+// ============================================================================
+// Panels
+// ============================================================================
+
 static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
     ImGui::TextUnformatted("Media");
     ImGui::Separator();
@@ -167,16 +176,20 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
                 const auto* item = app.project().library().item(idx);
                 if (item && item->fps > 0) gui.project_fps = item->fps;
                 gui.status = "Imported " + basename_of(path) +
-                             "  —  double-click it below to add to the timeline.";
+                             " — double-click it (or drag it) to add to the timeline.";
             } else {
-                gui.status = "Failed to open: " + path;
+                gui.status = "Could not open: " + path;
             }
         }
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(%d imported)", app.library_count());
+    ImGui::TextDisabled("(%d files)", app.library_count());
 
-    ImGui::BeginChild("media_list", ImVec2(0, 150), ImGuiChildFlags_Border);
+    ImGui::BeginChild("media_list", ImVec2(0, 0), ImGuiChildFlags_Border);
+    if (app.library_count() == 0) {
+        ImGui::TextDisabled("No media yet.\nClick \"Open video...\" above,\n"
+                            "or drag a file onto this window.");
+    }
     for (int i = 0; i < app.library_count(); ++i) {
         const auto* item = app.project().library().item(i);
         if (!item) continue;
@@ -193,33 +206,19 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
                 add_media_to_timeline(app, gui, i);
             }
         }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Double-click: append to the selected track.\n"
+                              "Right-click: remove from library.");
+        }
+        if (ImGui::BeginPopupContextItem(("##mctx%d" + std::to_string(i)).c_str())) {
+            if (ImGui::MenuItem("Remove from library")) {
+                // M1: library has no remove API yet; tell the user.
+                gui.status = "(Library remove not implemented in M1.)";
+            }
+            ImGui::EndPopup();
+        }
     }
     ImGui::EndChild();
-    ImGui::TextDisabled("Double-click a media item to add it to the active track.");
-
-    // Show / pick the active track so "Add" is unambiguous.
-    auto& tl = app.project().timeline();
-    std::string active_label = "(none)";
-    if (gui.active_track.valid() && tl.track(gui.active_track))
-        active_label = tl.track(gui.active_track)->name;
-    ImGui::Text("Active track: %s", active_label.c_str());
-
-    bool can_add = gui.selected_media >= 0;
-    if (!can_add) ImGui::BeginDisabled();
-    if (ImGui::Button("Add to active track")) {
-        add_media_to_timeline(app, gui, gui.selected_media);
-    }
-    if (!can_add) ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("+ Video track")) {
-        gui.active_track = app.track_add(vedit::TrackKind::Video);
-        gui.status = "Added a video track. New clips go here. (Click a track label to change the active track.)";
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("+ Audio track")) {
-        gui.active_track = app.track_add(vedit::TrackKind::Audio);
-        gui.status = "Added an audio track.";
-    }
 }
 
 static void draw_preview_panel(vedit::AppController& app, GuiState& gui,
@@ -227,13 +226,11 @@ static void draw_preview_panel(vedit::AppController& app, GuiState& gui,
     ImGui::TextUnformatted("Preview");
     ImGui::Separator();
     int64_t dur = app.project().timeline().duration();
-    ImGui::Text("Frame %lld / %lld   %s",
-                static_cast<long long>(app.position()),
-                static_cast<long long>(dur),
-                timecode(app.position(), gui.project_fps).c_str());
+    ImGui::Text("%s  /  %s",
+                timecode(app.position(), gui.project_fps).c_str(),
+                timecode(dur, gui.project_fps).c_str());
 
     if (tex && tex_w > 0 && tex_h > 0) {
-        // Fit the image into the available region preserving aspect.
         ImVec2 avail = ImGui::GetContentRegionAvail();
         avail.y -= 4;
         float aspect = static_cast<float>(tex_w) / tex_h;
@@ -245,7 +242,7 @@ static void draw_preview_panel(vedit::AppController& app, GuiState& gui,
         ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<intptr_t>(tex)),
                      ImVec2(draw_w, draw_h));
     } else {
-        ImGui::TextDisabled("No video. Add a clip to the timeline to see a preview here.");
+        ImGui::TextDisabled("No preview yet.\nAdd a clip to the timeline.");
     }
 }
 
@@ -256,7 +253,8 @@ static void draw_transport_panel(vedit::AppController& app, GuiState& gui) {
     ImGui::SameLine();
     if (ImGui::Button("<")) app.player().step_backward();
     ImGui::SameLine();
-    if (ImGui::Button(app.is_playing() ? "Pause" : "Play")) {
+    const char* play_label = app.is_playing() ? "Pause" : "Play";
+    if (ImGui::Button(play_label)) {
         if (app.is_playing()) app.pause(); else app.play();
     }
     ImGui::SameLine();
@@ -273,22 +271,32 @@ static void draw_transport_panel(vedit::AppController& app, GuiState& gui) {
     }
 }
 
-// Full timeline: ruler (scrub), per-track lanes with labels (click to set
-// active track), clip blocks that can be selected, moved (within/across
-// tracks), and trimmed by their edges.
+// Clamp a trim so the clip stays within its source media bounds:
+// 0 <= in < out <= source_len - 1.
+static void clamp_trim(int64_t& new_in, int64_t& new_out, int64_t source_len) {
+    if (new_in < 0) new_in = 0;
+    if (source_len > 0 && new_out > source_len - 1) new_out = source_len - 1;
+    if (new_out < new_in + 1) new_out = new_in + 1;
+}
+
 static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
+    // ---- Toolbar ----
     ImGui::TextUnformatted("Timeline");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(120);
-    ImGui::SliderFloat("zoom", &gui.zoom, 1.0f, 30.0f, "%.0f px/f");
+    ImGui::SetNextItemWidth(140);
+    // Plain language: "Zoom", not "px/f".
+    ImGui::SliderFloat("Zoom", &gui.zoom, 1.0f, 30.0f, "%.0f");
 
+    ImGui::SameLine();
     bool has_sel = gui.selected_clip.valid() &&
                    app.project().timeline().clip(gui.selected_clip) != nullptr;
-    ImGui::SameLine();
     if (!has_sel) ImGui::BeginDisabled();
-    if (ImGui::Button("Split at playhead") && has_sel) {
+    if (ImGui::Button("Cut at playhead") && has_sel) {
         auto new_id = app.clip_split(gui.selected_clip, app.position());
-        if (new_id.valid()) gui.status = "Split clip at playhead.";
+        if (new_id.valid()) {
+            gui.selected_clip = new_id;
+            gui.status = "Cut the clip at the playhead.";
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete clip") && has_sel) {
@@ -297,24 +305,39 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         gui.status = "Deleted clip.";
     }
     if (!has_sel) ImGui::EndDisabled();
+
     ImGui::SameLine();
-    ImGui::TextDisabled("| drag clip body = move, drag edges = trim, click label = active track");
+    if (ImGui::Button("+ Video track")) {
+        gui.active_track = app.track_add(vedit::TrackKind::Video);
+        gui.status = "Added a video track. Upper tracks overlay lower ones.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("+ Audio track")) {
+        gui.active_track = app.track_add(vedit::TrackKind::Audio);
+        gui.status = "Added an audio track.";
+    }
 
     ImGui::Separator();
 
     auto& tl = app.project().timeline();
     auto tracks = tl.tracks();
     if (tracks.empty()) {
-        ImGui::TextDisabled("No tracks. Import a video and double-click it, "
-                            "or press '+ Video track'.");
+        ImGui::TextDisabled("No tracks yet. Open a video and double-click it "
+                            "in the Media panel — a track is created for you.");
         return;
     }
 
-    const float ruler_h = 18.0f;
-    const float track_h = 46.0f;
-    const float label_w = 56.0f;
+    // Show which track new clips go to.
+    if (gui.active_track.valid() && tl.track(gui.active_track)) {
+        ImGui::TextDisabled("New clips go to: %s  (click another track's name to change it)",
+                            tl.track(gui.active_track)->name.c_str());
+    }
+
+    const float ruler_h = 20.0f;
+    const float track_h = 50.0f;
+    const float label_w = 64.0f;
     const float px_per_frame = gui.zoom;
-    const float edge_grab = 6.0f;  // px hot-zone for edge trim
+    const float edge_grab = 7.0f;
     int64_t dur = std::max<int64_t>(1, tl.duration());
 
     ImGui::BeginChild("tl_scroll", ImVec2(0, 0), ImGuiChildFlags_Border,
@@ -327,67 +350,68 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     ImGui::InvisibleButton("##tlcanvas", ImVec2(content_w, content_h));
     bool canvas_hovered = ImGui::IsItemHovered();
     bool mouse_pressed = ImGui::IsItemClicked(0);
+    bool mouse_right = ImGui::IsItemClicked(1);
     bool mouse_down = ImGui::IsMouseDown(0);
     bool mouse_released = ImGui::IsMouseReleased(0);
     ImVec2 mouse = ImGui::GetIO().MousePos;
 
-    float tl_x0 = origin.x + label_w;        // frame 0 x
-    float lanes_y0 = origin.y + ruler_h;     // first lane y
+    float tl_x0 = origin.x + label_w;
+    float lanes_y0 = origin.y + ruler_h;
 
     auto x_to_frame = [&](float x) -> int64_t {
         float rel = x - tl_x0;
         if (rel < 0) rel = 0;
-        int64_t f = static_cast<int64_t>(rel / px_per_frame + 0.5f);
-        if (f < 0) f = 0;
-        return f;
+        return static_cast<int64_t>(rel / px_per_frame + 0.5f);
     };
 
     // Background.
     dl->AddRectFilled(origin, ImVec2(origin.x + content_w, origin.y + content_h),
                       IM_COL32(24, 24, 28, 255));
 
-    // Ruler with second ticks.
+    // Ruler with second ticks (reads like a clock: 0:05, 0:10, ...).
     dl->AddRectFilled(ImVec2(origin.x, origin.y),
                       ImVec2(origin.x + content_w, lanes_y0),
                       IM_COL32(40, 40, 48, 255));
     {
         int fps = static_cast<int>(gui.project_fps > 0 ? gui.project_fps : 25);
-        for (int64_t f = 0; f <= dur; f += fps) {
+        for (int64_t f = 0; f <= dur + fps; f += fps) {
             float x = tl_x0 + f * px_per_frame;
+            if (x > origin.x + content_w) break;
             dl->AddLine(ImVec2(x, origin.y + 4), ImVec2(x, lanes_y0),
                         IM_COL32(90, 90, 100, 255), 1.0f);
-            char tb[16];
-            std::snprintf(tb, sizeof(tb), "%llds",
-                          static_cast<long long>(f / fps));
-            dl->AddText(ImVec2(x + 2, origin.y + 2),
-                        IM_COL32(150, 150, 160, 255), tb);
+            std::string lbl = ruler_label(f, gui.project_fps);
+            dl->AddText(ImVec2(x + 3, origin.y + 3),
+                        IM_COL32(170, 170, 180, 255), lbl.c_str());
         }
     }
 
-    // Determine what the mouse is over (for cursor + press handling).
+    // Lanes + clips; record what the mouse is hovering.
     vedit::ClipId hover_clip{0};
     DragMode hover_mode = DragMode::None;
     int hover_track_index = -1;
 
-    // Lanes + clips.
     for (size_t t = 0; t < tracks.size(); ++t) {
         float y0 = lanes_y0 + t * track_h + 2;
         float y1 = y0 + track_h - 4;
         bool is_active = (tracks[t].id == gui.active_track);
 
-        // Lane background (active track highlighted).
+        // Lane.
         dl->AddRectFilled(ImVec2(origin.x, y0),
                           ImVec2(origin.x + content_w, y1),
                           is_active ? IM_COL32(44, 48, 60, 255)
                                     : IM_COL32(34, 34, 40, 255));
-        // Track label cell.
+        // Header cell.
         dl->AddRectFilled(ImVec2(origin.x, y0), ImVec2(tl_x0 - 2, y1),
                           is_active ? IM_COL32(60, 80, 120, 255)
                                     : IM_COL32(44, 44, 52, 255));
         dl->AddText(ImVec2(origin.x + 6, y0 + track_h * 0.5f - 7),
-                    IM_COL32(220, 220, 230, 255), tracks[t].name.c_str());
+                    IM_COL32(230, 230, 240, 255), tracks[t].name.c_str());
+        // Track type hint.
+        const char* kind_hint = tracks[t].kind == vedit::TrackKind::Video
+                                    ? "video" : "audio";
+        dl->AddText(ImVec2(origin.x + 6, y0 + track_h * 0.5f + 6),
+                    IM_COL32(150, 150, 160, 255), kind_hint);
 
-        // Mouse over the label cell?
         if (mouse.x >= origin.x && mouse.x < tl_x0 &&
             mouse.y >= y0 && mouse.y <= y1) {
             hover_track_index = static_cast<int>(t);
@@ -405,21 +429,28 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                         selected ? IM_COL32(255, 255, 255, 255)
                                  : IM_COL32(120, 160, 210, 255),
                         3.0f, 0, selected ? 2.0f : 1.0f);
-            // Edge handles (visual).
             if (selected) {
-                dl->AddRectFilled(ImVec2(cx0, y0 + 2), ImVec2(cx0 + 3, y1 - 2),
+                // Edge handles (visual cue that edges are grabbable).
+                dl->AddRectFilled(ImVec2(cx0, y0 + 2), ImVec2(cx0 + 4, y1 - 2),
                                   IM_COL32(255, 230, 120, 255));
-                dl->AddRectFilled(ImVec2(cx1 - 3, y0 + 2), ImVec2(cx1, y1 - 2),
+                dl->AddRectFilled(ImVec2(cx1 - 4, y0 + 2), ImVec2(cx1, y1 - 2),
                                   IM_COL32(255, 230, 120, 255));
             }
             const auto* item = app.project().library().item(c.media_index);
             std::string name = item ? basename_of(item->path) : "clip";
-            dl->PushClipRect(ImVec2(cx0 + 4, y0), ImVec2(cx1 - 4, y1), true);
-            dl->AddText(ImVec2(cx0 + 6, y0 + 6), IM_COL32(255, 255, 255, 255),
+            dl->PushClipRect(ImVec2(cx0 + 5, y0), ImVec2(cx1 - 5, y1), true);
+            dl->AddText(ImVec2(cx0 + 7, y0 + 6), IM_COL32(255, 255, 255, 255),
                         name.c_str());
+            // Show the in/out range under the name.
+            char rng[48];
+            std::snprintf(rng, sizeof(rng), "in %lld  out %lld",
+                          static_cast<long long>(c.in_point),
+                          static_cast<long long>(c.out_point));
+            dl->AddText(ImVec2(cx0 + 7, y0 + 22),
+                        IM_COL32(220, 220, 230, 200), rng);
             dl->PopClipRect();
 
-            // Hover hit-test (only when not already dragging).
+            // Hover hit-test.
             if (gui.drag == DragMode::None && canvas_hovered &&
                 mouse.y >= y0 && mouse.y <= y1 &&
                 mouse.x >= cx0 - edge_grab && mouse.x <= cx1 + edge_grab) {
@@ -431,13 +462,13 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         }
     }
 
-    // Cursor feedback for trim edges.
+    // Cursor feedback.
     if (hover_mode == DragMode::TrimLeft || hover_mode == DragMode::TrimRight)
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     else if (hover_mode == DragMode::Move)
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
-    // Playhead.
+    // Playhead (red vertical line).
     float ph_x = tl_x0 + app.position() * px_per_frame;
     dl->AddLine(ImVec2(ph_x, origin.y),
                 ImVec2(ph_x, origin.y + content_h),
@@ -446,16 +477,13 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     // ---- Press: decide what we're doing ----
     if (mouse_pressed) {
         if (hover_track_index >= 0) {
-            // Clicked a track label -> make it the active track.
             gui.active_track = tracks[hover_track_index].id;
-            gui.status = "Active track: " + tracks[hover_track_index].name +
-                         "  (new clips go here)";
+            gui.status = "New clips will go to " +
+                         tracks[hover_track_index].name + ".";
         } else if (mouse.y < lanes_y0) {
-            // Clicked the ruler -> scrub.
             gui.drag = DragMode::Scrub;
             app.seek(x_to_frame(mouse.x));
         } else if (hover_clip.valid()) {
-            // Clicked a clip -> select + begin move/trim.
             gui.selected_clip = hover_clip;
             const auto* ci = tl.clip(hover_clip);
             if (ci) {
@@ -465,12 +493,58 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                 gui.drag_orig_out = ci->out_point;
                 gui.drag_orig_start = ci->start;
                 gui.drag_grab_offset = x_to_frame(mouse.x) - ci->start;
+                // Source length = out_point+1 relative to source; clamp trims
+                // to [0, source_len-1]. We approximate source_len from the
+                // media library item duration if available, else use out+1.
+                const auto* item = app.project().library().item(ci->media_index);
+                gui.drag_source_len = item ? item->frame_count : 0;
             }
         } else {
-            // Empty lane area -> scrub.
             gui.drag = DragMode::Scrub;
             app.seek(x_to_frame(mouse.x));
         }
+    }
+
+    // ---- Right-click on canvas: context menu for the hovered clip / track ----
+    if (mouse_right) {
+        if (hover_clip.valid()) {
+            gui.selected_clip = hover_clip;
+            ImGui::OpenPopup("##clip_ctx");
+        } else if (hover_track_index >= 0) {
+            gui.active_track = tracks[hover_track_index].id;
+            ImGui::OpenPopup("##track_ctx");
+        }
+    }
+    if (ImGui::BeginPopup("##clip_ctx")) {
+        if (ImGui::MenuItem("Delete clip")) {
+            app.clip_remove(gui.selected_clip);
+            gui.selected_clip = vedit::ClipId{0};
+            gui.status = "Deleted clip.";
+        }
+        if (ImGui::MenuItem("Cut at playhead")) {
+            auto new_id = app.clip_split(gui.selected_clip, app.position());
+            if (new_id.valid()) { gui.selected_clip = new_id;
+                gui.status = "Cut the clip at the playhead."; }
+        }
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("##track_ctx")) {
+        auto& tl2 = app.project().timeline();
+        if (gui.active_track.valid() && tl2.track(gui.active_track)) {
+            ImGui::Text("Track: %s", tl2.track(gui.active_track)->name.c_str());
+            ImGui::Separator();
+            if (tl2.track_count() > 1) {
+                if (ImGui::MenuItem("Delete track")) {
+                    app.track_remove(gui.active_track);
+                    gui.active_track = tl2.tracks().empty()
+                        ? vedit::TrackId{0} : tl2.tracks()[0].id;
+                    gui.status = "Deleted track.";
+                }
+            } else {
+                ImGui::TextDisabled("(can't delete the last track)");
+            }
+        }
+        ImGui::EndPopup();
     }
 
     // ---- Drag: apply the in-progress operation ----
@@ -485,7 +559,6 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                 if (!ci) break;
                 int64_t new_start = frame - gui.drag_grab_offset;
                 if (new_start < 0) new_start = 0;
-                // Which track lane is the mouse over?
                 vedit::TrackId dest = ci->track_id;
                 int lane = static_cast<int>((mouse.y - lanes_y0) / track_h);
                 if (lane >= 0 && lane < static_cast<int>(tracks.size()))
@@ -497,21 +570,23 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
             }
             case DragMode::TrimLeft: {
                 if (!ci) break;
-                // Move in-point: dragging right shortens from the left.
                 int64_t delta = frame - gui.drag_orig_start;
                 int64_t new_in = gui.drag_orig_in + delta;
-                if (new_in < 0) new_in = 0;
-                if (new_in > gui.drag_orig_out - 1) new_in = gui.drag_orig_out - 1;
-                app.clip_trim(gui.drag_clip, new_in, gui.drag_orig_out);
+                int64_t new_out = gui.drag_orig_out;
+                clamp_trim(new_in, new_out, gui.drag_source_len);
+                app.clip_trim(gui.drag_clip, new_in, new_out);
                 break;
             }
             case DragMode::TrimRight: {
                 if (!ci) break;
+                int64_t new_in = gui.drag_orig_in;
                 int64_t new_out = gui.drag_orig_in +
                                   (frame - gui.drag_orig_start);
-                if (new_out <= gui.drag_orig_in + 1)
-                    new_out = gui.drag_orig_in + 1;
-                app.clip_trim(gui.drag_clip, gui.drag_orig_in, new_out);
+                clamp_trim(new_in, new_out, gui.drag_source_len);
+                if (gui.drag_source_len > 0 && new_out >= gui.drag_source_len - 1) {
+                    gui.status = "Reached the end of the source clip.";
+                }
+                app.clip_trim(gui.drag_clip, new_in, new_out);
                 break;
             }
             default: break;
@@ -520,13 +595,21 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
 
     if (mouse_released && gui.drag != DragMode::None) {
         if (gui.drag == DragMode::Move) gui.status = "Moved clip.";
-        else if (gui.drag == DragMode::TrimLeft ||
-                 gui.drag == DragMode::TrimRight) gui.status = "Trimmed clip.";
+        else if (gui.drag == DragMode::TrimLeft) gui.status = "Trimmed clip's left edge.";
+        else if (gui.drag == DragMode::TrimRight) gui.status = "Trimmed clip's right edge.";
         gui.drag = DragMode::None;
         gui.drag_clip = vedit::ClipId{0};
     }
 
     ImGui::EndChild();
+
+    // Plain-language help, shown only when no clip is selected.
+    if (!has_sel) {
+        ImGui::TextDisabled(
+            "Tips: double-click media to add a clip | drag a clip to move it | "
+            "drag a clip's edge to shorten/lengthen | click the ruler to scrub | "
+            "right-click a clip or track for more");
+    }
 }
 
 // ============================================================================
@@ -538,7 +621,6 @@ int main(int, char**) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
-    // Enable drag-and-drop of files onto the window.
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
@@ -565,8 +647,6 @@ int main(int, char**) {
     if (const char* ac = std::getenv("VEDIT_AUDIO_CONSUMER"))
         app.player().set_audio_consumer(ac);
 
-    // NFD provides system-native file open/save dialogs. Must be
-    // initialised before any NFD_OpenDialog / NFD_SaveDialog call.
     if (NFD_Init() != NFD_OKAY) {
         vedit::Logger::log(vedit::Logger::Level::Warn,
                            "NFD_Init failed; file dialogs will not work");
@@ -599,7 +679,6 @@ int main(int, char**) {
                 event.window.event == SDL_WINDOWEVENT_CLOSE &&
                 event.window.windowID == SDL_GetWindowID(window))
                 running = false;
-            // Drag-and-drop a file onto the window -> import it.
             if (event.type == SDL_DROPFILE && event.drop.file) {
                 std::string path = event.drop.file;
                 SDL_free(event.drop.file);
@@ -609,7 +688,7 @@ int main(int, char**) {
                     const auto* item = app.project().library().item(idx);
                     if (item && item->fps > 0) gui.project_fps = item->fps;
                     gui.status = "Imported " + basename_of(path) +
-                                 "  (drag onto the timeline or double-click in Media).";
+                                 " — double-click it in Media to add to the timeline.";
                 } else {
                     gui.status = "Could not open: " + path;
                 }
@@ -618,8 +697,6 @@ int main(int, char**) {
 
         rpc_server.drain();
 
-        // Get the current frame (realtime if playing, freeze if paused)
-        // and upload it to the preview texture.
         int fw = 0, fh = 0;
         const uint8_t* fimg = nullptr;
         if (app.player().current_frame(fw, fh, fimg) && fimg && fw > 0 && fh > 0) {
@@ -639,8 +716,6 @@ int main(int, char**) {
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // Full-window layout: one host window split into regions, so the
-        // app looks like a real editor rather than scattered float panels.
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->WorkPos);
         ImGui::SetNextWindowSize(vp->WorkSize);
@@ -650,7 +725,6 @@ int main(int, char**) {
                      ImGuiWindowFlags_NoBringToFrontOnFocus |
                      ImGuiWindowFlags_MenuBar);
 
-        // Menu bar.
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("Open video...")) {
@@ -669,8 +743,7 @@ int main(int, char**) {
                     if (app.project().timeline().duration() > 0) {
                         std::string out = save_file_dialog("export.mp4");
                         if (!out.empty()) {
-                            // Synchronous export (blocks the UI). M1 scope —
-                            // pause playback first so the consumer is free.
+                            out = ensure_mp4_ext(out);
                             app.pause();
                             vedit::ExportService svc;
                             bool ok = svc.render(*app.project().producer(),
@@ -679,11 +752,23 @@ int main(int, char**) {
                                             : ("Export failed: " + out);
                         }
                     } else {
-                        gui.status = "Nothing to export — timeline is empty.";
+                        gui.status = "Nothing to export — add a clip first.";
                     }
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Quit")) running = false;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Help")) {
+                ImGui::TextWrapped(
+                    "vedit — a tiny video editor.\n\n"
+                    "1. File > Open video (or drag a file in) to import media.\n"
+                    "2. Double-click a media item to add it as a clip on the timeline.\n"
+                    "3. Drag a clip to move it; drag its edges to shorten/lengthen.\n"
+                    "4. Click the ruler (top of timeline) to scrub the preview.\n"
+                    "5. Right-click a clip or track for delete / cut actions.\n"
+                    "6. Upper video tracks overlay lower ones (like layers).\n"
+                    "7. File > Export video to render an MP4.");
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -691,34 +776,30 @@ int main(int, char**) {
 
         float full_w = ImGui::GetContentRegionAvail().x;
         float full_h = ImGui::GetContentRegionAvail().y;
-        float left_w = full_w * 0.28f;
-        float top_h = full_h * 0.55f;
+        float left_w = full_w * 0.26f;
+        float top_h = full_h * 0.52f;
 
-        // --- Left: media ---
         ImGui::BeginChild("left", ImVec2(left_w, top_h), ImGuiChildFlags_Border);
         draw_media_panel(app, gui);
         ImGui::EndChild();
 
         ImGui::SameLine();
 
-        // --- Right: preview ---
         ImGui::BeginChild("preview", ImVec2(0, top_h), ImGuiChildFlags_Border);
         draw_preview_panel(app, gui, preview_tex, tex_w, tex_h);
         ImGui::EndChild();
 
-        // --- Transport bar ---
         ImGui::BeginChild("transport", ImVec2(0, 36), ImGuiChildFlags_Border);
         draw_transport_panel(app, gui);
         ImGui::EndChild();
 
-        // --- Bottom: timeline ---
         ImGui::BeginChild("timeline", ImVec2(0, 0), ImGuiChildFlags_Border);
         draw_timeline_panel(app, gui);
         ImGui::EndChild();
 
-        ImGui::End();  // root
+        ImGui::End();
 
-        // Status line overlay.
+        // Status line.
         ImGui::SetNextWindowBgAlpha(0.85f);
         ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 8,
                                        vp->WorkPos.y + vp->WorkSize.y - 28));
