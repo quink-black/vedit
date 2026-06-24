@@ -55,7 +55,12 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
                         reinterpret_cast<mlt_listener>(on_export_frame));
     }
 
-    consumer.run();  // synchronous — blocks until done or error
+    consumer.run();  // synchronous -- blocks until done or error
+    // run() returns when terminate_on_pause fires, but the avformat
+    // consumer's encoder worker threads are only joined and their
+    // buffers freed by an explicit stop(). Without it FFmpeg's
+    // per-thread state leaks and teardown can race. Always stop.
+    consumer.stop();
     return true;
 }
 
@@ -75,6 +80,7 @@ bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
 
     consumer.connect(producer);
     consumer.run();
+    consumer.stop();
     return true;
 }
 
