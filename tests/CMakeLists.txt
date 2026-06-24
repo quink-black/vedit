@@ -14,3 +14,4 @@ target_compile_definitions(vedit_tests PRIVATE
 )
 include(CTest)
 add_test(NAME vedit_tests COMMAND vedit_tests)
+set_tests_properties(vedit_tests PROPERTIES TIMEOUT 30)

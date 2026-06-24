@@ -4,6 +4,7 @@
 #include <cstdlib>
 
 #include "domain/app_controller.h"
+#include "domain/export_service.h"
 #include "domain/ids.h"
 
 namespace {
@@ -149,4 +150,57 @@ TEST_CASE("AppController track remove cleans up clips", "[t8]") {
     REQUIRE(app.track_remove(v1));
     REQUIRE(app.track_count() == 0);
     REQUIRE(app.project().timeline().clip(id) == nullptr);
+}
+
+TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9]") {
+    std::string clip = make_test_clip("export");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    std::string out = "/tmp/vedit_t9_export.mp4";
+    vedit::ExportService svc;
+    double progress = -1;
+    REQUIRE(svc.render(*app.project().producer(), app.profile(), out,
+                       [&](double p) { progress = p; }));
+
+    // Verify the output exists and has expected properties via ffprobe.
+    std::string cmd = "ffprobe -v error -show_entries format=duration:stream=width,height "
+                      "-of csv=p=0 " + out + " 2>&1";
+    FILE* f = popen(cmd.c_str(), "r");
+    REQUIRE(f != nullptr);
+    char buf[256] = {0};
+    if (fgets(buf, sizeof(buf), f)) {
+        // CSV: width,height,duration (two lines for streams + format)
+        std::string s(buf);
+        REQUIRE_FALSE(s.empty());
+        REQUIRE(s.find(",") != std::string::npos);
+    }
+    pclose(f);
+    REQUIRE(progress >= 0.0);  // progress callback fired
+}
+
+TEST_CASE("ExportService get_frame saves a single PNG", "[t9]") {
+    std::string clip = make_test_clip("frame");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    std::string out = "/tmp/vedit_t9_frame.png";
+    vedit::ExportService svc;
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 0, out));
+
+    // Check the file exists and is non-empty.
+    FILE* f = fopen(out.c_str(), "rb");
+    REQUIRE(f != nullptr);
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fclose(f);
+    REQUIRE(sz > 100);  // any valid PNG is > 100 bytes
 }

@@ -4,6 +4,7 @@ add_library(vedit_domain STATIC
     timeline_model.cpp
     player_controller.cpp
     app_controller.cpp
+    export_service.cpp
 )
 target_include_directories(vedit_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(vedit_domain PUBLIC vedit_core)
