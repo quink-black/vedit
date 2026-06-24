@@ -89,6 +89,7 @@ TrackId TimelineModel::add_track(TrackKind kind, const std::string& name) {
     multitrack_->connect(*ts.playlist, index);
     tractor_->set_track(*ts.playlist, index);
     tracks_.push_back(std::move(ts));
+    replant_compositions();
     return tracks_.back().info.id;
 }
 
@@ -120,6 +121,7 @@ bool TimelineModel::remove_track(TrackId id) {
         if (it->second.track_id == id) it = clips_.erase(it);
         else ++it;
     }
+    replant_compositions();
     return true;
 }
 
@@ -343,6 +345,36 @@ int64_t TimelineModel::duration() const {
         }
     }
     return max_len;
+}
+
+void TimelineModel::replant_compositions() {
+    // Disconnect existing composites from the field, then drop them.
+    Mlt::Field* field = tractor_->field();
+    if (field) {
+        for (auto& t : composites_) {
+            if (t && t->is_valid()) field->disconnect_service(*t);
+        }
+        delete field;
+    }
+    composites_.clear();
+
+    // Plant one composite transition between each consecutive pair of
+    // video tracks so track N+1 overlays track N. a_track is the
+    // lower (background) track, b_track the upper (foreground).
+    for (size_t i = 1; i < tracks_.size(); ++i) {
+        if (tracks_[i - 1].info.kind != TrackKind::Video) continue;
+        if (tracks_[i].info.kind != TrackKind::Video) continue;
+        auto comp = std::make_unique<Mlt::Transition>(profile_, "composite");
+        if (!comp || !comp->is_valid()) {
+            Logger::log(Logger::Level::Error,
+                        "replant_compositions: composite transition unavailable");
+            continue;
+        }
+        comp->set("progressive", 1);
+        tractor_->plant_transition(*comp, static_cast<int>(i - 1),
+                                   static_cast<int>(i));
+        composites_.push_back(std::move(comp));
+    }
 }
 
 void TimelineModel::rebuild_clip_view() {

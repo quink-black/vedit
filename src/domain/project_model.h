@@ -6,6 +6,7 @@
 #include <Mlt.h>
 
 #include "media_library.h"
+#include "player_controller.h"
 #include "timeline_model.h"
 
 namespace vedit {
@@ -21,6 +22,7 @@ public:
     Mlt::Profile& profile() { return profile_; }
     MediaLibrary& library() { return *library_; }
     TimelineModel& timeline() { return *timeline_; }
+    PlayerController& player() { return *player_; }
 
     // The tractor to feed a preview consumer. Same assembly the
     // renderer will export (T9).
@@ -30,6 +32,7 @@ private:
     Mlt::Profile profile_;
     std::unique_ptr<MediaLibrary> library_;
     std::unique_ptr<TimelineModel> timeline_;
+    std::unique_ptr<PlayerController> player_;
 };
 
 } // namespace vedit

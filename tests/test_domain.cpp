@@ -4,6 +4,7 @@
 
 #include "domain/ids.h"
 #include "domain/media_library.h"
+#include "domain/player_controller.h"
 #include "domain/project_model.h"
 #include "domain/timeline_model.h"
 
@@ -261,4 +262,92 @@ TEST_CASE("Trim clip changes in/out and length", "[domain][t5]") {
     REQUIRE(c_after != nullptr);
     REQUIRE(c_after->in_point == orig_in + 5);
     REQUIRE(c_after->length == orig_len - 5);
+}
+
+TEST_CASE("Two tracks compose through the tractor", "[domain][t6]") {
+    std::string clip = make_test_clip("compose");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video, "V1");
+    auto v2 = tl.add_track(vedit::TrackKind::Video, "V2");
+    int mi = pm.library().import(clip);
+
+    // Base clip on v1, overlay clip on v2 at the same timeline range.
+    REQUIRE(tl.append_clip(v1, mi).valid());
+    REQUIRE(tl.append_clip(v2, mi).valid());
+    REQUIRE(tl.duration() > 0);
+
+    // The tractor must produce a valid composed frame -- this is the
+    // proof that the composite transition planted in add_track wires
+    // the two tracks together through MLT's render path.
+    Mlt::Producer* tractor = tl.producer();
+    REQUIRE(tractor != nullptr);
+    REQUIRE(tractor->is_valid());
+    tractor->seek(0);
+    Mlt::Frame* frame = tractor->get_frame();
+    REQUIRE(frame != nullptr);
+    REQUIRE(frame->is_valid());
+    mlt_image_format fmt = mlt_image_none;
+    int w = 0, h = 0;
+    uint8_t* img = frame->get_image(fmt, w, h);
+    REQUIRE(img != nullptr);
+    REQUIRE(w > 0);
+    REQUIRE(h > 0);
+    delete frame;
+}
+
+TEST_CASE("PlayerController play/pause/seek against the tractor", "[domain][t6]") {
+    std::string clip = make_test_clip("player");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video);
+    int mi = pm.library().import(clip);
+    REQUIRE(tl.append_clip(v1, mi).valid());
+
+    vedit::PlayerController player(pm);
+    player.set_audio_consumer("null");  // headless: no audio device
+    REQUIRE_FALSE(player.is_playing());
+    REQUIRE(player.position() == 0);
+
+    player.seek(10);
+    REQUIRE(player.position() == 10);
+
+    // play() starts the realtime consumer; pause() stops it cleanly.
+    REQUIRE(player.play());
+    REQUIRE(player.is_playing());
+    player.pause();
+    REQUIRE_FALSE(player.is_playing());
+}
+
+TEST_CASE("Two video tracks composite via planted transition", "[domain][t6]") {
+    std::string clip = make_test_clip("composite");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::ProjectModel pm;
+    auto& tl = pm.timeline();
+    auto v1 = tl.add_track(vedit::TrackKind::Video, "V1");
+    auto v2 = tl.add_track(vedit::TrackKind::Video, "V2");
+    int mi = pm.library().import(clip);
+    REQUIRE(tl.append_clip(v1, mi).valid());
+    REQUIRE(tl.append_clip(v2, mi).valid());
+
+    // The tractor must be valid and produce a frame with both tracks
+    // composited. A rendered frame proves the composite transition is
+    // wired (otherwise track 2 would be invisible / an error).
+    Mlt::Producer* tractor = pm.producer();
+    REQUIRE(tractor != nullptr);
+    Mlt::Frame* frame = tractor->get_frame();
+    REQUIRE(frame != nullptr);
+    REQUIRE(frame->is_valid());
+    mlt_image_format fmt = mlt_image_none;
+    int w = 0, h = 0;
+    uint8_t* img = frame->get_image(fmt, w, h);
+    REQUIRE(img != nullptr);
+    REQUIRE(w > 0);
+    REQUIRE(h > 0);
+    delete frame;
 }

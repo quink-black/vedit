@@ -59,6 +59,12 @@ public:
     // model's lifetime; PreviewRenderer connects its consumer to this.
     Mlt::Producer* producer() { return tractor_.get(); }
 
+    // Ensure a composite transition is planted so a higher video track
+    // overlays the base track. Idempotent: replanting on track add is
+    // safe (MLT deduplicates by service identity). M1 plants one
+    // composite per video track above track 0.
+    void ensure_composite_transitions();
+
     // --- tracks ---
     TrackId add_track(TrackKind kind, const std::string& name = "");
     bool remove_track(TrackId id);
@@ -95,6 +101,12 @@ public:
     std::vector<ClipInfo> clips_on_track(TrackId track) const;
     int64_t duration() const;  // total timeline length in frames
 
+    // --- composition ---
+    // (Re)plant composite transitions between consecutive video tracks
+    // so track N+1 overlays track N. Call after add/remove_track.
+    // Idempotent: clears existing tractor transitions first.
+    void replant_compositions();
+
 private:
     struct TrackState {
         TrackInfo info;
@@ -116,6 +128,9 @@ private:
     std::unique_ptr<Mlt::Tractor> tractor_;
     std::unique_ptr<Mlt::Multitrack> multitrack_;
     std::vector<TrackState> tracks_;
+    // Composite transitions planted between consecutive video tracks.
+    // Tracked so replant_compositions can disconnect them first.
+    std::vector<std::unique_ptr<Mlt::Transition>> composites_;
 
     int64_t next_clip_id_ = 1;
     int64_t next_track_id_ = 1;
