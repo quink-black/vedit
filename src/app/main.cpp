@@ -132,11 +132,21 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Exit when MLT self-stops at end of clip (terminate_on_pause).
-        if (preview_started && !preview.is_running()) {
-            vedit::Logger::log(vedit::Logger::Level::Info,
-                               "main: preview no longer running, exiting");
-            running = false;
+        // Exit when MLT self-stops at end of clip (terminate_on_pause),
+        // OR when the playhead reaches the producer length (fallback for
+        // cases where the consumer-stopped event does not fire).
+        if (preview_started) {
+            if (!preview.is_running()) {
+                vedit::Logger::log(vedit::Logger::Level::Info,
+                                   "main: preview no longer running, exiting");
+                running = false;
+            } else if (producer && producer->is_valid() &&
+                       last_position >= 0 &&
+                       last_position >= producer->get_length() - 1) {
+                vedit::Logger::log(vedit::Logger::Level::Info,
+                                   "main: reached end of clip, exiting");
+                running = false;
+            }
         }
 
         ImGui_ImplOpenGL3_NewFrame();
