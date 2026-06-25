@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "export_service.h"
+#include "filter_catalog.h"
 #include "ids.h"
 #include "project_model.h"
 #include "player_controller.h"
@@ -66,6 +67,9 @@ public:
     bool clip_trim(ClipId id, int64_t new_in, int64_t new_out);
     ClipId clip_split(ClipId id, int64_t at_timeline_position);
 
+    // --- filters (M2) ---
+    const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
+
     // --- transport ---
     bool play();
     void pause();
@@ -103,6 +107,7 @@ public:
 private:
     std::unique_ptr<ProjectModel> project_;
     std::unique_ptr<PlayerController> player_;
+    std::unique_ptr<FilterCatalog> filter_catalog_;
 
     // Active and recently-finished export jobs. The shared_ptr is held
     // here so the worker stays joined even if the caller drops its

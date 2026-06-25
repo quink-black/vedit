@@ -11,7 +11,8 @@ namespace vedit {
 
 AppController::AppController()
     : project_(std::make_unique<ProjectModel>()),
-      player_(std::make_unique<PlayerController>(*project_)) {}
+      player_(std::make_unique<PlayerController>(*project_)),
+      filter_catalog_(std::make_unique<FilterCatalog>()) {}
 
 AppController::~AppController() = default;
 

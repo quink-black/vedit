@@ -129,9 +129,47 @@ void register_methods(Dispatcher& d, AppController& app) {
         return instances;
     });
 
+    // ---- filter.list ----
+    //
+    // Returns every MLT filter service known to the repository, with
+    // yml-driven parameter metadata. The agent uses this to discover
+    // what filters are available and what parameters they accept before
+    // calling filter.add / filter.set_param.
+    d.register_method("filter.list", [&](const nlohmann::json&) {
+        nlohmann::json result = nlohmann::json::array();
+        for (const auto& f : app.filter_catalog().filters()) {
+            nlohmann::json j;
+            j["id"] = f.id;
+            j["title"] = f.title;
+            j["description"] = f.description;
+            j["is_audio"] = f.is_audio;
+            j["is_video"] = f.is_video;
+            nlohmann::json params = nlohmann::json::array();
+            for (const auto& p : f.params) {
+                nlohmann::json pj;
+                pj["identifier"] = p.identifier;
+                pj["title"] = p.title;
+                pj["type"] = p.type;
+                pj["default"] = p.default_value;
+                pj["minimum"] = p.minimum;
+                pj["maximum"] = p.maximum;
+                pj["mutable"] = p.mutable_;
+                pj["animation"] = p.animation;
+                if (!p.widget.empty()) pj["widget"] = p.widget;
+                if (!p.values.empty()) pj["values"] = p.values;
+                params.push_back(std::move(pj));
+            }
+            j["params"] = std::move(params);
+            result.push_back(std::move(j));
+        }
+        return result;
+    });
+
     // ---- state.get ----
     d.register_method("state.get", [&](const nlohmann::json&) {
-        return nlohmann::json::parse(ProjectSaveLoad::state_json(app.project()));
+        return nlohmann::json::parse(
+            ProjectSaveLoad::state_json(app.project(),
+                                        app.filter_catalog()));
     });
 
     // ---- library.import ----

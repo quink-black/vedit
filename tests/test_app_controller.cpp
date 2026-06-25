@@ -1012,7 +1012,14 @@ TEST_CASE("state.get includes P1/P2 filter placeholder schema", "[t16]") {
     REQUIRE(result.contains("filters"));
     REQUIRE(result["filters"].contains("available"));
     REQUIRE(result["filters"]["available"].is_array());
-    REQUIRE(result["filters"]["available"].empty());
+    // M2 populates available from the MLT filter catalog. Verify at
+    // least the "brightness" filter is present (a core MLT filter).
+    REQUIRE_FALSE(result["filters"]["available"].empty());
+    bool has_brightness = false;
+    for (const auto& f : result["filters"]["available"]) {
+        if (f["id"] == "brightness") has_brightness = true;
+    }
+    REQUIRE(has_brightness);
     REQUIRE(result["filters"].contains("attached"));
     REQUIRE(result["filters"]["attached"].is_array());
     REQUIRE(result["filters"]["attached"].empty());

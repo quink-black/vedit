@@ -1,5 +1,6 @@
 #include "project_save_load.h"
 
+#include "filter_catalog.h"
 #include "media_library.h"
 #include "project_model.h"
 #include "timeline_model.h"
@@ -134,6 +135,12 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
 }
 
 std::string ProjectSaveLoad::state_json(ProjectModel& project) {
+    // Default: no catalog. filters.available will be empty.
+    return state_json(project, FilterCatalog{});
+}
+
+std::string ProjectSaveLoad::state_json(ProjectModel& project,
+                                         const FilterCatalog& catalog) {
     TimelineModel& tl = project.timeline();
     MediaLibrary& lib = project.library();
 
@@ -226,29 +233,31 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project) {
 
     // ---- Filters placeholder (P1/P2 schema lock) ----
     //
-    // Empty in M1 — no filter RPC exists yet. The shape below is the
-    // contract that M2 (filter.* RPC) and M3 (keyframe) will populate.
-    // Changing this shape after an agent has learned it breaks the
-    // control plane. The rules:
-    //
-    //   P1 (generic, yml-driven): each filter entry carries the MLT
-    //     service name ("dynamictext", "opencv.tracker", etc.) and a
-    //     `params` array describing every parameter the filter exposes
-    //     (name, type, default, flags like "animation:yes").
-    //
-    //   P2 (keyframe-aware): every parameter value in an RPC call
-    //     accepts EITHER `{"value": <scalar>}` OR
-    //     `{"keyframes": [{"frame": <int>, "value": <scalar>}, ...]}`.
-    //     M1 never sends keyframes, but the shape is fixed from day one
-    //     so "make the effect follow motion" (Scenario B) is an
-    //     extension, not a redesign.
-    //
-    // `filters.available` lists all filters MLT provides (populated
-    // from yml at M2 time). `filters.attached` lists the filters
-    // currently applied to clips/tracks, keyed by target clip_id /
-    // track_id. Both arrays are empty until M2 lands.
+    // P1 (generic, yml-driven): filter list from MLT repository.
+    // P2 (keyframe-aware): parameter value shape {value}|{keyframes}.
+    // M2 populates `available` from the catalog; `attached` stays
+    // empty until filter.add RPC is implemented (M2b).
+    nlohmann::json available = nlohmann::json::array();
+    for (const auto& f : catalog.filters()) {
+        nlohmann::json fj;
+        fj["id"] = f.id;
+        fj["title"] = f.title;
+        fj["is_audio"] = f.is_audio;
+        fj["is_video"] = f.is_video;
+        nlohmann::json fparams = nlohmann::json::array();
+        for (const auto& p : f.params) {
+            nlohmann::json pj;
+            pj["identifier"] = p.identifier;
+            pj["type"] = p.type;
+            pj["default"] = p.default_value;
+            if (p.animation) pj["animation"] = true;
+            fparams.push_back(std::move(pj));
+        }
+        fj["params"] = std::move(fparams);
+        available.push_back(std::move(fj));
+    }
     doc["filters"] = nlohmann::json{
-        {"available", nlohmann::json::array()},
+        {"available", std::move(available)},
         {"attached",  nlohmann::json::array()}
     };
 

@@ -9,6 +9,7 @@ namespace vedit {
 
 class ProjectModel;
 class TimelineModel;
+class FilterCatalog;
 
 // Serializes a ProjectModel to/from MLT XML (consumer_xml / producer_xml).
 // The JSON projection (state_json) is a derived view of the timeline for
@@ -33,6 +34,10 @@ public:
     //              "media": "path/to/file.mp4"}]}]}
     // This is the state.get projection for agents.
     static std::string state_json(ProjectModel& project);
+    // Overload with filter catalog — populates filters.available from
+    // the catalog and filters.attached from the timeline.
+    static std::string state_json(ProjectModel& project,
+                                   const FilterCatalog& catalog);
 };
 
 } // namespace vedit
