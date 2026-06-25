@@ -712,6 +712,13 @@ int main(int, char**) {
         "vedit", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1400, 860, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::fprintf(stderr, "SDL_CreateWindow failed\n"); SDL_Quit(); return 1; }
+
+#ifdef __APPLE__
+    // Prefer Metal on macOS; SDL2 falls back to OpenGL automatically
+    // if Metal is unavailable (e.g. older macOS versions).
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "metal");
+#endif
+
     SDL_Renderer* renderer = SDL_CreateRenderer(
         window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) {
@@ -986,7 +993,7 @@ int main(int, char**) {
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 18, 18, 23, 255);
         SDL_RenderClear(renderer);
-        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData());
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
     }
 

@@ -1,35 +1,32 @@
-# ImGui core comes from the apt libimgui-dev (libimgui.a + imgui pkg).
-# The apt package ships the platform backend .cpp files under
-# /usr/share/doc/libimgui-dev/examples/backends/ rather than in the
-# include dir, so we compile those two into a thin static lib here.
+# ImGui is built from local source (third_party/imgui/) so no system
+# pkg-config dependency is needed. This approach works on both Linux and
+# macOS. The local source includes core files, backends, and imconfig.h.
+set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/imgui")
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(IMGUI REQUIRED IMPORTED_TARGET imgui)
+add_library(vedit_imgui STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdlrenderer2.cpp
+)
+target_include_directories(vedit_imgui PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+target_compile_definitions(vedit_imgui PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
+target_link_libraries(vedit_imgui PUBLIC PkgConfig::SDL2)
 
-set(IMGUI_BACKEND_DIR "/usr/share/doc/libimgui-dev/examples/backends")
-set(IMGUI_INCLUDE_DIR  "/usr/include/imgui/backends")
-
-add_library(vedit_imgui_backends STATIC
-    ${IMGUI_BACKEND_DIR}/imgui_impl_sdl2.cpp
-    ${IMGUI_BACKEND_DIR}/imgui_impl_sdlrenderer2.cpp
-)
-target_link_libraries(vedit_imgui_backends PUBLIC
-    PkgConfig::IMGUI
-    PkgConfig::SDL2
-)
-target_include_directories(vedit_imgui_backends PUBLIC
-    ${IMGUI_INCLUDE_DIR}
-    /usr/include/imgui
-)
-target_compile_definitions(vedit_imgui_backends PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
+# Alias for backward compatibility with existing targets
+add_library(vedit_imgui_backends ALIAS vedit_imgui)
 
 # ---- Native File Dialog Extended (NFD) ----
-# System-native file open/save dialogs. Try the system package first
-# (matches idiff's pattern); fall back to building from source via
-# FetchContent so a fresh checkout always works.
-find_package(nfd QUIET)
-if(NOT nfd_FOUND)
-    message(STATUS "nfd not found on system -- will build from source")
+# System-native file open/save dialogs. The find_package() call lives in
+# the top-level CMakeLists.txt so the resulting IMPORTED target is visible
+# from every subdirectory; here we only need to pull the source in when
+# the system package was absent.
+if(VEDIT_BUILD_NFD)
     include(FetchContent)
     FetchContent_Declare(
         nativefiledialog-extended
@@ -38,6 +35,4 @@ if(NOT nfd_FOUND)
         GIT_SHALLOW    TRUE
     )
     FetchContent_MakeAvailable(nativefiledialog-extended)
-else()
-    message(STATUS "Found system nfd: ${nfd_DIR}")
 endif()

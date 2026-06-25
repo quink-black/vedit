@@ -20,36 +20,11 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
-pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
-find_package(Threads REQUIRED)
-
-# Asio (standalone, header-only) -- transport for the in-process JSON-RPC
-# server (vedit_rpc). Resolved at top level so the `asio::asio` target is
-# visible from every subdirectory. Detection mirrors idiff: find_path first,
-# fall back to FetchContent if absent.
-find_path(ASIO_INCLUDE_DIR asio.hpp
-    HINTS /usr/local/include /usr/include
-          $ENV{HOMEBREW_PREFIX}/include
-    DOC "Path to standalone Asio headers (asio.hpp)")
-if(ASIO_INCLUDE_DIR)
-    message(STATUS "Found system Asio: ${ASIO_INCLUDE_DIR}")
-    add_library(asio_asio INTERFACE)
-    target_include_directories(asio_asio INTERFACE "${ASIO_INCLUDE_DIR}")
-    target_compile_definitions(asio_asio INTERFACE ASIO_STANDALONE)
-    add_library(asio::asio ALIAS asio_asio)
-else()
-    message(FATAL_ERROR "Asio not found. Install libasio-dev (apt) or equivalent.")
-endif()
-
 # ---- macOS / Apple platform detection ----
+# Must come BEFORE find_package / pkg_check_modules so that Homebrew paths
+# are on the search list for MLT, SDL2, etc.
 if(APPLE)
     message(STATUS "Detected macOS / Apple platform")
-    target_compile_definitions(vedit_util PUBLIC VEDIT_PLATFORM_MACOS)
-    target_compile_definitions(vedit_core PUBLIC VEDIT_PLATFORM_MACOS)
-    target_compile_definitions(vedit_domain PUBLIC VEDIT_PLATFORM_MACOS)
-    target_compile_definitions(vedit_rpc PUBLIC VEDIT_PLATFORM_MACOS)
 
     # Apple Clang may need -fno-aligned-allocation until C++17 ABI is stable
     add_compile_options($<$<CXX_COMPILER_ID:AppleClang>:-fno-aligned-allocation>)
@@ -70,6 +45,38 @@ if(APPLE)
     message(STATUS "Using Homebrew prefix: ${HOMEBREW_PREFIX}")
 endif()
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
+pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+find_package(Threads REQUIRED)
+
+find_package(nfd QUIET)
+if(NOT nfd_FOUND)
+    message(STATUS "nfd not found on system -- will build from source")
+    set(VEDIT_BUILD_NFD ON)
+else()
+    message(STATUS "Found system nfd: ${nfd_DIR}")
+    set(VEDIT_BUILD_NFD OFF)
+endif()
+
+# Asio (standalone, header-only) -- transport for the in-process JSON-RPC
+# server (vedit_rpc). Resolved at top level so the `asio::asio` target is
+# visible from every subdirectory. Detection mirrors idiff: find_path first,
+# fall back to FetchContent if absent.
+find_path(ASIO_INCLUDE_DIR asio.hpp
+    HINTS /usr/local/include /usr/include
+          $ENV{HOMEBREW_PREFIX}/include
+    DOC "Path to standalone Asio headers (asio.hpp)")
+if(ASIO_INCLUDE_DIR)
+    message(STATUS "Found system Asio: ${ASIO_INCLUDE_DIR}")
+    add_library(asio_asio INTERFACE)
+    target_include_directories(asio_asio INTERFACE "${ASIO_INCLUDE_DIR}")
+    target_compile_definitions(asio_asio INTERFACE ASIO_STANDALONE)
+    add_library(asio::asio ALIAS asio_asio)
+else()
+    message(FATAL_ERROR "Asio not found. Install libasio-dev (apt) or equivalent.")
+endif()
+
 if(VEDIT_BUILD_TESTS)
     pkg_check_modules(CATCH2 REQUIRED IMPORTED_TARGET catch2-with-main)
     enable_testing()
@@ -81,6 +88,14 @@ add_subdirectory(src/core)
 add_subdirectory(src/domain)
 add_subdirectory(src/rpc)
 add_subdirectory(src/app)
+
+# ---- macOS platform defines (must be after add_subdirectory so targets exist) ----
+if(APPLE)
+    target_compile_definitions(vedit_util PUBLIC VEDIT_PLATFORM_MACOS)
+    target_compile_definitions(vedit_core PUBLIC VEDIT_PLATFORM_MACOS)
+    target_compile_definitions(vedit_domain PUBLIC VEDIT_PLATFORM_MACOS)
+    target_compile_definitions(vedit_rpc PUBLIC VEDIT_PLATFORM_MACOS)
+endif()
 
 if(VEDIT_BUILD_TESTS)
     add_subdirectory(tests)
