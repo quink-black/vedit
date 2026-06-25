@@ -39,8 +39,11 @@ namespace vedit {
 // Best-effort: failure is silent since thread naming is non-critical.
 inline void set_thread_name(const std::string& name) {
 #ifdef _WIN32
-    // SetThreadDescription requires Windows 10 version 1607+.
-    // Not critical if unavailable; skip on older Windows.
+    // SetThreadDescription is available on Windows 10 1607+ and is
+    // declared by <windows.h> when _WIN32_WINNT >= 0x0A00 (set by the
+    // CMake build). Best-effort: ignore the HRESULT.
+    std::wstring wide(name.begin(), name.end());
+    (void)SetThreadDescription(GetCurrentThread(), wide.c_str());
 #elif defined(__APPLE__)
     // macOS: single-argument form
     pthread_setname_np(name.c_str());
