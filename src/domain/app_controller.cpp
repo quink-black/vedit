@@ -274,4 +274,27 @@ std::string AppController::filter_get_param(ClipId clip_id,
         clip_id, filter_name, param);
 }
 
+bool AppController::track_filter_add(TrackId track_id, const std::string& name) {
+    return project_->timeline().track_attach_filter(track_id, name);
+}
+
+bool AppController::track_filter_remove(TrackId track_id, const std::string& name) {
+    return project_->timeline().track_detach_filter(track_id, name);
+}
+
+bool AppController::track_filter_set_param(TrackId track_id,
+                                            const std::string& filter_name,
+                                            const std::string& param,
+                                            const std::string& value) {
+    return project_->timeline().track_set_filter_param(
+        track_id, filter_name, param, value);
+}
+
+std::string AppController::track_filter_get_param(TrackId track_id,
+                                                   const std::string& filter_name,
+                                                   const std::string& param) {
+    return project_->timeline().track_get_filter_param(
+        track_id, filter_name, param);
+}
+
 } // namespace vedit

@@ -1198,3 +1198,50 @@ TEST_CASE("brightness filter changes rendered output", "[t17][export]") {
     REQUIRE(app.filter_remove(cid, "brightness"));
     REQUIRE(app.filter_get_param(cid, "brightness", "level") == "");
 }
+
+TEST_CASE("per-track filter add/set/get/remove over RPC", "[t17]") {
+    std::string clip = vedit::test::make_test_clip("track_filter");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Attach brightness to the track (not a clip).
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","filter.add"},{"id",1},
+                          {"params", {{"track_id", v1.value}, {"filter", "brightness"}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Set level to 0.5.
+    req = {{"jsonrpc","2.0"},{"method","filter.set_param"},{"id",2},
+           {"params", {{"track_id", v1.value}, {"filter", "brightness"},
+                       {"param", "level"}, {"value", 0.5}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Get it back.
+    req = {{"jsonrpc","2.0"},{"method","filter.get_param"},{"id",3},
+           {"params", {{"track_id", v1.value}, {"filter", "brightness"},
+                       {"param", "level"}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"]["value"] == "0.5");
+
+    // Remove.
+    req = {{"jsonrpc","2.0"},{"method","filter.remove"},{"id",4},
+           {"params", {{"track_id", v1.value}, {"filter", "brightness"}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Gone.
+    req = {{"jsonrpc","2.0"},{"method","filter.get_param"},{"id",5},
+           {"params", {{"track_id", v1.value}, {"filter", "brightness"},
+                       {"param", "level"}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp.contains("error"));
+}

@@ -134,6 +134,18 @@ public:
                                  const std::string& filter_name,
                                  const std::string& param);
 
+    // Per-track filters (planted on tractor field, apply to all clips
+    // on the track). Same param API as per-clip, prefixed track_.
+    bool track_attach_filter(TrackId track_id, const std::string& filter_name);
+    bool track_detach_filter(TrackId track_id, const std::string& filter_name);
+    bool track_set_filter_param(TrackId track_id,
+                                const std::string& filter_name,
+                                const std::string& param,
+                                const std::string& value);
+    std::string track_get_filter_param(TrackId track_id,
+                                       const std::string& filter_name,
+                                       const std::string& param);
+
 private:
     struct TrackState {
         TrackInfo info;

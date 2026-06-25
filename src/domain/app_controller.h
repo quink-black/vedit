@@ -77,6 +77,17 @@ public:
                                  const std::string& filter_name,
                                  const std::string& param);
 
+    // Per-track filter variants.
+    bool track_filter_add(TrackId track_id, const std::string& name);
+    bool track_filter_remove(TrackId track_id, const std::string& name);
+    bool track_filter_set_param(TrackId track_id,
+                                const std::string& filter_name,
+                                const std::string& param,
+                                const std::string& value);
+    std::string track_filter_get_param(TrackId track_id,
+                                       const std::string& filter_name,
+                                       const std::string& param);
+
     // --- transport ---
     bool play();
     void pause();

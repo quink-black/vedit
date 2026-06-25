@@ -594,4 +594,85 @@ std::string TimelineModel::get_filter_param(ClipId clip_id,
     return result;
 }
 
+// ---- per-track filters ----
+//
+// Per-track filters are attached to the track's playlist producer,
+// same API as per-clip (mlt_service_attach). This is Shotcut's
+// pattern and simpler than field-planting. The filter applies to
+// every clip on the track because it runs on the playlist output.
+
+bool TimelineModel::track_attach_filter(TrackId track_id,
+                                         const std::string& filter_name) {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return false;
+
+    Mlt::Filter filter(profile_, filter_name.c_str());
+    if (!filter.is_valid()) return false;
+
+    auto& pl = tracks_[tidx].playlist;
+    mlt_service_attach(MLT_SERVICE(pl->get_producer()),
+                       MLT_FILTER(filter.get_filter()));
+    return true;
+}
+
+namespace {
+
+Mlt::Filter* find_playlist_filter(Mlt::Playlist& pl, const std::string& name) {
+    int n = pl.filter_count();
+    for (int i = 0; i < n; ++i) {
+        Mlt::Filter* f = pl.filter(i);
+        if (!f) continue;
+        const char* svc = f->get("mlt_service");
+        if (svc && svc == name) return f;
+        delete f;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+bool TimelineModel::track_detach_filter(TrackId track_id,
+                                         const std::string& filter_name) {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return false;
+
+    auto& pl = tracks_[tidx].playlist;
+    Mlt::Filter* found = find_playlist_filter(*pl, filter_name);
+    if (!found) return false;
+    mlt_service_detach(MLT_SERVICE(pl->get_producer()),
+                       MLT_FILTER(found->get_filter()));
+    delete found;
+    return true;
+}
+
+bool TimelineModel::track_set_filter_param(TrackId track_id,
+                                            const std::string& filter_name,
+                                            const std::string& param,
+                                            const std::string& value) {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return false;
+
+    auto& pl = tracks_[tidx].playlist;
+    Mlt::Filter* found = find_playlist_filter(*pl, filter_name);
+    if (!found) return false;
+    found->set(param.c_str(), value.c_str());
+    delete found;
+    return true;
+}
+
+std::string TimelineModel::track_get_filter_param(TrackId track_id,
+                                                    const std::string& filter_name,
+                                                    const std::string& param) {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return "";
+
+    auto& pl = tracks_[tidx].playlist;
+    Mlt::Filter* found = find_playlist_filter(*pl, filter_name);
+    if (!found) return "";
+    const char* val = found->get(param.c_str());
+    std::string result = val ? val : "";
+    delete found;
+    return result;
+}
+
 } // namespace vedit

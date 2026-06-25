@@ -166,30 +166,45 @@ void register_methods(Dispatcher& d, AppController& app) {
     });
 
     // ---- filter.add / filter.remove / filter.set_param / filter.get_param ----
+    //
+    // Target: clip_id (per-clip) or track_id (per-track). Per-clip
+    // attaches to the cut producer; per-track plants on the tractor
+    // field and applies to all clips on that track.
     d.register_method("filter.add", [&](const nlohmann::json& params) {
-        ClipId id{params.value("clip_id", 0LL)};
         std::string name = params.value("filter", "");
         if (name.empty()) throw RpcException(ErrorCode::InvalidParams, "missing filter name");
-        if (!app.filter_add(id, name))
-            throw RpcException(ErrorCode::ApplicationError, "add failed (bad clip or filter)");
+
+        if (params.contains("track_id")) {
+            TrackId tid{params.value("track_id", 0LL)};
+            if (!app.track_filter_add(tid, name))
+                throw RpcException(ErrorCode::ApplicationError, "add to track failed");
+        } else {
+            ClipId id{params.value("clip_id", 0LL)};
+            if (!app.filter_add(id, name))
+                throw RpcException(ErrorCode::ApplicationError, "add to clip failed");
+        }
         return nlohmann::json{{"ok", true}};
     });
 
     d.register_method("filter.remove", [&](const nlohmann::json& params) {
-        ClipId id{params.value("clip_id", 0LL)};
         std::string name = params.value("filter", "");
         if (name.empty()) throw RpcException(ErrorCode::InvalidParams, "missing filter name");
-        if (!app.filter_remove(id, name))
-            throw RpcException(ErrorCode::ApplicationError, "remove failed (not found)");
+
+        if (params.contains("track_id")) {
+            TrackId tid{params.value("track_id", 0LL)};
+            if (!app.track_filter_remove(tid, name))
+                throw RpcException(ErrorCode::ApplicationError, "remove from track failed");
+        } else {
+            ClipId id{params.value("clip_id", 0LL)};
+            if (!app.filter_remove(id, name))
+                throw RpcException(ErrorCode::ApplicationError, "remove from clip failed");
+        }
         return nlohmann::json{{"ok", true}};
     });
 
     d.register_method("filter.set_param", [&](const nlohmann::json& params) {
-        ClipId id{params.value("clip_id", 0LL)};
         std::string filter_name = params.value("filter", "");
         std::string param = params.value("param", "");
-        // P2 shape: {value: <scalar>}. M3 adds {keyframes: [...]}.
-        // Accept raw value OR {value: X} envelope for forward compat.
         std::string value;
         if (params.contains("value")) {
             const auto& v = params["value"];
@@ -199,18 +214,33 @@ void register_methods(Dispatcher& d, AppController& app) {
         }
         if (filter_name.empty() || param.empty())
             throw RpcException(ErrorCode::InvalidParams, "missing filter or param");
-        if (!app.filter_set_param(id, filter_name, param, value))
-            throw RpcException(ErrorCode::ApplicationError, "set_param failed");
+
+        if (params.contains("track_id")) {
+            TrackId tid{params.value("track_id", 0LL)};
+            if (!app.track_filter_set_param(tid, filter_name, param, value))
+                throw RpcException(ErrorCode::ApplicationError, "set_param on track failed");
+        } else {
+            ClipId id{params.value("clip_id", 0LL)};
+            if (!app.filter_set_param(id, filter_name, param, value))
+                throw RpcException(ErrorCode::ApplicationError, "set_param on clip failed");
+        }
         return nlohmann::json{{"ok", true}};
     });
 
     d.register_method("filter.get_param", [&](const nlohmann::json& params) {
-        ClipId id{params.value("clip_id", 0LL)};
         std::string filter_name = params.value("filter", "");
         std::string param = params.value("param", "");
         if (filter_name.empty() || param.empty())
             throw RpcException(ErrorCode::InvalidParams, "missing filter or param");
-        std::string val = app.filter_get_param(id, filter_name, param);
+
+        std::string val;
+        if (params.contains("track_id")) {
+            TrackId tid{params.value("track_id", 0LL)};
+            val = app.track_filter_get_param(tid, filter_name, param);
+        } else {
+            ClipId id{params.value("clip_id", 0LL)};
+            val = app.filter_get_param(id, filter_name, param);
+        }
         if (val.empty())
             throw RpcException(ErrorCode::ApplicationError,
                                "param not found or filter not attached");
