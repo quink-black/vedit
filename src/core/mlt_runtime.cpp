@@ -15,18 +15,23 @@ bool MltRuntime::init() {
     if (initialized_) return true;
 #ifdef _WIN32
     // On Linux/macOS MLT auto-discovers its modules from the install
-    // prefix compiled into libmlt. On Windows the ExternalProject_Add
-    // install lives in the build tree (VEDIT_MLT_INSTALL_DIR), so point
-    // MLT_REPOSITORY and MLT_DATA there before Factory::init() or the
-    // avformat/xml/sdl2 modules will not load.
+    // prefix compiled into libmlt, and also respects the MLT_REPOSITORY
+    // env var. On Windows, MLT's Win32 branch ignores MLT_REPOSITORY and
+    // uses <exe_dir>/lib/mlt instead. Since MLT is installed in the
+    // build tree (not next to the exe), pass the module directory
+    // directly to Factory::init() so it finds avformat/xml/sdl2.
   #ifdef VEDIT_MLT_INSTALL_DIR
     {
         namespace fs = std::filesystem;
         fs::path prefix = VEDIT_MLT_INSTALL_DIR;
-        std::string repo = (prefix / "lib" / "mlt-7").string();
-        std::string data = (prefix / "share" / "mlt-7").string();
+        std::string repo = (prefix / "lib" / "mlt").string();
+        std::string data = (prefix / "share" / "mlt").string();
         _putenv_s("MLT_REPOSITORY", repo.c_str());
         _putenv_s("MLT_DATA", data.c_str());
+        Mlt::Factory::init(repo.c_str());
+        initialized_ = true;
+        Logger::log(Logger::Level::Info, "MLT Factory initialized");
+        return true;
     }
   #endif
 #endif

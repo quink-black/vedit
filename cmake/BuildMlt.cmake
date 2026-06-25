@@ -56,15 +56,19 @@ function(vedit_build_mlt)
 
     set(MLT_CMAKE_ARGS
         -DCMAKE_INSTALL_PREFIX=${MLT_INSTALL}
+        -DCMAKE_C_FLAGS=/utf-8
+        -DCMAKE_CXX_FLAGS=/utf-8
         ${MLT_MODULE_ARGS}
     )
 
     # Forward the vcpkg toolchain so MLT finds ffmpeg/sdl2/glib/etc.
-    # installed by vcpkg manifest mode. Without this, MLT's inner
-    # find_package calls would not resolve vcpkg's installed packages.
+    # installed by vcpkg. Disable manifest mode for the inner build so
+    # MLT's own vcpkg.json does not trigger a fresh dependency install
+    # (the system install already has everything we need).
     if(CMAKE_TOOLCHAIN_FILE)
         list(APPEND MLT_CMAKE_ARGS
-            -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE})
+            -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+            -DVCPKG_MANIFEST_MODE=OFF)
     endif()
     if(VCPKG_TARGET_TRIPLET)
         list(APPEND MLT_CMAKE_ARGS
@@ -75,6 +79,7 @@ function(vedit_build_mlt)
         GIT_REPOSITORY https://github.com/mltframework/mlt.git
         GIT_TAG        v7.40.0
         GIT_SHALLOW    TRUE
+        GIT_SUBMODULES ""     # skip glaxnimate (MOD_GLAXNIMATE_QT6=OFF)
         SOURCE_DIR     "${MLT_PREFIX}/src"
         BINARY_DIR     "${MLT_PREFIX}/build"
         INSTALL_DIR    "${MLT_INSTALL}"
@@ -90,22 +95,37 @@ function(vedit_build_mlt)
     # these targets reference paths that will exist after the MLT build
     # step completes. The caller must add_dependencies(<target>
     # mlt_external) to enforce build order.
+    #
+    # CMake checks INTERFACE_INCLUDE_DIRECTORIES paths at configure time.
+    # Since MLT has not been built yet, create the directories now so
+    # the check passes. ExternalProject_Add overwrites them with the
+    # real headers during the build step.
+    file(MAKE_DIRECTORY "${MLT_INSTALL}/include/mlt-7")
+    file(MAKE_DIRECTORY "${MLT_INSTALL}/include/mlt-7/mlt++")
+
+    # MLT's framework header mlt_types.h includes <pthread.h> even though
+    # MLT's CMake marks PThreads4W as PRIVATE. Find it here and add it to
+    # the IMPORTED target's interface so consumers (vedit_core) get the
+    # include dir transitively.
+    find_package(PThreads4W REQUIRED)
+
     if(NOT TARGET Mlt7::mlt)
         add_library(Mlt7::mlt SHARED IMPORTED)
         set_target_properties(Mlt7::mlt PROPERTIES
-            IMPORTED_LOCATION_DEBUG          "${MLT_INSTALL}/bin/mlt-7.dll"
-            IMPORTED_LOCATION_RELEASE        "${MLT_INSTALL}/bin/mlt-7.dll"
+            IMPORTED_LOCATION_DEBUG          "${MLT_INSTALL}/mlt-7.dll"
+            IMPORTED_LOCATION_RELEASE        "${MLT_INSTALL}/mlt-7.dll"
             IMPORTED_IMPLIB_DEBUG            "${MLT_INSTALL}/lib/mlt-7.lib"
             IMPORTED_IMPLIB_RELEASE          "${MLT_INSTALL}/lib/mlt-7.lib"
             INTERFACE_INCLUDE_DIRECTORIES    "${MLT_INSTALL}/include/mlt-7"
+            INTERFACE_LINK_LIBRARIES         "PThreads4W::PThreads4W"
         )
     endif()
 
     if(NOT TARGET Mlt7::mlt++)
         add_library(Mlt7::mlt++ SHARED IMPORTED)
         set_target_properties(Mlt7::mlt++ PROPERTIES
-            IMPORTED_LOCATION_DEBUG          "${MLT_INSTALL}/bin/mlt++-7.dll"
-            IMPORTED_LOCATION_RELEASE        "${MLT_INSTALL}/bin/mlt++-7.dll"
+            IMPORTED_LOCATION_DEBUG          "${MLT_INSTALL}/mlt++-7.dll"
+            IMPORTED_LOCATION_RELEASE        "${MLT_INSTALL}/mlt++-7.dll"
             IMPORTED_IMPLIB_DEBUG            "${MLT_INSTALL}/lib/mlt++-7.lib"
             IMPORTED_IMPLIB_RELEASE          "${MLT_INSTALL}/lib/mlt++-7.lib"
             INTERFACE_INCLUDE_DIRECTORIES    "${MLT_INSTALL}/include/mlt-7/mlt++"

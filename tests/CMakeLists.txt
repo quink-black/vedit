@@ -44,6 +44,7 @@ catch_discover_tests(
     vedit_tests
     TEST_SPEC "~[export]"
     TEST_SUFFIX " (sanitized)"
+    DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60
 )
 
@@ -60,6 +61,7 @@ catch_discover_tests(
     vedit_tests
     TEST_SPEC "[export]"
     TEST_SUFFIX " (export)"
+    DISCOVERY_MODE PRE_TEST
     PROPERTIES
         TIMEOUT 120
         ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0"

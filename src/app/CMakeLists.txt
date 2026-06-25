@@ -9,6 +9,14 @@ target_link_libraries(vedit PRIVATE
     ${VEDIT_SDL2_TARGET}
 )
 
+# On Windows, SDL2 #defines main to SDL_main via <SDL_main.h>. Linking
+# SDL2main provides the WinMain entry point that calls SDL_main; without
+# it the linker cannot find the CRT's `main` symbol.
+if(WIN32 AND MSVC)
+    find_package(SDL2 CONFIG REQUIRED)
+    target_link_libraries(vedit PRIVATE SDL2::SDL2main)
+endif()
+
 if(APPLE)
     find_library(APPKIT_LIBRARY AppKit REQUIRED)
     find_library(FOUNDATION_LIBRARY Foundation REQUIRED)

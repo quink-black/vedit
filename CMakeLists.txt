@@ -70,9 +70,12 @@ if(WIN32 AND MSVC)
     # _WIN32_WINNT=0x0A00 targets Windows 10 (1607+), the floor for
     # both SetThreadDescription and AF_UNIX (Win10 1803+). NOMINMAX
     # keeps std::min/std::max usable. ASIO_HAS_LOCAL_SOCKETS enables
-    # asio::local::stream_protocol on Windows.
+    # asio::local::stream_protocol on Windows. /utf-8 tells MSVC to
+    # interpret source files as UTF-8 (vedit's headers use non-ASCII
+    # characters in comments, e.g. en-dashes and ellipses).
     add_compile_definitions(_WIN32_WINNT=0x0A00 NOMINMAX
                             ASIO_STANDALONE ASIO_HAS_LOCAL_SOCKETS)
+    add_compile_options(/utf-8)
 
     # MLT is not in vcpkg. Build it from source with only the modules
     # vedit uses (avformat, xml, sdl2, core). BuildMlt.cmake creates

@@ -26,10 +26,9 @@
 #include "core/mlt_runtime.h"
 
 // LeakSanitizer is a Clang/GCC feature; MSVC's /fsanitize=address has
-// no LSan component and does not define these symbols. Guard the
+// no LSan component and does not define __SANITIZE_ADDRESS__. Guard the
 // suppression so MSVC builds skip the declaration entirely.
-#if (defined(__has_feature) && __has_feature(address_sanitizer)) \
-    || (defined(__SANITIZE_ADDRESS__) && !defined(_MSC_VER))
+#if defined(__SANITIZE_ADDRESS__) && !defined(_MSC_VER)
 extern "C" const char* __lsan_default_suppressions();
 extern "C" const char* __lsan_default_suppressions() {
     // Match any leak whose stack passes through MLT or its plugin
