@@ -547,3 +547,83 @@ TEST_CASE("Clip moves across tracks via the controller", "[t14][multitrack]") {
     REQUIRE(tl.clips_on_track(v2).empty());
     REQUIRE(tl.clip(c)->track_id == v1);
 }
+
+// Regression: trim through AppController. The GUI drag-trim path
+// calls app.clip_trim; a refactor of the GUI interaction layer once
+// broke trim because the domain call was never reached. This test
+// pins the domain contract so future GUI refactors catch a
+// regression in the controller even when the GUI is not exercised.
+TEST_CASE("AppController trim changes clip in/out and length", "[regression]") {
+    std::string clip = make_test_clip("trim_reg");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto id = app.clip_append(v1, mi);
+    REQUIRE(id.valid());
+
+    const auto* c = app.project().timeline().clip(id);
+    REQUIRE(c != nullptr);
+    int64_t orig_in = c->in_point;
+    int64_t orig_out = c->out_point;
+    int64_t orig_len = c->length;
+
+    // Trim 10 frames off the right edge.
+    int64_t new_out = orig_out - 10;
+    REQUIRE(app.clip_trim(id, orig_in, new_out));
+
+    const auto* c2 = app.project().timeline().clip(id);
+    REQUIRE(c2 != nullptr);
+    REQUIRE(c2->out_point == new_out);
+    REQUIRE(c2->length == orig_len - 10);
+}
+
+// Regression: two video tracks must export as a single composited
+// MP4 with one video stream, not a multi-track MP4. The tractor
+// composites V1+V2 via planted transitions; the avformat consumer
+// encodes the composited frames. This test pins that contract so
+// a refactor that accidentally bypasses compositing is caught.
+TEST_CASE("Two-track export produces single composited video stream",
+          "[regression][export]") {
+    std::string clip = make_test_clip("twotrack_reg");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+    app.clip_append(v2, mi);
+    REQUIRE(app.track_count() == 2);
+
+    std::string out = unique_temp_path("vedit-test", "twotrack_reg", ".mp4");
+    vedit::ExportService svc;
+    REQUIRE(svc.render(*app.project().producer(), app.profile(), out,
+                       [](double){}));
+
+    // The exported MP4 must have exactly one video stream (composited)
+    // and one audio stream. ffprobe output format: codec_type per line.
+    std::string cmd = "ffprobe -v error -show_entries stream=codec_type "
+                      "-of csv " + out + " 2>&1";
+    FILE* f = popen(cmd.c_str(), "r");
+    REQUIRE(f != nullptr);
+    std::string probe;
+    char buf[256] = {0};
+    while (fgets(buf, sizeof(buf), f)) probe += buf;
+    pclose(f);
+
+    int video_count = 0, audio_count = 0;
+    size_t pos = 0;
+    while ((pos = probe.find("video", pos)) != std::string::npos) {
+        ++video_count;
+        pos += 5;
+    }
+    pos = 0;
+    while ((pos = probe.find("audio", pos)) != std::string::npos) {
+        ++audio_count;
+        pos += 5;
+    }
+    REQUIRE(video_count == 1);
+    REQUIRE(audio_count == 1);
+}
