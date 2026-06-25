@@ -29,13 +29,16 @@
 
 #include "rpc/rpc_dispatcher.h"
 #include "util/logger.h"
+#include "util/platform_compat.h"
 
 #include <asio.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -46,15 +49,37 @@
 #include <utility>
 #include <vector>
 
-#include <cerrno>
 #include <cstring>
-#include <unistd.h>
 
-#include <glob.h>
+// AF_UNIX socket primitives. Windows 10 1803+ ships AF_UNIX support in
+// the Winsock provider; <afunix.h> declares sockaddr_un. POSIX systems
+// pull it from <sys/un.h>.
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <winsock2.h>
+  #include <afunix.h>
+  #pragma comment(lib, "ws2_32.lib")
+#else
+  #include <sys/socket.h>
+  #include <sys/un.h>
+  #include <unistd.h>
+#endif
 
 namespace vedit::rpc {
 
 namespace {
+
+// Portable close for a raw socket descriptor. Winsock uses closesocket;
+// POSIX uses close.
+inline void close_native_socket(int fd) {
+#ifdef _WIN32
+    ::closesocket(fd);
+#else
+    ::close(fd);
+#endif
+}
 
 // Encode a 4-byte big-endian length prefix.
 void write_be32(std::array<unsigned char, 4>& out, std::uint32_t value) {
@@ -83,27 +108,29 @@ bool socket_is_alive(const std::string& path) {
     std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
     bool alive = ::connect(fd, reinterpret_cast<struct sockaddr*>(&addr),
                            sizeof(addr)) == 0;
-    ::close(fd);
+    close_native_socket(fd);
     return alive;
 }
 
-// Enumerate sibling sockets in the temp dir (vedit-*.sock). Excludes
-// `self_path` so the sweep never unlinks the path we are about to bind.
-// The temp dir is resolved via vedit::temp_dir() so the pattern matches
-// default_socket_path() on every platform.
+// Enumerate sibling sockets in the temp dir matching "vedit-*.sock".
+// Excludes `self_path` so the sweep never touches the path we are
+// about to bind. Replaces the previous glob(3) call with std::filesystem
+// so the sweep works on Windows (which has no glob).
 std::vector<std::string> list_vedit_sockets(const std::string& self_path) {
     std::vector<std::string> out;
-    glob_t g;
-    std::memset(&g, 0, sizeof(g));
-    if (::glob("/tmp/vedit-*.sock", 0, nullptr, &g) != 0) {
-        return out;
-    }
-    for (std::size_t i = 0; i < g.gl_pathc; ++i) {
-        std::string p = g.gl_pathv[i];
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(
+            vedit::temp_dir(), ec)) {
+        if (ec) break;
+        std::string name = entry.path().filename().string();
+        if (name.compare(0, 6, "vedit-") != 0) continue;
+        if (name.size() < 5 || name.compare(name.size() - 5, 5, ".sock") != 0)
+            continue;
+        std::string p = entry.path().string();
         if (p == self_path) continue;
         out.push_back(std::move(p));
     }
-    ::globfree(&g);
+    std::sort(out.begin(), out.end());
     return out;
 }
 
@@ -308,14 +335,16 @@ void RpcServer::start() {
 
     // Sweep stale sibling sockets from previous crashed instances
     // before binding our own. Anything that fails the connect probe
-    // (ECONNREFUSED) is unlinked; live sockets are left alone.
+    // (ECONNREFUSED) is removed; live sockets are left alone.
     for (const auto& sibling : list_vedit_sockets(impl_->socket_path)) {
         if (!socket_is_alive(sibling)) {
-            if (::unlink(sibling.c_str()) != 0 && errno != ENOENT) {
+            std::error_code rm_ec;
+            std::filesystem::remove(sibling, rm_ec);
+            if (rm_ec) {
                 vedit::Logger::log(vedit::Logger::Level::Warn,
-                    ("rpc: stale sweep unlink('"
+                    ("rpc: stale sweep remove('"
                      + sibling + "') failed: "
-                     + std::strerror(errno)).c_str());
+                     + rm_ec.message()).c_str());
             } else {
                 vedit::Logger::log(vedit::Logger::Level::Info,
                     ("rpc: swept stale socket " + sibling).c_str());
@@ -323,11 +352,17 @@ void RpcServer::start() {
         }
     }
 
-    // Unlink any stale socket file from a previous run at our own path.
-    if (::unlink(impl_->socket_path.c_str()) != 0 && errno != ENOENT) {
-        vedit::Logger::log(vedit::Logger::Level::Warn,
-            ("rpc: unlink('" + impl_->socket_path + "') failed: "
-             + std::strerror(errno)).c_str());
+    // Remove any stale socket file from a previous run at our own path.
+    // std::filesystem::remove is a no-op if the file does not exist, so
+    // the previous errno != ENOENT special case disappears.
+    {
+        std::error_code rm_ec;
+        std::filesystem::remove(impl_->socket_path, rm_ec);
+        if (rm_ec) {
+            vedit::Logger::log(vedit::Logger::Level::Warn,
+                ("rpc: remove('" + impl_->socket_path + "') failed: "
+                 + rm_ec.message()).c_str());
+        }
     }
 
     using stream_protocol = asio::local::stream_protocol;
@@ -384,11 +419,15 @@ void RpcServer::stop() {
         impl_->io_thread.join();
     }
 
-    if (::unlink(impl_->socket_path.c_str()) != 0 && errno != ENOENT) {
-        vedit::Logger::log(vedit::Logger::Level::Warn,
-            ("rpc: unlink('" + impl_->socket_path
-             + "') on shutdown failed: "
-             + std::strerror(errno)).c_str());
+    {
+        std::error_code rm_ec;
+        std::filesystem::remove(impl_->socket_path, rm_ec);
+        if (rm_ec) {
+            vedit::Logger::log(vedit::Logger::Level::Warn,
+                ("rpc: remove('" + impl_->socket_path
+                 + "') on shutdown failed: "
+                 + rm_ec.message()).c_str());
+        }
     }
 
     // Drain any still-queued requests by completing their promises with
