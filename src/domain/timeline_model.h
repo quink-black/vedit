@@ -119,6 +119,21 @@ public:
     // Idempotent: clears existing tractor transitions first.
     void replant_compositions();
 
+    // --- filters (M2) ---
+    // Attach/detach an MLT filter (by service name) to/from a clip.
+    // Returns false if the clip or filter is not found, or the MLT
+    // filter cannot be created. The filter's parameters can then be
+    // read/written via set_filter_param / get_filter_param.
+    bool attach_filter(ClipId clip_id, const std::string& filter_name);
+    bool detach_filter(ClipId clip_id, const std::string& filter_name);
+    // Set/get a named parameter on an attached filter. The filter must
+    // already be attached. `value` is the scalar (P2 {value} shape).
+    bool set_filter_param(ClipId clip_id, const std::string& filter_name,
+                          const std::string& param, const std::string& value);
+    std::string get_filter_param(ClipId clip_id,
+                                 const std::string& filter_name,
+                                 const std::string& param);
+
 private:
     struct TrackState {
         TrackInfo info;
@@ -134,6 +149,10 @@ private:
     // The stable ClipId mapping is preserved by matching on the MLT
     // producer/cut identity, which survives playlist reindexing.
     void rebuild_clip_view();
+
+    // Find the playlist cut producer for a ClipId. Returns new'd
+    // producer (caller owns) or nullptr.
+    Mlt::Producer* find_cut_producer(ClipId id, int* track_idx = nullptr) const;
 
     Mlt::Profile& profile_;
     MediaLibrary& library_;

@@ -249,4 +249,29 @@ bool AppController::export_cancel(int64_t job_id) {
     return true;
 }
 
+// --- filters (M2) ---
+
+bool AppController::filter_add(ClipId clip_id, const std::string& name) {
+    return project_->timeline().attach_filter(clip_id, name);
+}
+
+bool AppController::filter_remove(ClipId clip_id, const std::string& name) {
+    return project_->timeline().detach_filter(clip_id, name);
+}
+
+bool AppController::filter_set_param(ClipId clip_id,
+                                      const std::string& filter_name,
+                                      const std::string& param,
+                                      const std::string& value) {
+    return project_->timeline().set_filter_param(
+        clip_id, filter_name, param, value);
+}
+
+std::string AppController::filter_get_param(ClipId clip_id,
+                                             const std::string& filter_name,
+                                             const std::string& param) {
+    return project_->timeline().get_filter_param(
+        clip_id, filter_name, param);
+}
+
 } // namespace vedit

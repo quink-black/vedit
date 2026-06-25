@@ -472,4 +472,126 @@ void TimelineModel::rebuild_clip_view() {
     }
 }
 
+// ---- filters (M2) ----
+
+Mlt::Producer* TimelineModel::find_cut_producer(ClipId id, int* track_idx) const {
+    auto found = clips_.find(id.value);
+    if (found == clips_.end()) return nullptr;
+    int tidx = track_index(found->second.track_id);
+    if (tidx < 0) return nullptr;
+    if (track_idx) *track_idx = tidx;
+
+    const auto& pl = tracks_[tidx].playlist;
+    for (int i = 0; i < pl->count(); ++i) {
+        Mlt::Producer* cut = pl->get_clip(i);
+        if (!cut) continue;
+        if (read_clip_id(*cut) == id.value) {
+            return cut;  // caller owns
+        }
+        delete cut;
+    }
+    return nullptr;
+}
+
+namespace {
+
+// Find an attached filter by service name on a cut producer.
+int find_attached_filter(Mlt::Producer& cut, const std::string& name) {
+    int n = cut.filter_count();
+    for (int i = 0; i < n; ++i) {
+        Mlt::Filter* filter = cut.filter(i);
+        if (filter && filter->is_valid() && filter->get("mlt_service") == name) {
+            delete filter;
+            return i;
+        }
+        delete filter;
+    }
+    return -1;
+}
+
+} // namespace
+
+bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name) {
+    Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
+    if (!cut) return false;
+
+    Mlt::Filter filter(profile_, filter_name.c_str());
+    if (!filter.is_valid()) {
+        delete cut;
+        return false;
+    }
+
+    int rc = mlt_service_attach(MLT_SERVICE(cut->get_producer()),
+                                MLT_FILTER(filter.get_filter()));
+    delete cut;
+    return rc == 0;
+}
+
+bool TimelineModel::detach_filter(ClipId clip_id, const std::string& filter_name) {
+    Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
+    if (!cut) return false;
+
+    int idx = find_attached_filter(*cut, filter_name);
+    if (idx < 0) {
+        delete cut;
+        return false;
+    }
+    Mlt::Filter* filter = cut->filter(idx);
+    if (!filter) {
+        delete cut;
+        return false;
+    }
+    int rc = mlt_service_detach(MLT_SERVICE(cut->get_producer()),
+                                MLT_FILTER(filter->get_filter()));
+    delete filter;
+    delete cut;
+    return rc == 0;
+}
+
+bool TimelineModel::set_filter_param(ClipId clip_id,
+                                      const std::string& filter_name,
+                                      const std::string& param,
+                                      const std::string& value) {
+    Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
+    if (!cut) return false;
+
+    int idx = find_attached_filter(*cut, filter_name);
+    if (idx < 0) {
+        delete cut;
+        return false;
+    }
+    Mlt::Filter* filter = cut->filter(idx);
+    if (!filter) {
+        delete cut;
+        return false;
+    }
+    filter->set(param.c_str(), value.c_str());
+    delete filter;
+    delete cut;
+    return true;
+}
+
+std::string TimelineModel::get_filter_param(ClipId clip_id,
+                                             const std::string& filter_name,
+                                             const std::string& param) {
+    Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
+    if (!cut) return "";
+
+    int idx = find_attached_filter(*cut, filter_name);
+    if (idx < 0) {
+        delete cut;
+        return "";
+    }
+    Mlt::Filter* filter = cut->filter(idx);
+    if (!filter) {
+        delete cut;
+        return "";
+    }
+    const char* val = filter->get(param.c_str());
+    std::string result = val ? val : "";
+    delete filter;
+    delete cut;
+    return result;
+}
+
 } // namespace vedit

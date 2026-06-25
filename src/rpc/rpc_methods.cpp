@@ -165,6 +165,58 @@ void register_methods(Dispatcher& d, AppController& app) {
         return result;
     });
 
+    // ---- filter.add / filter.remove / filter.set_param / filter.get_param ----
+    d.register_method("filter.add", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        std::string name = params.value("filter", "");
+        if (name.empty()) throw RpcException(ErrorCode::InvalidParams, "missing filter name");
+        if (!app.filter_add(id, name))
+            throw RpcException(ErrorCode::ApplicationError, "add failed (bad clip or filter)");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("filter.remove", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        std::string name = params.value("filter", "");
+        if (name.empty()) throw RpcException(ErrorCode::InvalidParams, "missing filter name");
+        if (!app.filter_remove(id, name))
+            throw RpcException(ErrorCode::ApplicationError, "remove failed (not found)");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("filter.set_param", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        std::string filter_name = params.value("filter", "");
+        std::string param = params.value("param", "");
+        // P2 shape: {value: <scalar>}. M3 adds {keyframes: [...]}.
+        // Accept raw value OR {value: X} envelope for forward compat.
+        std::string value;
+        if (params.contains("value")) {
+            const auto& v = params["value"];
+            value = v.is_string() ? v.get<std::string>() : v.dump();
+        } else {
+            throw RpcException(ErrorCode::InvalidParams, "missing value");
+        }
+        if (filter_name.empty() || param.empty())
+            throw RpcException(ErrorCode::InvalidParams, "missing filter or param");
+        if (!app.filter_set_param(id, filter_name, param, value))
+            throw RpcException(ErrorCode::ApplicationError, "set_param failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("filter.get_param", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        std::string filter_name = params.value("filter", "");
+        std::string param = params.value("param", "");
+        if (filter_name.empty() || param.empty())
+            throw RpcException(ErrorCode::InvalidParams, "missing filter or param");
+        std::string val = app.filter_get_param(id, filter_name, param);
+        if (val.empty())
+            throw RpcException(ErrorCode::ApplicationError,
+                               "param not found or filter not attached");
+        return nlohmann::json{{"value", val}};
+    });
+
     // ---- state.get ----
     d.register_method("state.get", [&](const nlohmann::json&) {
         return nlohmann::json::parse(

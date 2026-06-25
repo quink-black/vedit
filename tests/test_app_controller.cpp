@@ -1097,3 +1097,52 @@ TEST_CASE("save/load round-trip mints new ids (known limitation)", "[t16]") {
         vedit::ClipId{orig_clip2_id});
     REQUIRE(clip2 == nullptr);  // old id is gone
 }
+
+TEST_CASE("filter.add / filter.remove / filter.set_param / filter.get_param over RPC", "[t17]") {
+    std::string clip = vedit::test::make_test_clip("filter_rpc");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Attach brightness filter.
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","filter.add"},{"id",1},
+                          {"params", {{"clip_id", cid.value}, {"filter", "brightness"}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Set level to 2.5 via {value: 2.5} envelope (P2 shape).
+    req = {{"jsonrpc","2.0"},{"method","filter.set_param"},{"id",2},
+           {"params", {{"clip_id", cid.value}, {"filter", "brightness"},
+                       {"param", "level"}, {"value", 2.5}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Get back the value.
+    req = {{"jsonrpc","2.0"},{"method","filter.get_param"},{"id",3},
+           {"params", {{"clip_id", cid.value}, {"filter", "brightness"},
+                       {"param", "level"}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"]["value"] == "2.5");
+
+    // Remove the filter.
+    req = {{"jsonrpc","2.0"},{"method","filter.remove"},{"id",4},
+           {"params", {{"clip_id", cid.value}, {"filter", "brightness"}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Filter is gone — get_param should fail.
+    req = {{"jsonrpc","2.0"},{"method","filter.get_param"},{"id",5},
+           {"params", {{"clip_id", cid.value}, {"filter", "brightness"},
+                       {"param", "level"}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp.contains("error"));
+}
