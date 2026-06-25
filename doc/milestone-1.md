@@ -1,6 +1,6 @@
 # Milestone 1 — Task Breakdown
 
-> Completed: 2024-06-24. 12 tasks, 11 commits, 33 tests, 198 assertions.
+> Completed: 2024-06-24. 12 tasks, 48 test cases across 6 test files.
 
 ## Task List
 
@@ -34,12 +34,23 @@
 
 ## Test Coverage by Layer
 
-| Layer | Tests | Assertions | Coverage |
+| Layer | Files | Tests | Focus |
 |---|---|---|---|
-| core (MltRuntime, PreviewRenderer) | 2 | 4 | Lifecycle, smoke |
-| domain (ProjectModel, TimelineModel, MediaLibrary) | 9 | 50 | Track/clip ops, stable ids |
-| domain (AppController, PlayerController) | 10 | 70 | Full seam: import → edit → transport |
-| domain (ExportService, ProjectSaveLoad) | 4 | 25 | Export, save/load round-trip |
-| rpc (Dispatcher, method handlers) | 7 | 37 | Protocol correctness |
-| e2e (M1 gate) | 1 | 12 | Full pipeline: build → save → reload → export |
-| **Total** | **33** | **198** | |
+| core (MltRuntime, PreviewRenderer) | test_smoke.cpp | 2 | Lifecycle, smoke |
+| domain (ProjectModel, TimelineModel, MediaLibrary) | test_domain.cpp | 15 | Track/clip ops, stable ids, player transport, composition |
+| domain (AppController, PlayerController) | test_app_controller.cpp | 18 | Full seam: import -> edit -> transport -> preview -> export |
+| rpc (Dispatcher, method handlers) | test_rpc.cpp, test_rpc_server.cpp | 13 | Protocol correctness, socket I/O, stale sweep |
+| **Total** | **6 files** | **48** | |
+
+### Running by tag
+
+```bash
+./tests/vedit_tests "[t5]"      # multi-track edit operations
+./tests/vedit_tests "[t6]"      # composition + player
+./tests/vedit_tests "[t8]"      # AppController seam
+./tests/vedit_tests "[t9]"      # export
+./tests/vedit_tests "[t10]"     # save/load
+./tests/vedit_tests "[t12]"     # M1 end-to-end gate
+./tests/vedit_tests "[t13]"     # paused preview / scrubbing
+./tests/vedit_tests "[t14]"     # multi-track naming / cross-track ops
+./tests/vedit_tests "[export]"  # all export tests (run without LSan)

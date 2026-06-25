@@ -42,7 +42,10 @@ VEDIT_AUDIO_CONSUMER=null SDL_VIDEODRIVER=offscreen ctest
 VEDIT_AUDIO_CONSUMER=null SDL_VIDEODRIVER=offscreen ./tests/vedit_tests
 
 # Run a specific tag:
-./tests/vedit_tests "[t5]"
+./tests/vedit_tests "[t5]"       # edit operations
+./tests/vedit_tests "[t9]"       # export
+./tests/vedit_tests "[t13]"      # preview/scrubbing
+./tests/vedit_tests "[export]"   # all export tests (LSan off)
 ```
 
 ## Known Quirks
@@ -92,6 +95,17 @@ VEDIT_AUDIO_CONSUMER=null SDL_VIDEODRIVER=offscreen ./tests/vedit_tests
 The build system enforces this through include paths — a `vedit_domain`
 translation unit that tries to `#include <imgui.h>` will fail to
 compile because that path is not in its include directories.
+
+## MCP Server
+
+`tools/vedit-mcp/` provides an MCP (Model Context Protocol) server that
+exposes vedit's RPC surface to MCP clients. It connects over stdio and
+auto-discovers running vedit instances.
+
+```bash
+cd tools/vedit-mcp
+bash setup.sh   # creates .venv, installs deps, prints mcp.json config
+```
 
 ## Git Workflow
 

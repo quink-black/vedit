@@ -99,7 +99,13 @@ cd build
 VEDIT_AUDIO_CONSUMER=null SDL_VIDEODRIVER=offscreen ctest
 # or directly:
 VEDIT_AUDIO_CONSUMER=null SDL_VIDEODRIVER=offscreen ./tests/vedit_tests
+
+# Run a specific tag:
+./tests/vedit_tests "[t5]"
+./tests/vedit_tests "[export]"
 ```
+
+48 test cases across 6 files (smoke, domain, app_controller, rpc, rpc_server).
 
 ---
 
@@ -117,7 +123,7 @@ vedit exposes a JSON-RPC 2.0 control plane over a Unix domain socket
 | `library.import` | `{"path": "..."}` | `{"index": N}` | Import a media file |
 | `track.add` | `{"kind": "video"|"audio", "name": "..."}` | `{"track_id": N}` | Add a track |
 | `track.remove` | `{"track_id": N}` | `{"ok": true}` | Remove a track |
-| `clip.append` | `{"track_id": N, "media_index": N}` | `{"clip_id": N}` | Append a clip |
+| `clip.append` | `{"track_id": N, "media_index": N, "in": N?, "out": N?}` | `{"clip_id": N}` | Append a clip (optional in/out source range) |
 | `clip.insert` | `{"track_id": N, "media_index": N, "position": N}` | `{"clip_id": N}` | Insert at position |
 | `clip.remove` | `{"clip_id": N}` | `{"ok": true}` | Remove a clip |
 | `clip.move` | `{"clip_id": N, "dest_track_id": N, "position": N}` | `{"ok": true}` | Move clip (cross-track) |
@@ -144,6 +150,17 @@ s.sendall(data)
 s.close()
 ```
 
+### MCP Server
+
+`tools/vedit-mcp/` provides a Model Context Protocol server that bridges
+MCP clients (CodeBuddy Code, Claude Desktop) to vedit's RPC control
+plane. It auto-discovers running vedit instances via `/tmp/vedit-*.sock`.
+
+```bash
+cd tools/vedit-mcp
+bash setup.sh          # creates .venv, installs deps, prints mcp.json snippet
+```
+
 ---
 
 ## Project Structure
@@ -160,7 +177,9 @@ vedit/
     rpc/                  Dispatcher, RpcServer, method handlers (vedit_rpc)
     app/                  main.cpp: ImGui GUI panels (vedit exe)
   third_party/            ImGui SDL2+OpenGL3 backend compilation
-  tests/                  Catch2 test suite (33 cases, 198 assertions)
+  tools/
+    vedit-mcp/            MCP server (Python stdio bridge) + client + auto-edit test
+  tests/                  Catch2 test suite (48 cases in 6 files)
 ```
 
 ---

@@ -12,7 +12,6 @@ compile_commands.json
 # test media (regenerated, not source)
 test_sample.mp4
 
-# OS
-.DS_Store
-Thumbs.db
-imgui.ini
+# Python virtualenv
+.venv/
+__pycache__/
