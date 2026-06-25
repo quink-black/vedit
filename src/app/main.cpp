@@ -187,7 +187,7 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
     ImGui::SameLine();
     ImGui::TextDisabled("(%d files)", app.library_count());
 
-    ImGui::BeginChild("media_list", ImVec2(0, 0), ImGuiChildFlags_Border);
+    ImGui::BeginChild("media_list", ImVec2(0, 0), ImGuiChildFlags_Borders);
     if (app.library_count() == 0) {
         ImGui::TextDisabled("No media yet.\nClick \"Open video...\" above,\n"
                             "or drag a file onto this window.");
@@ -392,7 +392,7 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     const float edge_grab = 7.0f;
     int64_t dur = std::max<int64_t>(1, tl.duration());
 
-    ImGui::BeginChild("tl_scroll", ImVec2(0, 0), ImGuiChildFlags_Border,
+    ImGui::BeginChild("tl_scroll", ImVec2(0, 0), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_HorizontalScrollbar);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -949,13 +949,13 @@ int main(int, char**) {
         float left_w = full_w * 0.26f;
         float top_h = full_h * 0.52f;
 
-        ImGui::BeginChild("left", ImVec2(left_w, top_h), ImGuiChildFlags_Border);
+        ImGui::BeginChild("left", ImVec2(left_w, top_h), ImGuiChildFlags_Borders);
         draw_media_panel(app, gui);
         ImGui::EndChild();
 
         ImGui::SameLine();
 
-        ImGui::BeginChild("preview", ImVec2(0, top_h), ImGuiChildFlags_Border);
+        ImGui::BeginChild("preview", ImVec2(0, top_h), ImGuiChildFlags_Borders);
         draw_preview_panel(app, gui, preview_tex, tex_w, tex_h);
         ImGui::EndChild();
 
@@ -966,11 +966,11 @@ int main(int, char**) {
         float transport_h = ImGui::GetFrameHeightWithSpacing()
                           + ImGui::GetStyle().WindowPadding.y * 2.0f;
         ImGui::BeginChild("transport", ImVec2(0, transport_h),
-                          ImGuiChildFlags_Border);
+                          ImGuiChildFlags_Borders);
         draw_transport_panel(app, gui);
         ImGui::EndChild();
 
-        ImGui::BeginChild("timeline", ImVec2(0, 0), ImGuiChildFlags_Border);
+        ImGui::BeginChild("timeline", ImVec2(0, 0), ImGuiChildFlags_Borders);
         draw_timeline_panel(app, gui);
         ImGui::EndChild();
 
