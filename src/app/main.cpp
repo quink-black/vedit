@@ -346,6 +346,25 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         gui.status = "Added an audio track.";
     }
 
+    // Delete the active track. Visible button because right-click
+    // context menus are not discoverable. Only enabled when there is
+    // more than one track (the last track is kept so the timeline is
+    // never empty).
+    ImGui::SameLine();
+    auto& tl_pre = app.project().timeline();
+    bool can_delete_track = tl_pre.track_count() > 1 &&
+                            gui.active_track.valid() &&
+                            tl_pre.track(gui.active_track) != nullptr;
+    if (!can_delete_track) ImGui::BeginDisabled();
+    if (ImGui::Button("Delete track")) {
+        std::string name = tl_pre.track(gui.active_track)->name;
+        app.track_remove(gui.active_track);
+        gui.active_track = tl_pre.tracks().empty()
+            ? vedit::TrackId{0} : tl_pre.tracks()[0].id;
+        gui.status = "Deleted track " + name + ".";
+    }
+    if (!can_delete_track) ImGui::EndDisabled();
+
     ImGui::Separator();
 
     auto& tl = app.project().timeline();
