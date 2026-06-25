@@ -102,6 +102,16 @@ static std::string ensure_mp4_ext(std::string path) {
     return path;
 }
 
+static void set_window_icon(SDL_Window* window) {
+#ifdef __APPLE__
+    (void)window;
+    // On macOS the .icns file in the bundle handles the Dock icon.
+#else
+    (void)window;
+    // TODO: load and set window icon from resource/vedit.png
+#endif
+}
+
 // ============================================================================
 // GUI state
 // ============================================================================
@@ -712,6 +722,8 @@ int main(int, char**) {
         "vedit", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1400, 860, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) { std::fprintf(stderr, "SDL_CreateWindow failed\n"); SDL_Quit(); return 1; }
+
+    set_window_icon(window);
 
 #ifdef __APPLE__
     // Prefer Metal on macOS; SDL2 falls back to OpenGL automatically
