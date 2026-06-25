@@ -72,7 +72,7 @@ sudo apt install cmake ninja-build pkg-config \
   nlohmann-json3-dev catch2
 ```
 
-### Build
+### Build (Linux / macOS)
 
 ```bash
 cd vedit
@@ -80,21 +80,52 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
+### Build (Windows, MSVC + vcpkg)
+
+Prerequisites: Visual Studio 2022 with the C++ workload, and
+[vcpkg](https://github.com/microsoft/vcpkg) at a known location.
+
+```bat
+set VCPKG_ROOT=C:\path\to\vcpkg
+cmake -B build -S . -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
+cmake --build build --config Debug
+```
+
+vcpkg manifest mode installs all dependencies except MLT, which is
+built from source via CMake ExternalProject_Add (only the avformat,
+xml, sdl2, and core modules; Qt/opencv/frei0r are not pulled in). The
+first build takes ~10 minutes for the MLT compile; incremental builds
+only recompile vedit.
+
 ### Run (desktop)
 
 ```bash
+# Linux / macOS
 ./build/src/app/vedit
+```
+```bat
+:: Windows
+build\src\app\Debug\vedit.exe
 ```
 
 ### Run (headless smoke test)
 
 ```bash
+# Linux / macOS
 SDL_VIDEODRIVER=offscreen VEDIT_AUDIO_CONSUMER=null ./build/src/app/vedit
+```
+```bat
+:: Windows (SDL2 uses "dummy", not "offscreen")
+set SDL_VIDEODRIVER=dummy
+set VEDIT_AUDIO_CONSUMER=null
+build\src\app\Debug\vedit.exe
 ```
 
 ### Run tests
 
 ```bash
+# Linux / macOS
 cd build
 VEDIT_AUDIO_CONSUMER=null SDL_VIDEODRIVER=offscreen ctest
 # or directly:
@@ -104,6 +135,16 @@ VEDIT_AUDIO_CONSUMER=null SDL_VIDEODRIVER=offscreen ./tests/vedit_tests
 ./tests/vedit_tests "[t5]"
 ./tests/vedit_tests "[export]"
 ```
+```bat
+:: Windows
+cd build
+set SDL_VIDEODRIVER=dummy
+set VEDIT_AUDIO_CONSUMER=null
+ctest -C Debug
+```
+
+On Windows, `test_rpc_server.cpp` is excluded from the build (its raw
+AF_UNIX client is a deferred port); the other ~40 test cases run.
 
 48 test cases across 6 files (smoke, domain, app_controller, rpc, rpc_server).
 
