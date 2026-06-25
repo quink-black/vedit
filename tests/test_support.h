@@ -39,15 +39,6 @@ namespace vedit::test {
   #define VEDIT_PCLOSE pclose
 #endif
 
-// Expected video codec in export probe output. libx264 is GPL-licensed
-// and not available in all ffmpeg builds (e.g. vcpkg on Windows); the
-// ExportService falls back to the built-in mpeg4 encoder there.
-#ifdef _WIN32
-  #define VEDIT_EXPECTED_VIDEO_CODEC "mpeg4"
-#else
-  #define VEDIT_EXPECTED_VIDEO_CODEC "h264"
-#endif
-
 inline int current_pid() {
 #ifdef _WIN32
     return ::_getpid();

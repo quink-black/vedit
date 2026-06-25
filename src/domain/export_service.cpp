@@ -38,16 +38,9 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     }
 
     // M1 preset: H.264 video, AAC audio, MP4 container.
-    // libx264 is GPL-licensed and not included in all ffmpeg builds
-    // (e.g. vcpkg on Windows). Fall back to the built-in mpeg4 encoder
-    // which is available in every ffmpeg build.
     consumer.set("real_time", -1);        // render as fast as possible
     consumer.set("terminate_on_pause", 1);
-#ifdef _WIN32
-    consumer.set("vcodec", "mpeg4");
-#else
     consumer.set("vcodec", "libx264");
-#endif
     consumer.set("acodec", "aac");
     consumer.set("f", "mp4");
     consumer.set("crf", 23);
@@ -134,9 +127,9 @@ bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
     consumer.set("real_time", -1);
     consumer.set("terminate_on_pause", 1);
 #ifdef _WIN32
-    // vcpkg's minimal ffmpeg build may not include the PNG encoder.
-    // Use mjpeg (always available) instead — a single-frame image2
-    // muxer output, same semantics, different byte format.
+    // vcpkg's ffmpeg build may not include the built-in PNG encoder.
+    // Use mjpeg which is always available — functionally equivalent
+    // for a single-frame screenshot (image2 muxer + one frame).
     consumer.set("vcodec", "mjpeg");
 #else
     consumer.set("vcodec", "png");

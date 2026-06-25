@@ -228,7 +228,7 @@ TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9][export]"
     char buf[256] = {0};
     while (fgets(buf, sizeof(buf), f)) probe += buf;
     VEDIT_PCLOSE(f);
-    REQUIRE(probe.find(VEDIT_EXPECTED_VIDEO_CODEC) != std::string::npos);  // has a video stream
+    REQUIRE(probe.find("h264") != std::string::npos);  // has a video stream
     REQUIRE(progress >= 0.0);  // progress callback fired
 }
 
@@ -287,7 +287,7 @@ TEST_CASE("ExportService preserves source resolution, not PAL default", "[t9][ex
     char buf[256] = {0};
     while (fgets(buf, sizeof(buf), f)) probe += buf;
     VEDIT_PCLOSE(f);
-    REQUIRE(probe.find(VEDIT_EXPECTED_VIDEO_CODEC) != std::string::npos);
+    REQUIRE(probe.find("h264") != std::string::npos);
     REQUIRE(probe.find("640") != std::string::npos);
     REQUIRE(probe.find("360") != std::string::npos);
 }
@@ -819,7 +819,7 @@ TEST_CASE("Async export via AppController export_start/poll", "[t14][export]") {
     char buf[256];
     while (fgets(buf, sizeof(buf), p)) probe += buf;
     VEDIT_PCLOSE(p);
-    REQUIRE(probe.find(VEDIT_EXPECTED_VIDEO_CODEC) != std::string::npos);
+    REQUIRE(probe.find("h264") != std::string::npos);
 }
 
 TEST_CASE("Async export poll on unknown job_id returns found=false", "[t14]") {
