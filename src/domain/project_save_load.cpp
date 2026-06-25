@@ -3,6 +3,8 @@
 #include "media_library.h"
 #include "project_model.h"
 #include "timeline_model.h"
+
+#include <algorithm>
 #include "util/logger.h"
 
 #include <nlohmann/json.hpp>
@@ -26,7 +28,14 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
         return false;
     }
 
-    Mlt::Consumer consumer(project.profile(), "xml", path.c_str());
+    // Normalize to forward slashes: MLT's consumer_xml path parsing and
+    // the subsequent load_xml (producer_xml) work with forward slashes
+    // on all platforms. Windows backslashes can confuse the XML resource
+    // path resolution.
+    std::string normalized = path;
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+    Mlt::Consumer consumer(project.profile(), "xml", normalized.c_str());
     if (!consumer.is_valid()) {
         Logger::log(Logger::Level::Error, "ProjectSaveLoad: xml consumer unavailable");
         return false;
@@ -41,8 +50,12 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
 }
 
 bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
+    // Normalize to forward slashes (see save_xml above).
+    std::string normalized = path;
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
     // Deserialize the XML into a temporary producer.
-    Mlt::Producer loaded(project.profile(), "xml", path.c_str());
+    Mlt::Producer loaded(project.profile(), "xml", normalized.c_str());
     if (!loaded.is_valid()) {
         Logger::log(Logger::Level::Error, "ProjectSaveLoad: invalid XML file");
         return false;
@@ -143,7 +156,14 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project) {
         if (!item) continue;
         nlohmann::json j;
         j["index"] = i;
-        j["path"] = item->path;
+        {
+            // Normalize to forward slashes so JSON consumers on all
+            // platforms see a consistent path format (Windows backslash
+            // paths break string comparisons and URL-path assumptions).
+            std::string p = item->path;
+            std::replace(p.begin(), p.end(), '\\', '/');
+            j["path"] = std::move(p);
+        }
         j["name"] = item->name;
         j["width"] = item->width;
         j["height"] = item->height;

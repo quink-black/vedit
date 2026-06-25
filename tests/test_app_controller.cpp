@@ -2,6 +2,7 @@
 
 #include <Mlt.h>
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
@@ -227,7 +228,7 @@ TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9][export]"
     char buf[256] = {0};
     while (fgets(buf, sizeof(buf), f)) probe += buf;
     VEDIT_PCLOSE(f);
-    REQUIRE(probe.find("h264") != std::string::npos);  // has a video stream
+    REQUIRE(probe.find(VEDIT_EXPECTED_VIDEO_CODEC) != std::string::npos);  // has a video stream
     REQUIRE(progress >= 0.0);  // progress callback fired
 }
 
@@ -286,7 +287,7 @@ TEST_CASE("ExportService preserves source resolution, not PAL default", "[t9][ex
     char buf[256] = {0};
     while (fgets(buf, sizeof(buf), f)) probe += buf;
     VEDIT_PCLOSE(f);
-    REQUIRE(probe.find("h264") != std::string::npos);
+    REQUIRE(probe.find(VEDIT_EXPECTED_VIDEO_CODEC) != std::string::npos);
     REQUIRE(probe.find("640") != std::string::npos);
     REQUIRE(probe.find("360") != std::string::npos);
 }
@@ -321,6 +322,10 @@ TEST_CASE("ProjectSaveLoad save and load XML round-trip", "[t10]") {
 TEST_CASE("ProjectSaveLoad state_json describes timeline", "[t10]") {
     std::string clip = make_test_clip("json");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
+#ifdef _WIN32
+    // state_json normalizes backslashes to forward slashes.
+    std::replace(clip.begin(), clip.end(), '\\', '/');
+#endif
 
     vedit::AppController app;
     int mi = app.library_import(clip);
@@ -808,13 +813,13 @@ TEST_CASE("Async export via AppController export_start/poll", "[t14][export]") {
 
     std::string cmd = "ffprobe -v error -show_entries stream=codec_name "
                       "-of default=noprint_wrappers=1 \"" + out + "\" 2>&1";
-    std::FILE* p = popen(cmd.c_str(), "r");
+    std::FILE* p = VEDIT_POPEN(cmd.c_str(), "r");
     REQUIRE(p != nullptr);
     std::string probe;
     char buf[256];
     while (fgets(buf, sizeof(buf), p)) probe += buf;
-    pclose(p);
-    REQUIRE(probe.find("h264") != std::string::npos);
+    VEDIT_PCLOSE(p);
+    REQUIRE(probe.find(VEDIT_EXPECTED_VIDEO_CODEC) != std::string::npos);
 }
 
 TEST_CASE("Async export poll on unknown job_id returns found=false", "[t14]") {

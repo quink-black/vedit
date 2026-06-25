@@ -14,11 +14,13 @@
 #include "domain/project_save_load.h"
 #include "util/platform_compat.h"
 
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <glob.h>
+#ifndef _WIN32
+  #include <unistd.h>
+  #include <arpa/inet.h>
+  #include <sys/socket.h>
+  #include <sys/un.h>
+  #include <glob.h>
+#endif
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
