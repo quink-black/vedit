@@ -28,6 +28,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vedit_client import VeditClient, discover_instances
@@ -115,10 +116,19 @@ if os.path.exists(OUT_XML):
 call('project.save', {'path': OUT_XML})
 print(f'saved XML: {OUT_XML} ({os.path.getsize(OUT_XML)} bytes)')
 
-# 9. Export to MP4.
+# 9. Export to MP4 (async since R4: export.start returns a job id;
+#    poll until terminal state).
 if os.path.exists(OUT_MP4):
     os.remove(OUT_MP4)
-call('export.start', {'path': OUT_MP4})
+job_id = call('export.start', {'path': OUT_MP4})['job_id']
+while True:
+    r = call('export.poll', {'job_id': job_id})
+    if r['state'] != 'running':
+        break
+    time.sleep(0.2)
+if r['state'] != 'done':
+    print(f'FAIL: export {r["state"]}: {r.get("error", "")}', file=sys.stderr)
+    sys.exit(2)
 print(f'exported: {OUT_MP4} ({os.path.getsize(OUT_MP4)} bytes)')
 
 # 10. Probe the exported file.

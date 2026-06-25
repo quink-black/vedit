@@ -366,6 +366,34 @@ int TimelineModel::media_index_of(ClipId id) const {
     return found == clips_.end() ? -1 : found->second.media_index;
 }
 
+int TimelineModel::count_clips_for_media(int media_index) const {
+    int n = 0;
+    for (const auto& [_, info] : clips_) {
+        if (info.media_index == media_index) ++n;
+    }
+    return n;
+}
+
+void TimelineModel::on_media_removed(int removed_index) {
+    for (auto& ts : tracks_) {
+        if (!ts.playlist) continue;
+        for (int i = 0; i < ts.playlist->count(); ++i) {
+            Mlt::Producer* cut = ts.playlist->get_clip(i);
+            if (!cut) continue;
+            int mi = read_media_index(*cut);
+            // Shift tail entries down by one. Clips at exactly
+            // removed_index should not exist (caller guarantees), but
+            // be defensive: leave any orphaned stamp alone so it stays
+            // detectable rather than silently aliasing another source.
+            if (mi > removed_index) {
+                stamp_media_index(*cut, mi - 1);
+            }
+            delete cut;
+        }
+    }
+    rebuild_clip_view();
+}
+
 std::vector<ClipInfo> TimelineModel::clips_on_track(TrackId track) const {
     std::vector<ClipInfo> result;
     for (const auto& [_, info] : clips_) {

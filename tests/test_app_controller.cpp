@@ -9,7 +9,10 @@
 #include "domain/app_controller.h"
 #include "domain/export_service.h"
 #include "domain/ids.h"
+#include "domain/media_library.h"  // for StreamInfo
 #include "domain/project_save_load.h"
+#include "rpc/rpc_dispatcher.h"
+#include "rpc/rpc_methods.h"
 #include "test_support.h"
 
 using vedit::test::make_test_clip;
@@ -145,6 +148,53 @@ TEST_CASE("AppController track remove cleans up clips", "[t8]") {
     REQUIRE(app.track_remove(v1));
     REQUIRE(app.track_count() == 0);
     REQUIRE(app.project().timeline().clip(id) == nullptr);
+}
+
+TEST_CASE("AppController library_remove refuses in-use source", "[t8]") {
+    std::string clip = make_test_clip("librm_inuse");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    // Source is referenced by a clip on the timeline: refuse.
+    REQUIRE_FALSE(app.library_remove(mi));
+    REQUIRE(app.library_count() == 1);
+    REQUIRE(app.project().library().item(mi) != nullptr);
+
+    // Drop the clip -> removal now succeeds and library collapses.
+    REQUIRE(app.clip_remove(app.project().timeline().clips_on_track(v1)[0].id));
+    REQUIRE(app.library_remove(mi));
+    REQUIRE(app.library_count() == 0);
+    REQUIRE(app.project().library().item(mi) == nullptr);
+}
+
+TEST_CASE("AppController library_remove reindexes remaining sources", "[t8]") {
+    std::string clipA = make_test_clip("librm_a");
+    std::string clipB = make_test_clip("librm_b");
+    if (clipA.empty() || clipB.empty()) { FAIL("could not generate test clips"); return; }
+
+    vedit::AppController app;
+    int miA = app.library_import(clipA);
+    int miB = app.library_import(clipB);
+    REQUIRE(miA == 0);
+    REQUIRE(miB == 1);
+
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    // Append B only; A is unused and can be dropped.
+    auto idB = app.clip_append(v1, miB);
+    REQUIRE(idB.valid());
+
+    REQUIRE(app.library_remove(miA));          // drops index 0
+    REQUIRE(app.library_count() == 1);
+    // B is now at index 0 in the library, and the clip's stamped
+    // media_index must have been shifted down to 0 as well so
+    // media_index_of still resolves correctly.
+    REQUIRE(app.project().timeline().media_index_of(idB) == 0);
+    REQUIRE(app.project().library().item(0)->path == clipB);
 }
 
 TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9][export]") {
@@ -626,4 +676,312 @@ TEST_CASE("Two-track export produces single composited video stream",
     }
     REQUIRE(video_count == 1);
     REQUIRE(audio_count == 1);
+}
+
+TEST_CASE("clip.insert via RPC honors in/out sub-range", "[t13]") {
+    std::string clip = make_test_clip("insert_subrange");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Append a full clip first to establish source length, then insert
+    // a sub-range [10, 30) at timeline position 0 via RPC.
+    auto full = app.clip_append(v1, mi);
+    REQUIRE(full.valid());
+    const auto* full_info = app.project().timeline().clip(full);
+    REQUIRE(full_info != nullptr);
+    REQUIRE(app.clip_remove(full));
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","clip.insert"},{"id",1},
+                          {"params", {{"track_id", v1.value},
+                                      {"media_index", mi},
+                                      {"position", 0},
+                                      {"in", 10},
+                                      {"out", 30}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    int64_t new_id = resp["result"]["clip_id"];
+    const auto* info = app.project().timeline().clip(vedit::ClipId{new_id});
+    REQUIRE(info != nullptr);
+    // MLT's Producer::cut(in,out) treats `out` as INCLUSIVE, so
+    // [10,30] yields 21 frames (30-10+1). This matches clip.append's
+    // behavior; documented here so an agent author reading the test
+    // learns the convention.
+    REQUIRE(info->in_point == 10);
+    REQUIRE(info->out_point == 30);
+    REQUIRE(info->length == 21);
+}
+
+TEST_CASE("player.get_frame / view.screenshot over RPC dispatcher", "[t13][export]") {
+    std::string clip = make_test_clip("rpc_getframe");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    std::string frame_path = vedit::test::unique_temp_path(
+        "vedit-test", "rpc_getframe", ".png");
+    std::string shot_path = vedit::test::unique_temp_path(
+        "vedit-test", "rpc_screenshot", ".png");
+
+    // player.get_frame at position 5
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","player.get_frame"},{"id",1},
+                              {"params", {{"position", 5}, {"path", frame_path}}}};
+        nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+        REQUIRE(resp.value("id", 0) == 1);
+        REQUIRE_FALSE(resp.contains("error"));
+        REQUIRE(resp["result"]["position"] == 5);
+        REQUIRE(resp["result"]["path"] == frame_path);
+        std::FILE* f = std::fopen(frame_path.c_str(), "rb");
+        REQUIRE(f != nullptr);
+        std::fseek(f, 0, SEEK_END);
+        long sz = std::ftell(f);
+        std::fclose(f);
+        REQUIRE(sz > 100);  // non-trivial PNG
+    }
+
+    // view.screenshot at the current playhead (default position 0)
+    app.seek(0);
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","view.screenshot"},{"id",2},
+                              {"params", {{"path", shot_path}}}};
+        nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+        REQUIRE(resp.value("id", 0) == 2);
+        REQUIRE_FALSE(resp.contains("error"));
+        REQUIRE(resp["result"]["position"] == 0);
+        std::FILE* f = std::fopen(shot_path.c_str(), "rb");
+        REQUIRE(f != nullptr);
+        std::fclose(f);
+    }
+}
+
+TEST_CASE("Async export via AppController export_start/poll", "[t14][export]") {
+    std::string clip = make_test_clip("async_export");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    std::string out = vedit::test::unique_temp_path(
+        "vedit-test", "async_export", ".mp4");
+    int64_t job_id = app.export_start(out);
+    REQUIRE(job_id > 0);
+
+    // Poll until the worker reports a terminal state. Bounded by the
+    // clip duration; a 1s source renders in well under 10s on any
+    // modern CPU, so 30s is a generous ceiling.
+    vedit::AppController::ExportPollResult r;
+    bool terminal = false;
+    for (int i = 0; i < 300; ++i) {  // 300 * 100ms = 30s
+        r = app.export_poll(job_id);
+        REQUIRE(r.found);
+        if (r.state != "running") { terminal = true; break; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    REQUIRE(terminal);
+    REQUIRE(r.state == "done");
+    REQUIRE(r.fraction == 1.0);
+
+    // The output must be a non-trivial MP4 with an h264 video stream.
+    std::FILE* f = std::fopen(out.c_str(), "rb");
+    REQUIRE(f != nullptr);
+    std::fseek(f, 0, SEEK_END);
+    long sz = std::ftell(f);
+    std::fclose(f);
+    REQUIRE(sz > 1000);
+
+    std::string cmd = "ffprobe -v error -show_entries stream=codec_name "
+                      "-of default=noprint_wrappers=1 \"" + out + "\" 2>&1";
+    std::FILE* p = popen(cmd.c_str(), "r");
+    REQUIRE(p != nullptr);
+    std::string probe;
+    char buf[256];
+    while (fgets(buf, sizeof(buf), p)) probe += buf;
+    pclose(p);
+    REQUIRE(probe.find("h264") != std::string::npos);
+}
+
+TEST_CASE("Async export poll on unknown job_id returns found=false", "[t14]") {
+    vedit::AppController app;
+    auto r = app.export_poll(99999);
+    REQUIRE_FALSE(r.found);
+}
+
+// =============================================================================
+// Multi-stream selection (library.import video_index/audio_index, set_stream,
+// state.get streams list).
+// =============================================================================
+
+TEST_CASE("MediaLibrary import records stream list", "[t15]") {
+    std::string clip = vedit::test::make_test_clip_multistream("streams_list");
+    if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    const auto* item = app.project().library().item(mi);
+    REQUIRE(item != nullptr);
+
+    // Expect at least 1 video + 2 audio streams.
+    int nv = 0, na = 0;
+    for (const auto& s : item->streams) {
+        if (s.type == "video") ++nv;
+        else if (s.type == "audio") ++na;
+        REQUIRE_FALSE(s.codec.empty());
+    }
+    REQUIRE(nv == 1);
+    REQUIRE(na >= 2);
+
+    // The default audio stream must be marked is_default; the other not.
+    int default_count = 0;
+    for (const auto& s : item->streams) {
+        if (s.type == "audio" && s.is_default) ++default_count;
+    }
+    REQUIRE(default_count == 1);
+
+    // audio_index / video_index on the item must reflect the producer's
+    // selected stream (the first of each type by default).
+    REQUIRE(item->video_index >= 0);
+    REQUIRE(item->audio_index >= 0);
+}
+
+TEST_CASE("library.import with audio_index selects requested stream", "[t15]") {
+    std::string clip = vedit::test::make_test_clip_multistream("import_audio_idx");
+    if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
+
+    vedit::AppController app;
+    // Import with audio_index=2 (the second audio stream, ac3).
+    int mi = app.library_import(clip, /*video_index=*/-1, /*audio_index=*/2);
+    REQUIRE(mi >= 0);
+    const auto* item = app.project().library().item(mi);
+    REQUIRE(item != nullptr);
+    REQUIRE(item->audio_index == 2);
+
+    // Exactly one audio stream is_default and it's the one at index 2.
+    const vedit::StreamInfo* def = nullptr;
+    for (const auto& s : item->streams) {
+        if (s.type == "audio" && s.is_default) { def = &s; break; }
+    }
+    REQUIRE(def != nullptr);
+    REQUIRE(def->index == 2);
+}
+
+TEST_CASE("library.set_stream switches audio", "[t15]") {
+    std::string clip = vedit::test::make_test_clip_multistream("set_stream");
+    if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);  // default = first audio stream
+    REQUIRE(mi >= 0);
+    const auto* item = app.project().library().item(mi);
+    REQUIRE(item != nullptr);
+    int orig_audio = item->audio_index;
+    REQUIRE(orig_audio >= 0);
+
+    // Find another audio stream to switch to.
+    int other = -1;
+    for (const auto& s : item->streams) {
+        if (s.type == "audio" && s.index != orig_audio) { other = s.index; break; }
+    }
+    REQUIRE(other >= 0);
+
+    REQUIRE(app.library_set_stream(mi, -1, other));
+    item = app.project().library().item(mi);
+    REQUIRE(item != nullptr);
+    REQUIRE(item->audio_index == other);
+}
+
+TEST_CASE("library.set_stream refuses when in use", "[t15]") {
+    std::string clip = vedit::test::make_test_clip_multistream("set_stream_inuse");
+    if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    // Source is referenced: set_stream must refuse, leaving the
+    // selection unchanged.
+    int orig_audio = app.project().library().item(mi)->audio_index;
+    REQUIRE_FALSE(app.library_set_stream(mi, -1, orig_audio + 1));
+    REQUIRE(app.project().library().item(mi)->audio_index == orig_audio);
+}
+
+TEST_CASE("state.get exposes streams list with stable schema", "[t15]") {
+    std::string clip = vedit::test::make_test_clip_multistream("state_streams");
+    if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","state.get"},{"id",1}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    const auto& lib = resp["result"]["library"];
+    REQUIRE(lib.is_array());
+    REQUIRE(lib.size() == 1);
+    REQUIRE(lib[0]["index"] == mi);
+    // Streams array must be present and non-empty.
+    REQUIRE(lib[0].contains("streams"));
+    REQUIRE(lib[0]["streams"].is_array());
+    REQUIRE_FALSE(lib[0]["streams"].empty());
+    // Each stream has the locked schema keys.
+    for (const auto& s : lib[0]["streams"]) {
+        REQUIRE(s.contains("index"));
+        REQUIRE(s.contains("type"));
+        REQUIRE(s.contains("codec"));
+        REQUIRE(s.contains("is_default"));
+    }
+    // video_index / audio_index surfaced at the item level.
+    REQUIRE(lib[0].contains("video_index"));
+    REQUIRE(lib[0].contains("audio_index"));
+}
+
+TEST_CASE("library.set_stream over RPC dispatcher", "[t15]") {
+    std::string clip = vedit::test::make_test_clip_multistream("rpc_set_stream");
+    if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    int orig_audio = app.project().library().item(mi)->audio_index;
+
+    // Find another audio stream.
+    int other = -1;
+    for (const auto& s : app.project().library().item(mi)->streams) {
+        if (s.type == "audio" && s.index != orig_audio) { other = s.index; break; }
+    }
+    REQUIRE(other >= 0);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","library.set_stream"},{"id",1},
+                          {"params", {{"index", mi},
+                                      {"video_index", -1},
+                                      {"audio_index", other}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"]["ok"] == true);
+    REQUIRE(app.project().library().item(mi)->audio_index == other);
 }

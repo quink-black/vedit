@@ -75,6 +75,37 @@ inline std::string make_test_clip_sized(const std::string& tag,
     return path;
 }
 
+// Build a clip with one video + two audio streams (stereo sine + 5.1
+// sine). Used by multi-stream selection tests. Returns "" on failure.
+// Falls back to a system sample if VEDIT_MULTI_STREAM_SAMPLE is set
+// (e.g. pointing at /home/quink/minipc/quink/video/bunny.mp4 for
+// interactive verification).
+inline std::string make_test_clip_multistream(const std::string& tag) {
+    const char* sample = std::getenv("VEDIT_MULTI_STREAM_SAMPLE");
+    if (sample && sample[0]) {
+        std::string path = unique_temp_path("vedit-testclip", tag, ".mp4");
+        std::string cmd = "cp '" + std::string(sample) + "' " + path;
+        if (std::system(cmd.c_str()) != 0) return "";
+        return path;
+    }
+    std::string path = unique_temp_path("vedit-testclip", tag, ".mp4");
+    // testsrc (video) + sine stereo (audio 1) + sine 5.1 via aeval
+    // (audio 2). Encode both audio streams; MLT will see 1 video + 2
+    // audio streams. Use aac for the first, ac3 for the second so the
+    // streams are distinguishable in tests.
+    std::string cmd =
+        "ffmpeg -y -loglevel error "
+        "-f lavfi -i testsrc=duration=2:size=160x120:rate=25 "
+        "-f lavfi -i sine=frequency=440:duration=2 "
+        "-f lavfi -i sine=frequency=880:duration=2 "
+        "-map 0:v -map 1:a -map 2:a "
+        "-c:v libx264 -preset ultrafast -pix_fmt yuv420p "
+        "-c:a:0 aac -c:a:1 ac3 -b:a:1 128k " +
+        path;
+    if (std::system(cmd.c_str()) != 0) return "";
+    return path;
+}
+
 } // namespace vedit::test
 
 #endif // VEDIT_TESTS_TEST_SUPPORT_H

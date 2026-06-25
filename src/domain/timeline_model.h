@@ -90,6 +90,18 @@ public:
     // Resolve a clip's media_index from its cut's parent producer.
     int media_index_of(ClipId id) const;
 
+    // Count clips referencing a given library media index. Used by
+    // MediaLibrary removal to refuse dropping a source still in use.
+    int count_clips_for_media(int media_index) const;
+
+    // Called by AppController after a MediaLibrary item at
+    // `removed_index` has been dropped and the tail re-indexed down by
+    // one. Walks every playlist clip and decrements any stamped
+    // media_index > removed_index so future lookups still resolve to
+    // the right library producer. Clips at exactly `removed_index`
+    // must not exist (caller guarantees count_clips_for_media == 0).
+    void on_media_removed(int removed_index);
+
     bool remove_clip(ClipId id);
     bool move_clip(ClipId id, TrackId dest_track, int64_t dest_position);
     bool trim_clip(ClipId id, int64_t new_in, int64_t new_out);

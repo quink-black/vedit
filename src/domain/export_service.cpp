@@ -77,6 +77,12 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
 
 bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
                               int64_t position, const std::string& image_path) {
+    // A prior consumer (preview or another get_frame call) leaves the
+    // producer paused with speed 0. Without restoring forward playback
+    // the image2 consumer (terminate_on_pause) stops before emitting a
+    // frame — same defect as the empty-export bug. See
+    // lessons-mistakes-to-avoid.md #10.
+    producer.set_speed(1.0);
     producer.seek(static_cast<int>(position));
 
     Mlt::Consumer consumer(profile, "avformat", image_path.c_str());
@@ -88,6 +94,13 @@ bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
     consumer.set("terminate_on_pause", 1);
     consumer.set("vcodec", "png");
     consumer.set("f", "image2");
+    // Without -update, the image2 muxer rejects a plain filename
+    // (it expects a %03d sequence pattern). We write one still frame.
+    consumer.set("update", 1);
+    // One frame only — seek above positions the producer; the
+    // terminate_on_pause + single-frame emit + stop below keep this
+    // cheap. Explicit frame cap in case the producer is longer.
+    consumer.set("frames", 1);
 
     consumer.connect(producer);
     consumer.run();

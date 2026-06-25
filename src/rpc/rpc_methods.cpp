@@ -36,12 +36,48 @@ void register_methods(Dispatcher& d, AppController& app) {
     });
 
     // ---- library.import ----
+    //
+    // Optional stream selection at import time. video_index / audio_index
+    // default to -1 (MLT picks the first stream of each type). Pass >= 0
+    // to select a specific stream from a multi-stream file (e.g. an mp4
+    // with two audio tracks). audio_index == -2 selects "all" audio
+    // streams (MLT decodes every audio stream interleaved).
     d.register_method("library.import", [&](const nlohmann::json& params) {
         std::string path = params.value("path", "");
         if (path.empty()) throw RpcException(ErrorCode::InvalidParams, "missing path");
-        int idx = app.library_import(path);
+        int video_index = params.value("video_index", -1);
+        int audio_index = params.value("audio_index", -1);
+        int idx = app.library_import(path, video_index, audio_index);
         if (idx < 0) throw RpcException(ErrorCode::ApplicationError, "import failed");
         return nlohmann::json{{"index", idx}};
+    });
+
+    // ---- library.remove ----
+    d.register_method("library.remove", [&](const nlohmann::json& params) {
+        int idx = params.value("index", -1);
+        if (idx < 0) throw RpcException(ErrorCode::InvalidParams, "missing index");
+        if (!app.library_remove(idx))
+            throw RpcException(ErrorCode::ApplicationError,
+                               "remove failed (index out of range or source in use)");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    // ---- library.set_stream ----
+    //
+    // Switch the selected video/audio stream on an imported source.
+    // Refuses if the timeline still references it (per-media design:
+    // all clips from one library item share the chosen streams, so
+    // switching streams with clips in place would silently mutate them;
+    // caller must drop the clips first).
+    d.register_method("library.set_stream", [&](const nlohmann::json& params) {
+        int idx = params.value("index", -1);
+        if (idx < 0) throw RpcException(ErrorCode::InvalidParams, "missing index");
+        int video_index = params.value("video_index", -1);
+        int audio_index = params.value("audio_index", -1);
+        if (!app.library_set_stream(idx, video_index, audio_index))
+            throw RpcException(ErrorCode::ApplicationError,
+                               "set_stream failed (bad index or source in use)");
+        return nlohmann::json{{"ok", true}};
     });
 
     // ---- track.add / track.remove ----
@@ -76,7 +112,9 @@ void register_methods(Dispatcher& d, AppController& app) {
         TrackId tid{params.value("track_id", 0LL)};
         int mi = params.value("media_index", -1);
         int64_t pos = params.value("position", 0LL);
-        auto id = app.clip_insert(tid, mi, pos);
+        int64_t in_point = params.value("in", -1LL);
+        int64_t out_point = params.value("out", -1LL);
+        auto id = app.clip_insert(tid, mi, pos, in_point, out_point);
         if (!id.valid()) throw RpcException(ErrorCode::ApplicationError, "insert failed");
         return nlohmann::json{{"clip_id", id.value}};
     });
@@ -128,6 +166,38 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"position", app.position()}};
     });
 
+    // ---- player.get_frame ----
+    //
+    // Pull a single composed frame from the timeline tractor at
+    // `position` and write it to `path` as a PNG. This is the brief's
+    // "single-frame interface" — the primitive an AI model calls to
+    // inspect a frame. Uses ExportService::get_frame over the project's
+    // tractor, which is the same assembly the preview path renders.
+    d.register_method("player.get_frame", [&](const nlohmann::json& params) {
+        int64_t pos = params.value("position", app.position());
+        std::string path = params.value("path", "");
+        if (path.empty()) throw RpcException(ErrorCode::InvalidParams, "missing path");
+        ExportService svc;
+        if (!svc.get_frame(*app.project().producer(), app.profile(), pos, path))
+            throw RpcException(ErrorCode::ApplicationError, "get_frame failed");
+        return nlohmann::json{{"path", path}, {"position", pos}};
+    });
+
+    // ---- view.screenshot ----
+    //
+    // Same single-frame PNG, but pinned to the current playhead position
+    // so an agent can "see what the user sees" without needing to know
+    // the frame number.
+    d.register_method("view.screenshot", [&](const nlohmann::json& params) {
+        std::string path = params.value("path", "");
+        if (path.empty()) throw RpcException(ErrorCode::InvalidParams, "missing path");
+        int64_t pos = app.position();
+        ExportService svc;
+        if (!svc.get_frame(*app.project().producer(), app.profile(), pos, path))
+            throw RpcException(ErrorCode::ApplicationError, "screenshot failed");
+        return nlohmann::json{{"path", path}, {"position", pos}};
+    });
+
     // ---- project.save / project.open ----
     d.register_method("project.save", [&](const nlohmann::json& params) {
         std::string path = params.value("path", "");
@@ -145,13 +215,40 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
-    // ---- export.start ----
+    // ---- export.start / export.poll / export.cancel ----
+    //
+    // Async export. export.start kicks off a worker-thread render and
+    // returns a job id immediately; export.poll reports state/fraction;
+    // export.cancel signals cancellation (best-effort — MLT's run()
+    // blocks until terminate_on_pause, so a long encode can't be
+    // interrupted mid-stream, but the request is recorded and the
+    // final state becomes "cancelled").
     d.register_method("export.start", [&](const nlohmann::json& params) {
         std::string path = params.value("path", "");
         if (path.empty()) throw RpcException(ErrorCode::InvalidParams, "missing path");
-        ExportService svc;
-        if (!svc.render(*app.project().producer(), app.profile(), path))
-            throw RpcException(ErrorCode::ApplicationError, "export failed");
+        int64_t job_id = app.export_start(path);
+        if (job_id == 0) throw RpcException(ErrorCode::ApplicationError, "export start failed");
+        return nlohmann::json{{"job_id", job_id}};
+    });
+
+    d.register_method("export.poll", [&](const nlohmann::json& params) {
+        int64_t job_id = params.value("job_id", 0LL);
+        if (job_id <= 0) throw RpcException(ErrorCode::InvalidParams, "missing job_id");
+        auto r = app.export_poll(job_id);
+        if (!r.found) throw RpcException(ErrorCode::ApplicationError, "unknown job_id");
+        return nlohmann::json{
+            {"state",  r.state},
+            {"fraction", r.fraction},
+            {"path",   r.output_path},
+            {"error",  r.error}
+        };
+    });
+
+    d.register_method("export.cancel", [&](const nlohmann::json& params) {
+        int64_t job_id = params.value("job_id", 0LL);
+        if (job_id <= 0) throw RpcException(ErrorCode::InvalidParams, "missing job_id");
+        if (!app.export_cancel(job_id))
+            throw RpcException(ErrorCode::ApplicationError, "cancel failed (unknown id or not running)");
         return nlohmann::json{{"ok", true}};
     });
 }

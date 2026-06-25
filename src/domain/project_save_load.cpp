@@ -5,6 +5,8 @@
 #include "timeline_model.h"
 #include "util/logger.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdio>
 #include <sstream>
 
@@ -14,34 +16,6 @@
 namespace vedit {
 
 namespace {
-
-// Escape a string for inclusion in a JSON string literal. Paths and
-// names can contain backslashes (Windows) or quotes; without escaping
-// the emitted JSON would be malformed.
-std::string json_escape(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 4);
-    for (char ch : s) {
-        switch (ch) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\b': out += "\\b";  break;
-            case '\f': out += "\\f";  break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:
-                if (static_cast<unsigned char>(ch) < 0x20) {
-                    char buf[8];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
-                    out += buf;
-                } else {
-                    out += ch;
-                }
-        }
-    }
-    return out;
-}
 
 } // namespace
 
@@ -150,56 +124,87 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project) {
     TimelineModel& tl = project.timeline();
     MediaLibrary& lib = project.library();
 
-    std::ostringstream ss;
-    ss << "{";
+    // Built with nlohmann-json (not hand-rolled) so the schema is
+    // exact and escaping is correct. The shape is the stable contract
+    // an agent reads to discover media, streams, tracks, and clips —
+    // changing it breaks MCP consumers. Add fields, do not rename or
+    // remove existing ones.
+    nlohmann::json doc;
+    doc["project"] = "vedit";
 
-    // Library: list every imported source with its probed metadata.
-    // The MCP agent needs this to know which media_index to pass to
-    // clip.append/insert and to choose sources by dimension/duration.
-    ss << "\"library\":[";
+    // Library: list every imported source with its probed metadata and
+    // the full stream list (video / audio / subtitle). The agent uses
+    // this to choose a media_index for clip.append/insert, pick which
+    // stream to import via video_index/audio_index, and detect
+    // subtitle streams it might want to render via a text filter later.
+    nlohmann::json library = nlohmann::json::array();
     for (int i = 0; i < lib.count(); ++i) {
-        if (i > 0) ss << ",";
         const auto* item = lib.item(i);
-        if (!item) { ss << "null"; continue; }
-        ss << "{\"index\":" << i << ",";
-        ss << "\"path\":\"" << json_escape(item->path) << "\",";
-        ss << "\"name\":\"" << json_escape(item->name) << "\",";
-        ss << "\"width\":" << item->width << ",";
-        ss << "\"height\":" << item->height << ",";
-        ss << "\"fps\":" << item->fps << ",";
-        ss << "\"duration_sec\":" << item->duration_sec << ",";
-        ss << "\"frame_count\":" << item->frame_count << ",";
-        ss << "\"has_video\":" << (item->has_video ? 1 : 0) << ",";
-        ss << "\"has_audio\":" << (item->has_audio ? 1 : 0);
-        ss << "}";
+        if (!item) continue;
+        nlohmann::json j;
+        j["index"] = i;
+        j["path"] = item->path;
+        j["name"] = item->name;
+        j["width"] = item->width;
+        j["height"] = item->height;
+        j["fps"] = item->fps;
+        j["duration_sec"] = item->duration_sec;
+        j["frame_count"] = item->frame_count;
+        j["has_video"] = item->has_video;
+        j["has_audio"] = item->has_audio;
+        j["video_index"] = item->video_index;
+        j["audio_index"] = item->audio_index;
+
+        nlohmann::json streams = nlohmann::json::array();
+        for (const auto& s : item->streams) {
+            nlohmann::json sj;
+            sj["index"] = s.index;
+            sj["type"] = s.type;
+            sj["codec"] = s.codec;
+            sj["long_name"] = s.long_name;
+            sj["language"] = s.language;
+            sj["is_default"] = s.is_default;
+            if (s.type == "video") {
+                sj["width"] = s.width;
+                sj["height"] = s.height;
+                sj["frame_rate"] = s.frame_rate;
+            } else if (s.type == "audio") {
+                sj["channels"] = s.channels;
+                sj["sample_rate"] = s.sample_rate;
+            }
+            // subtitle: only index/type/codec/long_name/language/is_default.
+            streams.push_back(std::move(sj));
+        }
+        j["streams"] = std::move(streams);
+        library.push_back(std::move(j));
     }
-    ss << "],";
+    doc["library"] = std::move(library);
 
     // Tracks with their clips. Each clip carries its stable ClipId and
     // media_index so the agent can target it via clip.remove/move/trim.
-    ss << "\"tracks\":[";
-    auto tracks = tl.tracks();
-    for (size_t t = 0; t < tracks.size(); ++t) {
-        if (t > 0) ss << ",";
-        ss << "{\"id\":" << tracks[t].id.value << ",";
-        ss << "\"name\":\"" << json_escape(tracks[t].name) << "\",";
-        ss << "\"kind\":\"" << (tracks[t].kind == TrackKind::Video ? "video" : "audio") << "\",";
-        ss << "\"clips\":[";
-        auto clips = tl.clips_on_track(tracks[t].id);
-        for (size_t c = 0; c < clips.size(); ++c) {
-            if (c > 0) ss << ",";
-            ss << "{\"id\":" << clips[c].id.value << ",";
-            ss << "\"media_index\":" << clips[c].media_index << ",";
-            ss << "\"start\":" << clips[c].start << ",";
-            ss << "\"length\":" << clips[c].length << ",";
-            ss << "\"in\":" << clips[c].in_point << ",";
-            ss << "\"out\":" << clips[c].out_point;
-            ss << "}";
+    nlohmann::json tracks = nlohmann::json::array();
+    for (const auto& tr : tl.tracks()) {
+        nlohmann::json tj;
+        tj["id"] = tr.id.value;
+        tj["name"] = tr.name;
+        tj["kind"] = (tr.kind == TrackKind::Video) ? "video" : "audio";
+        nlohmann::json clips = nlohmann::json::array();
+        for (const auto& c : tl.clips_on_track(tr.id)) {
+            nlohmann::json cj;
+            cj["id"] = c.id.value;
+            cj["media_index"] = c.media_index;
+            cj["start"] = c.start;
+            cj["length"] = c.length;
+            cj["in"] = c.in_point;
+            cj["out"] = c.out_point;
+            clips.push_back(std::move(cj));
         }
-        ss << "]}";
+        tj["clips"] = std::move(clips);
+        tracks.push_back(std::move(tj));
     }
-    ss << "]}";
-    return ss.str();
+    doc["tracks"] = std::move(tracks);
+
+    return doc.dump();
 }
 
 } // namespace vedit

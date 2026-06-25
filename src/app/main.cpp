@@ -135,6 +135,10 @@ struct GuiState {
     int64_t drag_orig_out = 0;
     int64_t drag_orig_start = 0;
     int64_t drag_source_len = 0;  // source clip length, for trim clamping
+
+    // Async export job id (0 = none). Set by File > Export video;
+    // polled each frame so the status bar reflects progress.
+    int64_t export_job_id = 0;
 };
 
 // ============================================================================
@@ -219,13 +223,74 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
             }
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Double-click: append to the selected track.\n"
-                              "Right-click: remove from library.");
+            // Tooltip shows the stream list so the user can see which
+            // tracks the source carries without opening ffprobe.
+            std::string tip = "Double-click: append to the selected track.\n"
+                              "Right-click: remove / switch stream.";
+            if (!item->streams.empty()) {
+                tip += "\n\nStreams:";
+                for (const auto& s : item->streams) {
+                    char line[160];
+                    std::snprintf(line, sizeof(line),
+                        "\n  [%d] %s %s%s%s",
+                        s.index, s.type.c_str(), s.codec.c_str(),
+                        s.is_default ? " (default)" : "",
+                        s.language.empty() ? "" :
+                            (" lang=" + s.language).c_str());
+                    tip += line;
+                    if (s.type == "video" && s.width > 0) {
+                        char extra[64];
+                        std::snprintf(extra, sizeof(extra),
+                                      " %dx%d %.2ffps",
+                                      s.width, s.height, s.frame_rate);
+                        tip += extra;
+                    } else if (s.type == "audio" && s.channels > 0) {
+                        char extra[64];
+                        std::snprintf(extra, sizeof(extra),
+                                      " %dch %dHz", s.channels, s.sample_rate);
+                        tip += extra;
+                    }
+                }
+            }
+            ImGui::SetTooltip("%s", tip.c_str());
         }
         if (ImGui::BeginPopupContextItem(("##mctx%d" + std::to_string(i)).c_str())) {
             if (ImGui::MenuItem("Remove from library")) {
-                // M1: library has no remove API yet; tell the user.
-                gui.status = "(Library remove not implemented in M1.)";
+                if (app.library_remove(i)) {
+                    gui.status = "Removed media from library.";
+                    if (gui.selected_media == i) gui.selected_media = -1;
+                    else if (gui.selected_media > i) --gui.selected_media;
+                } else {
+                    gui.status = "Cannot remove: media is in use on the timeline.";
+                }
+            }
+            // Stream switch submenu. Lists each audio stream as a
+            // radio-like entry; clicking one calls library.set_stream.
+            // Refuses when the timeline references this source.
+            bool has_audio_streams = false;
+            for (const auto& s : item->streams) {
+                if (s.type == "audio") { has_audio_streams = true; break; }
+            }
+            if (has_audio_streams && ImGui::BeginMenu("Switch audio stream")) {
+                for (const auto& s : item->streams) {
+                    if (s.type != "audio") continue;
+                    char label2[128];
+                    std::snprintf(label2, sizeof(label2),
+                                  "[%d] %s %dch %dHz%s",
+                                  s.index, s.codec.c_str(), s.channels,
+                                  s.sample_rate,
+                                  s.is_default ? "  *" : "");
+                    if (ImGui::MenuItem(label2)) {
+                        if (app.library_set_stream(i, -1, s.index)) {
+                            gui.status = "Switched audio stream to [" +
+                                         std::to_string(s.index) + "].";
+                        } else {
+                            gui.status = "Cannot switch: media is in use "
+                                         "on the timeline.";
+                        }
+                    }
+                }
+                ImGui::EndMenu();
             }
             ImGui::EndPopup();
         }
@@ -827,6 +892,31 @@ int main(int, char**) {
 
     bool running = true;
     while (running) {
+        // Poll any active async export job and surface its progress.
+        if (gui.export_job_id > 0) {
+            auto r = app.export_poll(gui.export_job_id);
+            if (r.found) {
+                if (r.state == "running") {
+                    char buf[128];
+                    std::snprintf(buf, sizeof(buf),
+                                  "Exporting %s: %d%%",
+                                  r.output_path.c_str(),
+                                  static_cast<int>(r.fraction * 100));
+                    gui.status = buf;
+                } else {
+                    gui.export_job_id = 0;
+                    if (r.state == "done") {
+                        gui.status = "Exported to " + r.output_path;
+                    } else if (r.state == "cancelled") {
+                        gui.status = "Export cancelled: " + r.output_path;
+                    } else {
+                        gui.status = "Export failed: " +
+                                    (r.error.empty() ? r.output_path : r.error);
+                    }
+                }
+            }
+        }
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL2_ProcessEvent(&event);
@@ -914,12 +1004,13 @@ int main(int, char**) {
                         std::string out = save_file_dialog("export.mp4");
                         if (!out.empty()) {
                             out = ensure_mp4_ext(out);
-                            app.pause();
-                            vedit::ExportService svc;
-                            bool ok = svc.render(*app.project().producer(),
-                                                 app.profile(), out);
-                            gui.status = ok ? ("Exported to " + out)
-                                            : ("Export failed: " + out);
+                            int64_t job_id = app.export_start(out);
+                            if (job_id > 0) {
+                                gui.export_job_id = job_id;
+                                gui.status = "Exporting to " + out + " ...";
+                            } else {
+                                gui.status = "Export failed to start: " + out;
+                            }
                         }
                     } else {
                         gui.status = "Nothing to export — add a clip first.";
