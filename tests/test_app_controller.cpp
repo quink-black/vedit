@@ -1032,3 +1032,56 @@ TEST_CASE("app.list_instances over RPC dispatcher", "[t16]") {
     // the array is empty. But it must still be a valid JSON array.
     // A running vedit instance would return its identity entry.
 }
+
+// save/load restores timeline structure (track count, clip count,
+// duration) but does NOT preserve TrackId or ClipId. MLT's consumer_xml
+// serializes the playlist/tractor structure but drops custom properties
+// on playlist producers and cut producers. ClipId/TrackId preservation
+// across save/load requires a companion JSON file or custom serializer;
+// this is a known M1 limitation tracked in the alignment doc.
+TEST_CASE("save/load round-trip mints new ids (known limitation)", "[t16]") {
+    std::string clip = vedit::test::make_test_clip("id_limitation");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+
+    auto v1 = app.track_add(vedit::TrackKind::Video, "Base");
+    REQUIRE(v1.valid());
+    auto c1 = app.clip_append(v1, mi);
+    REQUIRE(c1.valid());
+    auto c2 = app.clip_append(v1, mi);
+    REQUIRE(c2.valid());
+
+    int64_t orig_track_id = v1.value;
+    int64_t orig_clip1_id = c1.value;
+    int64_t orig_clip2_id = c2.value;
+    int orig_track_count = app.track_count();
+    int orig_clip_count = app.project().timeline().clip_count();
+
+    std::string xml_path = vedit::test::unique_temp_path(
+        "vedit-test", "id_limitation", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), xml_path));
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(app.project(), xml_path));
+
+    // Structure is preserved.
+    REQUIRE(app.track_count() == orig_track_count);
+    REQUIRE(app.project().timeline().clip_count() == orig_clip_count);
+
+    // But ids are NOT preserved — MLT consumer_xml drops custom
+    // properties on playlist/cut producers. New ids are minted.
+    // This test pins the CURRENT behavior; changing it is a feature,
+    // not a regression.
+    const auto* t = app.project().timeline().track(
+        vedit::TrackId{orig_track_id});
+    REQUIRE(t == nullptr);  // old id is gone
+
+    const auto* clip1 = app.project().timeline().clip(
+        vedit::ClipId{orig_clip1_id});
+    REQUIRE(clip1 == nullptr);  // old id is gone
+
+    const auto* clip2 = app.project().timeline().clip(
+        vedit::ClipId{orig_clip2_id});
+    REQUIRE(clip2 == nullptr);  // old id is gone
+}
