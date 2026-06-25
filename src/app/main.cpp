@@ -373,16 +373,36 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                       ImGuiWindowFlags_HorizontalScrollbar);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetCursorScreenPos();
-    float content_w = label_w + dur * px_per_frame + 200;
+
+    // Compute content size in double to avoid float precision loss on
+    // long timelines at high zoom (e.g. 30 min at 30 px/frame).
+    double content_w = static_cast<double>(label_w) +
+                       static_cast<double>(dur) * static_cast<double>(px_per_frame) +
+                       200.0;
     float content_h = ruler_h + tracks.size() * track_h + 8;
 
-    ImGui::InvisibleButton("##tlcanvas", ImVec2(content_w, content_h));
-    bool canvas_hovered = ImGui::IsItemHovered();
-    bool mouse_pressed = ImGui::IsItemClicked(0);
-    bool mouse_right = ImGui::IsItemClicked(1);
+    // Use SetCursorPosX + Dummy to set the content width for the
+    // horizontal scrollbar. This is more reliable than InvisibleButton
+    // for very wide content because Dummy is non-interactive and
+    // doesn't risk clipping or focus interference.
+    ImGui::SetCursorPosX(static_cast<float>(content_w));
+    ImGui::Dummy(ImVec2(0, content_h));
+    ImGui::SetCursorScreenPos(origin);
+
+    // Hover and click detection for the canvas area. Use the child
+    // window's hover state (which accounts for scroll) rather than an
+    // invisible button that can span 10^5+ pixels.
+    bool canvas_hovered = ImGui::IsWindowHovered(
+        ImGuiHoveredFlags_ChildWindows |
+        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    ImVec2 mouse = ImGui::GetIO().MousePos;
+    bool mouse_in_canvas = canvas_hovered &&
+                           mouse.x >= origin.x && mouse.x <= origin.x + ImGui::GetWindowWidth() &&
+                           mouse.y >= origin.y && mouse.y <= origin.y + content_h;
+    bool mouse_pressed = mouse_in_canvas && ImGui::IsMouseClicked(0);
+    bool mouse_right = mouse_in_canvas && ImGui::IsMouseClicked(1);
     bool mouse_down = ImGui::IsMouseDown(0);
     bool mouse_released = ImGui::IsMouseReleased(0);
-    ImVec2 mouse = ImGui::GetIO().MousePos;
 
     // Mouse-wheel zoom while hovering the timeline (Ctrl+wheel). Without
     // this the user can only zoom via the slider, and "zoom in to trim a
@@ -404,19 +424,21 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         return static_cast<int64_t>(rel / px_per_frame + 0.5f);
     };
 
+    float content_w_f = static_cast<float>(content_w);
+
     // Background.
-    dl->AddRectFilled(origin, ImVec2(origin.x + content_w, origin.y + content_h),
+    dl->AddRectFilled(origin, ImVec2(origin.x + content_w_f, origin.y + content_h),
                       IM_COL32(24, 24, 28, 255));
 
     // Ruler with second ticks (reads like a clock: 0:05, 0:10, ...).
     dl->AddRectFilled(ImVec2(origin.x, origin.y),
-                      ImVec2(origin.x + content_w, lanes_y0),
+                      ImVec2(origin.x + content_w_f, lanes_y0),
                       IM_COL32(40, 40, 48, 255));
     {
         int fps = static_cast<int>(gui.project_fps > 0 ? gui.project_fps : 25);
         for (int64_t f = 0; f <= dur + fps; f += fps) {
             float x = tl_x0 + f * px_per_frame;
-            if (x > origin.x + content_w) break;
+            if (x > origin.x + content_w_f) break;
             dl->AddLine(ImVec2(x, origin.y + 4), ImVec2(x, lanes_y0),
                         IM_COL32(90, 90, 100, 255), 1.0f);
             std::string lbl = ruler_label(f, gui.project_fps);
@@ -437,7 +459,7 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
 
         // Lane.
         dl->AddRectFilled(ImVec2(origin.x, y0),
-                          ImVec2(origin.x + content_w, y1),
+                          ImVec2(origin.x + content_w_f, y1),
                           is_active ? IM_COL32(44, 48, 60, 255)
                                     : IM_COL32(34, 34, 40, 255));
         // Header cell.
