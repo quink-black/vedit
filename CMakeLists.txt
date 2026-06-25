@@ -11,11 +11,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(VEDIT_BUILD_TESTS "Build unit tests" ON)
-option(VEDIT_ENABLE_SANITIZERS "Enable ASan+UBSan (Debug only)" ON)
+option(VEDIT_ENABLE_ASAN "Enable AddressSanitizer (opt-in, any build type)" OFF)
 
-if(VEDIT_ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_options(-fsanitize=address -fsanitize=undefined -g)
-    add_link_options(-fsanitize=address -fsanitize=undefined)
+if(VEDIT_ENABLE_ASAN)
+    add_compile_options(-fsanitize=address -g)
+    add_link_options(-fsanitize=address)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
