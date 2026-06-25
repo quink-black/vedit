@@ -21,6 +21,7 @@
 
 #include "rpc/rpc_dispatcher.h"
 #include "rpc/rpc_server.h"
+#include "util/platform_compat.h"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -287,12 +288,14 @@ TEST_CASE("RpcServer handles notification (no id) without responding",
 
 TEST_CASE("RpcServer sweeps stale sibling sockets on start",
           "[rpc_server]") {
-    // Create a stale socket file (not bound to any listener) under
-    // /tmp/vedit-*.sock. The sweep in start() should unlink it.
+    // Create a stale socket file (not bound to any listener) in the
+    // same temp dir the sweep scans (vedit::temp_dir()). The sweep in
+    // start() should unlink it.
     std::string stale_path =
-        "/tmp/vedit-stale-" + std::to_string(::getpid()) + "-"
-        + std::to_string(reinterpret_cast<std::uintptr_t>(&stale_path))
-        + ".sock";
+        (vedit::temp_dir() / ("vedit-stale-"
+         + std::to_string(::getpid()) + "-"
+         + std::to_string(reinterpret_cast<std::uintptr_t>(&stale_path))
+         + ".sock")).string();
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     REQUIRE(fd >= 0);
     struct sockaddr_un addr;
