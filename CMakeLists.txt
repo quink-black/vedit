@@ -74,10 +74,12 @@ if(WIN32 AND MSVC)
     add_compile_definitions(_WIN32_WINNT=0x0A00 NOMINMAX
                             ASIO_STANDALONE ASIO_HAS_LOCAL_SOCKETS)
 
-    # VEDIT_MLT_TARGET is set by the MLT ExternalProject block included
-    # below. It is intentionally empty here so this branch stays valid
-    # even before BuildMlt.cmake is wired in.
-    set(VEDIT_MLT_TARGET "")
+    # MLT is not in vcpkg. Build it from source with only the modules
+    # vedit uses (avformat, xml, sdl2, core). BuildMlt.cmake creates
+    # the Mlt7::mlt and Mlt7::mlt++ IMPORTED targets pointing at the
+    # future install prefix and sets VEDIT_MLT_TARGET / VEDIT_MLT_INSTALL_DIR.
+    include(BuildMlt)
+    vedit_build_mlt()
 
     # NFD is always built from source via FetchContent on Windows.
     set(VEDIT_BUILD_NFD ON)
@@ -132,6 +134,18 @@ add_subdirectory(src/core)
 add_subdirectory(src/domain)
 add_subdirectory(src/rpc)
 add_subdirectory(src/app)
+
+# ---- Windows postamble: MLT build order and module paths ----
+# ExternalProject_Add runs at build time, not configure time. The IMPORTED
+# targets created by vedit_build_mlt() reference the future install path,
+# so vedit_core must not link until mlt_external has built and installed.
+# VEDIT_MLT_INSTALL_DIR lets mlt_runtime.cpp set MLT_REPOSITORY/MLT_DATA
+# before Factory::init() so MLT finds its modules and presets.
+if(WIN32 AND MSVC)
+    add_dependencies(vedit_core mlt_external)
+    target_compile_definitions(vedit_core PRIVATE
+        VEDIT_MLT_INSTALL_DIR="${VEDIT_MLT_INSTALL_DIR}")
+endif()
 
 # ---- macOS platform defines (must be after add_subdirectory so targets exist) ----
 if(APPLE)

@@ -11,6 +11,7 @@
     "ffmpeg",
     "glib",
     "libxml2",
+    "libiconv",
     "dirent",
     "dlfcn-win32",
     "pthreads",
