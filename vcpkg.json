@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "vedit",
+  "version-string": "0.1.0",
+  "builtin-baseline": "a96085d4cccbe4126fe7924c1e79dafb52b98b92",
+  "dependencies": [
+    "sdl2",
+    "asio",
+    "catch2",
+    "nlohmann-json",
+    "ffmpeg",
+    "glib",
+    "libxml2",
+    "dirent",
+    "dlfcn-win32",
+    "pthreads",
+    "pkgconf"
+  ]
+}

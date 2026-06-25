@@ -23,7 +23,7 @@ target_link_libraries(vedit_tests PRIVATE
     vedit_domain
     vedit_core
     vedit_util
-    PkgConfig::CATCH2
+    ${VEDIT_CATCH2_TARGET}
 )
 target_compile_definitions(vedit_tests PRIVATE
     VEDIT_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data"

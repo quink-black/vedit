@@ -6,7 +6,7 @@ target_link_libraries(vedit PRIVATE
     vedit_util
     vedit_imgui_backends
     nfd::nfd
-    PkgConfig::SDL2
+    ${VEDIT_SDL2_TARGET}
 )
 
 if(APPLE)

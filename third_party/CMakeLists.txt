@@ -28,7 +28,7 @@ target_include_directories(vedit_imgui PUBLIC
     ${IMGUI_DIR}/backends
 )
 target_compile_definitions(vedit_imgui PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
-target_link_libraries(vedit_imgui PUBLIC PkgConfig::SDL2)
+target_link_libraries(vedit_imgui PUBLIC ${VEDIT_SDL2_TARGET})
 
 # Alias for backward compatibility with existing targets
 add_library(vedit_imgui_backends ALIAS vedit_imgui)
