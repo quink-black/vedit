@@ -300,13 +300,17 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         float avail_w = ImGui::GetContentRegionAvail().x;
         float usable = std::max(120.0f, avail_w - 64.0f - 40.0f);
         float fit = usable / static_cast<float>(dur_now);
-        gui.zoom = std::clamp(fit, 1.0f, 30.0f);
+        // Auto-fit floor is 0.005 px/frame so even a 30-min timeline
+        // (45,000 frames) fits in ~225px. The clip is sub-pixel at
+        // that zoom but both edges stay visible/grabbable. The user
+        // zooms in for frame-level work.
+        gui.zoom = std::clamp(fit, 0.005f, 30.0f);
         gui.last_fit_duration = dur_now;
     }
 
     // Plain language: "Zoom", not "px/f".
     float prev_zoom = gui.zoom;
-    ImGui::SliderFloat("Zoom", &gui.zoom, 1.0f, 30.0f, "%.0f");
+    ImGui::SliderFloat("Zoom", &gui.zoom, 0.005f, 30.0f, "%.3f");
     if (gui.zoom != prev_zoom) {
         gui.zoom_auto = false;  // user took manual control
     }
@@ -423,7 +427,7 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         float wheel = ImGui::GetIO().MouseWheel;
         if (wheel != 0.0f) {
             gui.zoom_auto = false;
-            gui.zoom = std::clamp(gui.zoom * (1.0f + 0.1f * wheel), 1.0f, 30.0f);
+            gui.zoom = std::clamp(gui.zoom * (1.0f + 0.1f * wheel), 0.005f, 30.0f);
         }
     }
 
