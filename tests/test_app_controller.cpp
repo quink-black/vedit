@@ -1146,3 +1146,55 @@ TEST_CASE("filter.add / filter.remove / filter.set_param / filter.get_param over
     resp = nlohmann::json::parse(d.handle_request(req.dump()));
     REQUIRE(resp.contains("error"));
 }
+
+// End-to-end filter test: attach brightness, export frame, verify
+// visual difference. This proves the filter actually affects rendering.
+TEST_CASE("brightness filter changes rendered output", "[t17][export]") {
+    std::string clip = vedit::test::make_test_clip("filter_visual");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Export a frame WITHOUT filter.
+    std::string normal_png = vedit::test::unique_temp_path(
+        "vedit-test", "filter_normal", ".png");
+    vedit::ExportService svc;
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 5, normal_png));
+
+    auto file_size = [](const std::string& p) -> long {
+        std::FILE* f = std::fopen(p.c_str(), "rb");
+        if (!f) return 0;
+        std::fseek(f, 0, SEEK_END);
+        long s = std::ftell(f);
+        std::fclose(f);
+        return s;
+    };
+    long normal_sz = file_size(normal_png);
+    REQUIRE(normal_sz > 100);
+
+    // Attach brightness with level=10 (max, saturates most pixels).
+    REQUIRE(app.filter_add(cid, "brightness"));
+    REQUIRE(app.filter_set_param(cid, "brightness", "level", "10.0"));
+
+    // Export same frame WITH filter.
+    std::string bright_png = vedit::test::unique_temp_path(
+        "vedit-test", "filter_bright", ".png");
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 5, bright_png));
+    long bright_sz = file_size(bright_png);
+    REQUIRE(bright_sz > 100);
+
+    // Brightness at level=10 compresses the histogram (more saturated
+    // pixels = less entropy), producing a DIFFERENT file size. Not
+    // guaranteed to be smaller/larger, just different — the key test
+    // is that the filter had an effect. If the sizes are identical,
+    // the filter was a no-op.
+    REQUIRE(normal_sz != bright_sz);
+
+    // Remove and verify param is gone.
+    REQUIRE(app.filter_remove(cid, "brightness"));
+    REQUIRE(app.filter_get_param(cid, "brightness", "level") == "");
+}
