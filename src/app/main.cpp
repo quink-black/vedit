@@ -730,73 +730,63 @@ int main(int, char**) {
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
 
-    // DPI handling for HiDPI displays (e.g. a 4K panel run at 150%).
-    //
-    // ui_scale is how much larger the whole UI should be drawn.
-    //   * X11 has no per-window backing scale: the renderer output
-    //     equals the logical window size even on a 4K panel, so the
-    //     output/window ratio is always 1. The real density comes from
-    //     SDL_GetDisplayDPI (96 dpi == 1.0 baseline; 144 dpi == 1.5).
-    //   * macOS / Wayland report a backing scale via output/window;
-    //     there the renderer already magnifies, so only the font atlas
-    //     needs to be rasterized denser (handled by atlas_scale below).
-    // Use the display DPI as the UI scale, but never less than the
-    // backing scale, so neither display model is left at 1.0.
+    // DPI handling: compute the framebuffer-to-window ratio so we can
+    // rasterise the font atlas at physical pixel density.  On macOS
+    // Retina this is 2.0; on standard displays it is 1.0.  The
+    // SDL_RenderSetScale call at the end makes SDL draw at physical
+    // pixels, while ImGui layout stays in logical pixels thanks to
+    // FontGlobalScale = 1/dpi_scale.
     ImGuiIO& io = ImGui::GetIO();
-    int out_w = 0, out_h = 0;
-    SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
+    int fb_w = 0, fb_h = 0;
+    SDL_GetRendererOutputSize(renderer, &fb_w, &fb_h);
     int win_w = 0, win_h = 0;
     SDL_GetWindowSize(window, &win_w, &win_h);
-    float backing_scale = (win_w > 0) ? static_cast<float>(out_w) / win_w : 1.0f;
+    float dpi_scale = (win_w > 0) ? static_cast<float>(fb_w) / win_w : 1.0f;
+    if (dpi_scale < 1.0f) dpi_scale = 1.0f;
 
-    float ui_scale = 1.0f;
-    float ddpi = 0.0f;
-    int display_index = SDL_GetWindowDisplayIndex(window);
-    if (display_index >= 0 &&
-            SDL_GetDisplayDPI(display_index, &ddpi, nullptr, nullptr) == 0 &&
-            ddpi > 0.0f) {
-        ui_scale = ddpi / 96.0f;
-    }
-    if (ui_scale < backing_scale) ui_scale = backing_scale;
-    if (ui_scale < 1.0f) ui_scale = 1.0f;
-
-    // Rasterize the font atlas at physical pixel density so glyphs stay
-    // crisp: that is ui_scale logical magnification times whatever the
-    // renderer already upscales (backing_scale). FontGlobalScale then
-    // brings the atlas back to the ui_scale-magnified logical size.
+    // Rasterize the font atlas at physical pixel density so glyphs
+    // stay crisp on HiDPI displays.
     const float base_font_size = 16.0f;
-    const float atlas_density = ui_scale * backing_scale;
-    const float pixel_font_size = base_font_size * atlas_density;
+    const float pixel_font_size = base_font_size * dpi_scale;
+    ImFontConfig font_cfg;
+    font_cfg.OversampleH = 2;
+    font_cfg.OversampleV = 2;
+    font_cfg.PixelSnapH = false;
     static const char* kFontCandidates[] = {
+#if defined(__APPLE__)
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+#else
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+#endif
     };
     ImFont* ui_font = nullptr;
     for (const char* path : kFontCandidates) {
         if (FILE* probe = std::fopen(path, "rb")) {
             std::fclose(probe);
-            ImFontConfig cfg;
-            cfg.OversampleH = 2;
-            cfg.OversampleV = 2;
-            ui_font = io.Fonts->AddFontFromFileTTF(path, pixel_font_size, &cfg);
+            ui_font = io.Fonts->AddFontFromFileTTF(
+                path, pixel_font_size, &font_cfg,
+                io.Fonts->GetGlyphRangesChineseFull());
             if (ui_font) break;
         }
     }
     if (!ui_font) {
-        ImFontConfig cfg;
-        cfg.SizePixels = pixel_font_size;
-        io.Fonts->AddFontDefault(&cfg);
+        ImFontConfig default_cfg;
+        default_cfg.SizePixels = pixel_font_size;
+        default_cfg.OversampleH = 2;
+        default_cfg.OversampleV = 2;
+        io.Fonts->AddFontDefault(&default_cfg);
     }
-    // The atlas is rasterized at base * ui_scale * backing_scale.
-    // Dividing by backing_scale leaves the font at ui_scale-magnified
-    // logical size: on X11 (backing 1.0) the font ends up ui_scale
-    // bigger on screen; on macOS the renderer's own backing upscale
-    // supplies the rest. ScaleAllSizes grows widget metrics to match.
-    io.FontGlobalScale = 1.0f / backing_scale;
-    ImGui::GetStyle().ScaleAllSizes(ui_scale);
+    // Layout stays in logical pixels; the atlas is in physical pixels.
+    io.FontGlobalScale = 1.0f / dpi_scale;
 
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
+
+    SDL_RenderSetScale(renderer, dpi_scale, dpi_scale);
 
     vedit::MltRuntime mlt;
     mlt.init();
