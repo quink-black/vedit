@@ -221,12 +221,12 @@ TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9][export]"
     // The exported file must contain a video stream (not empty).
     std::string cmd = "ffprobe -v error -show_entries format=duration:stream=codec_name,width,height "
                       "-of csv " + out + " 2>&1";
-    FILE* f = popen(cmd.c_str(), "r");
+    FILE* f = VEDIT_POPEN(cmd.c_str(), "r");
     REQUIRE(f != nullptr);
     std::string probe;
     char buf[256] = {0};
     while (fgets(buf, sizeof(buf), f)) probe += buf;
-    pclose(f);
+    VEDIT_PCLOSE(f);
     REQUIRE(probe.find("h264") != std::string::npos);  // has a video stream
     REQUIRE(progress >= 0.0);  // progress callback fired
 }
@@ -280,12 +280,12 @@ TEST_CASE("ExportService preserves source resolution, not PAL default", "[t9][ex
     // The exported file must carry the source dimensions, not 720x576.
     std::string cmd = "ffprobe -v error -show_entries stream=codec_name,width,height "
                       "-of csv " + out + " 2>&1";
-    FILE* f = popen(cmd.c_str(), "r");
+    FILE* f = VEDIT_POPEN(cmd.c_str(), "r");
     REQUIRE(f != nullptr);
     std::string probe;
     char buf[256] = {0};
     while (fgets(buf, sizeof(buf), f)) probe += buf;
-    pclose(f);
+    VEDIT_PCLOSE(f);
     REQUIRE(probe.find("h264") != std::string::npos);
     REQUIRE(probe.find("640") != std::string::npos);
     REQUIRE(probe.find("360") != std::string::npos);
@@ -404,12 +404,12 @@ TEST_CASE("M1 end-to-end: RPC builds 2-track timeline and exports", "[t12][expor
     auto probe_dur = [](const std::string& path) -> double {
         std::string cmd = "ffprobe -v error -show_entries format=duration "
                           "-of csv=p=0 " + path + " 2>&1";
-        FILE* f = popen(cmd.c_str(), "r");
+        FILE* f = VEDIT_POPEN(cmd.c_str(), "r");
         if (!f) return -1;
         char buf[64] = {0};
         double d = -1;
         if (fgets(buf, sizeof(buf), f)) d = std::atof(buf);
-        pclose(f);
+        VEDIT_PCLOSE(f);
         return d;
     };
     double d1 = probe_dur(out1);
@@ -656,12 +656,12 @@ TEST_CASE("Two-track export produces single composited video stream",
     // and one audio stream. ffprobe output format: codec_type per line.
     std::string cmd = "ffprobe -v error -show_entries stream=codec_type "
                       "-of csv " + out + " 2>&1";
-    FILE* f = popen(cmd.c_str(), "r");
+    FILE* f = VEDIT_POPEN(cmd.c_str(), "r");
     REQUIRE(f != nullptr);
     std::string probe;
     char buf[256] = {0};
     while (fgets(buf, sizeof(buf), f)) probe += buf;
-    pclose(f);
+    VEDIT_PCLOSE(f);
 
     int video_count = 0, audio_count = 0;
     size_t pos = 0;

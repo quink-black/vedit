@@ -18,19 +18,48 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
-#include <unistd.h>
+#include <system_error>
+
+#ifdef _WIN32
+  #include <process.h>     // _getpid
+#else
+  #include <unistd.h>      // getpid
+#endif
 
 namespace vedit::test {
 
-// Build a process-unique temp path: /tmp/<prefix>-<pid>-<tag><suffix>.
+// Portable popen/pclose. MSVC declares these as _popen/_pclose.
+#ifdef _WIN32
+  #define VEDIT_POPEN  _popen
+  #define VEDIT_PCLOSE _pclose
+#else
+  #define VEDIT_POPEN  popen
+  #define VEDIT_PCLOSE pclose
+#endif
+
+inline int current_pid() {
+#ifdef _WIN32
+    return ::_getpid();
+#else
+    return ::getpid();
+#endif
+}
+
+// Build a process-unique temp path:
+//   <temp_dir>/<prefix>-<pid>-<tag><suffix>
 // `tag` distinguishes paths within one process; the pid keeps
-// concurrent processes from clobbering each other.
+// concurrent processes from clobbering each other. std::filesystem::
+// temp_directory_path() returns /tmp on Linux and the per-user temp
+// dir on Windows, so paths stay valid on both.
 inline std::string unique_temp_path(const std::string& prefix,
                                     const std::string& tag,
                                     const std::string& suffix) {
-    return "/tmp/" + prefix + "-" + std::to_string(::getpid())
-         + "-" + tag + suffix;
+    auto dir = std::filesystem::temp_directory_path();
+    std::string filename = prefix + "-" + std::to_string(current_pid())
+                         + "-" + tag + suffix;
+    return (dir / filename).string();
 }
 
 // Generate a short A/V test clip on disk. Copies from a pre-generated
@@ -39,9 +68,12 @@ inline std::string unique_temp_path(const std::string& prefix,
 // process-unique so concurrent processes never clobber each other.
 inline std::string make_test_clip(const std::string& tag) {
     std::string path = unique_temp_path("vedit-testclip", tag, ".mp4");
-    std::string ref = std::string(VEDIT_TEST_DATA_DIR) + "/test_clip_160x120.mp4";
-    std::string cmd = "cp " + ref + " " + path;
-    if (std::system(cmd.c_str()) != 0) return "";
+    std::string ref = std::string(VEDIT_TEST_DATA_DIR)
+                    + "/test_clip_160x120.mp4";
+    std::error_code ec;
+    std::filesystem::copy_file(ref, path,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return "";
     return path;
 }
 
@@ -57,11 +89,14 @@ inline std::string make_test_clip_sized(const std::string& tag,
     if (width == 640 && height == 360)
         ref = std::string(VEDIT_TEST_DATA_DIR) + "/test_clip_640x360.mp4";
     if (!ref.empty()) {
-        std::string cmd = "cp " + ref + " " + path;
-        if (std::system(cmd.c_str()) != 0) return "";
+        std::error_code ec;
+        std::filesystem::copy_file(ref, path,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) return "";
         return path;
     }
-    // Fallback: generate via ffmpeg for non-standard sizes.
+    // Fallback: generate via ffmpeg for non-standard sizes. Quote the
+    // output path so spaces in the Windows temp dir do not break it.
     char size[32];
     std::snprintf(size, sizeof(size), "%dx%d", width, height);
     std::string cmd =
@@ -70,7 +105,7 @@ inline std::string make_test_clip_sized(const std::string& tag,
     cmd += size;
     cmd += ":rate=25 -f lavfi -i sine=frequency=440:duration=2 "
            "-c:v libx264 -preset ultrafast -pix_fmt yuv420p "
-           "-c:a aac -shortest " + path;
+           "-c:a aac -shortest \"" + path + "\"";
     if (std::system(cmd.c_str()) != 0) return "";
     return path;
 }

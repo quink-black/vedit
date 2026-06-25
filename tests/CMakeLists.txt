@@ -1,11 +1,23 @@
+# test_rpc_server.cpp uses raw AF_UNIX socket calls (socket/connect/
+# recv/send/fcntl/stat) that are deeply POSIX-specific. Porting it to
+# Winsock is deferred; exclude it from the MSVC build so the rest of
+# the suite (smoke, domain, app_controller, rpc dispatcher) still runs.
+if(MSVC)
+    set(VEDIT_RPC_SERVER_TEST OFF)
+else()
+    set(VEDIT_RPC_SERVER_TEST ON)
+endif()
+
 add_executable(vedit_tests
     test_main.cpp
     test_smoke.cpp
     test_domain.cpp
     test_app_controller.cpp
     test_rpc.cpp
-    test_rpc_server.cpp
 )
+if(VEDIT_RPC_SERVER_TEST)
+    target_sources(vedit_tests PRIVATE test_rpc_server.cpp)
+endif()
 target_link_libraries(vedit_tests PRIVATE
     vedit_rpc
     vedit_domain
