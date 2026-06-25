@@ -2,6 +2,8 @@
 
 #include "util/logger.h"
 
+#include <MltTractor.h>
+
 #include <cstdio>
 #include <utility>
 
@@ -56,11 +58,41 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     producer.set_speed(1.0);
     producer.seek(0);
 
+    // Compute the effective export length. The tractor's get_length()
+    // returns the maximum across all tracks. When tracks have different
+    // durations (e.g., differing in/out points), the tractor produces
+    // blank frames on the shorter track after it ends. Clamp to the
+    // minimum track length so every track has content for the full
+    // export. Set on the producer before connect() so the consumer
+    // picks up the corrected length.
+    int total = producer.get_length();
+    int orig_out = producer.get_int("out");
+    {
+        Mlt::Tractor tractor(producer);
+        if (tractor.is_valid()) {
+            Mlt::Multitrack* mt = tractor.multitrack();
+            if (mt && mt->is_valid()) {
+                int min_len = total;
+                for (int i = 0; i < mt->count(); ++i) {
+                    Mlt::Producer* track = mt->track(i);
+                    if (track && track->is_valid()) {
+                        int len = track->get_length();
+                        if (len > 0 && len < min_len) min_len = len;
+                    }
+                }
+                if (min_len > 0 && min_len < total) total = min_len;
+            }
+            delete mt;
+        }
+    }
+    producer.set("out", total - 1);
+
     consumer.connect(producer);
 
     // Progress reporting via consumer-frame-show.
-    int total = producer.get_length();
-    std::pair<int, ProgressFn*> progress_data(total, &on_progress);
+    // Re-read total in case producer.set("out", ...) changed it.
+    int total2 = producer.get_length();
+    std::pair<int, ProgressFn*> progress_data(total2, &on_progress);
     if (on_progress) {
         consumer.listen("consumer-frame-show", &progress_data,
                         reinterpret_cast<mlt_listener>(on_export_frame));
@@ -72,6 +104,8 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     // buffers freed by an explicit stop(). Without it FFmpeg's
     // per-thread state leaks and teardown can race. Always stop.
     consumer.stop();
+    // Restore the original out point if we modified it.
+    if (orig_out >= 0) producer.set("out", orig_out);
     return true;
 }
 
