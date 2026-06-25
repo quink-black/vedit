@@ -33,16 +33,14 @@ inline std::string unique_temp_path(const std::string& prefix,
          + "-" + tag + suffix;
 }
 
-// Generate a short A/V test clip on disk via ffmpeg. Returns the path,
-// or empty string on failure. The path is process-unique so parallel
-// test processes never read a half-written file written by another.
+// Generate a short A/V test clip on disk. Copies from a pre-generated
+// reference clip in tests/data/ instead of running ffmpeg, so parallel
+// test processes don't contend for the encoder. The path is
+// process-unique so concurrent processes never clobber each other.
 inline std::string make_test_clip(const std::string& tag) {
     std::string path = unique_temp_path("vedit-testclip", tag, ".mp4");
-    std::string cmd =
-        "ffmpeg -y -loglevel error -f lavfi "
-        "-i testsrc=duration=2:size=160x120:rate=25 "
-        "-f lavfi -i sine=frequency=440:duration=2 -c:v libx264 "
-        "-pix_fmt yuv420p -c:a aac -shortest " + path;
+    std::string ref = std::string(VEDIT_TEST_DATA_DIR) + "/test_clip_160x120.mp4";
+    std::string cmd = "cp " + ref + " " + path;
     if (std::system(cmd.c_str()) != 0) return "";
     return path;
 }
@@ -54,6 +52,16 @@ inline std::string make_test_clip(const std::string& tag) {
 inline std::string make_test_clip_sized(const std::string& tag,
                                         int width, int height) {
     std::string path = unique_temp_path("vedit-testclip", tag, ".mp4");
+    // Match against pre-generated reference clips.
+    std::string ref;
+    if (width == 640 && height == 360)
+        ref = std::string(VEDIT_TEST_DATA_DIR) + "/test_clip_640x360.mp4";
+    if (!ref.empty()) {
+        std::string cmd = "cp " + ref + " " + path;
+        if (std::system(cmd.c_str()) != 0) return "";
+        return path;
+    }
+    // Fallback: generate via ffmpeg for non-standard sizes.
     char size[32];
     std::snprintf(size, sizeof(size), "%dx%d", width, height);
     std::string cmd =
@@ -61,7 +69,8 @@ inline std::string make_test_clip_sized(const std::string& tag,
         "-i testsrc=duration=2:size=";
     cmd += size;
     cmd += ":rate=25 -f lavfi -i sine=frequency=440:duration=2 "
-           "-c:v libx264 -pix_fmt yuv420p -c:a aac -shortest " + path;
+           "-c:v libx264 -preset ultrafast -pix_fmt yuv420p "
+           "-c:a aac -shortest " + path;
     if (std::system(cmd.c_str()) != 0) return "";
     return path;
 }
