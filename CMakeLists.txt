@@ -31,6 +31,7 @@ find_package(Threads REQUIRED)
 # fall back to FetchContent if absent.
 find_path(ASIO_INCLUDE_DIR asio.hpp
     HINTS /usr/local/include /usr/include
+          $ENV{HOMEBREW_PREFIX}/include
     DOC "Path to standalone Asio headers (asio.hpp)")
 if(ASIO_INCLUDE_DIR)
     message(STATUS "Found system Asio: ${ASIO_INCLUDE_DIR}")
@@ -40,6 +41,33 @@ if(ASIO_INCLUDE_DIR)
     add_library(asio::asio ALIAS asio_asio)
 else()
     message(FATAL_ERROR "Asio not found. Install libasio-dev (apt) or equivalent.")
+endif()
+
+# ---- macOS / Apple platform detection ----
+if(APPLE)
+    message(STATUS "Detected macOS / Apple platform")
+    target_compile_definitions(vedit_util PUBLIC VEDIT_PLATFORM_MACOS)
+    target_compile_definitions(vedit_core PUBLIC VEDIT_PLATFORM_MACOS)
+    target_compile_definitions(vedit_domain PUBLIC VEDIT_PLATFORM_MACOS)
+    target_compile_definitions(vedit_rpc PUBLIC VEDIT_PLATFORM_MACOS)
+
+    # Apple Clang may need -fno-aligned-allocation until C++17 ABI is stable
+    add_compile_options($<$<CXX_COMPILER_ID:AppleClang>:-fno-aligned-allocation>)
+
+    # Framework search paths for MLT dependencies on macOS
+    # Homebrew installs frameworks/libraries under its prefix
+    if(DEFINED ENV{HOMEBREW_PREFIX})
+        set(HOMEBREW_PREFIX "$ENV{HOMEBREW_PREFIX}")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(HOMEBREW_PREFIX "/opt/homebrew")
+    else()
+        set(HOMEBREW_PREFIX "/usr/local")
+    endif()
+    list(APPEND CMAKE_PREFIX_PATH "${HOMEBREW_PREFIX}")
+    list(APPEND CMAKE_FRAMEWORK_PATH "${HOMEBREW_PREFIX}/Frameworks")
+    list(APPEND CMAKE_LIBRARY_PATH "${HOMEBREW_PREFIX}/lib")
+    list(APPEND CMAKE_INCLUDE_PATH "${HOMEBREW_PREFIX}/include")
+    message(STATUS "Using Homebrew prefix: ${HOMEBREW_PREFIX}")
 endif()
 
 if(VEDIT_BUILD_TESTS)
