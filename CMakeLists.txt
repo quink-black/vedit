@@ -21,28 +21,18 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # ---- macOS / Apple platform detection ----
-# Must come BEFORE find_package / pkg_check_modules so that Homebrew paths
-# are on the search list for MLT, SDL2, etc.
 if(APPLE)
     message(STATUS "Detected macOS / Apple platform")
 
     # Apple Clang may need -fno-aligned-allocation until C++17 ABI is stable
     add_compile_options($<$<CXX_COMPILER_ID:AppleClang>:-fno-aligned-allocation>)
 
-    # Framework search paths for MLT dependencies on macOS
-    # Homebrew installs frameworks/libraries under its prefix
-    if(DEFINED ENV{HOMEBREW_PREFIX})
-        set(HOMEBREW_PREFIX "$ENV{HOMEBREW_PREFIX}")
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(HOMEBREW_PREFIX "/opt/homebrew")
-    else()
-        set(HOMEBREW_PREFIX "/usr/local")
+    if(NOT CMAKE_PREFIX_PATH)
+        message(WARNING
+            "CMAKE_PREFIX_PATH is empty on macOS. Set it to your package "
+            "prefix (e.g. -DCMAKE_PREFIX_PATH=/opt/homebrew) so CMake can "
+            "find Homebrew dependencies.")
     endif()
-    list(APPEND CMAKE_PREFIX_PATH "${HOMEBREW_PREFIX}")
-    list(APPEND CMAKE_FRAMEWORK_PATH "${HOMEBREW_PREFIX}/Frameworks")
-    list(APPEND CMAKE_LIBRARY_PATH "${HOMEBREW_PREFIX}/lib")
-    list(APPEND CMAKE_INCLUDE_PATH "${HOMEBREW_PREFIX}/include")
-    message(STATUS "Using Homebrew prefix: ${HOMEBREW_PREFIX}")
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -64,8 +54,6 @@ endif()
 # visible from every subdirectory. Detection mirrors idiff: find_path first,
 # fall back to FetchContent if absent.
 find_path(ASIO_INCLUDE_DIR asio.hpp
-    HINTS /usr/local/include /usr/include
-          $ENV{HOMEBREW_PREFIX}/include
     DOC "Path to standalone Asio headers (asio.hpp)")
 if(ASIO_INCLUDE_DIR)
     message(STATUS "Found system Asio: ${ASIO_INCLUDE_DIR}")
