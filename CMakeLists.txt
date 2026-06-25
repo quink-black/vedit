@@ -39,6 +39,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt++-7)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 find_package(Threads REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 find_package(nfd QUIET)
 if(NOT nfd_FOUND)
