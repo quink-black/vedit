@@ -985,3 +985,30 @@ TEST_CASE("library.set_stream over RPC dispatcher", "[t15]") {
     REQUIRE(resp["result"]["ok"] == true);
     REQUIRE(app.project().library().item(mi)->audio_index == other);
 }
+
+TEST_CASE("state.get includes P1/P2 filter placeholder schema", "[t16]") {
+    std::string clip = vedit::test::make_test_clip("p1p2_placeholder");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","state.get"},{"id",1}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    const auto& result = resp["result"];
+    REQUIRE(result.contains("filters"));
+    REQUIRE(result["filters"].contains("available"));
+    REQUIRE(result["filters"]["available"].is_array());
+    REQUIRE(result["filters"]["available"].empty());
+    REQUIRE(result["filters"].contains("attached"));
+    REQUIRE(result["filters"]["attached"].is_array());
+    REQUIRE(result["filters"]["attached"].empty());
+}

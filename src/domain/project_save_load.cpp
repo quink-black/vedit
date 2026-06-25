@@ -204,6 +204,34 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project) {
     }
     doc["tracks"] = std::move(tracks);
 
+    // ---- Filters placeholder (P1/P2 schema lock) ----
+    //
+    // Empty in M1 — no filter RPC exists yet. The shape below is the
+    // contract that M2 (filter.* RPC) and M3 (keyframe) will populate.
+    // Changing this shape after an agent has learned it breaks the
+    // control plane. The rules:
+    //
+    //   P1 (generic, yml-driven): each filter entry carries the MLT
+    //     service name ("dynamictext", "opencv.tracker", etc.) and a
+    //     `params` array describing every parameter the filter exposes
+    //     (name, type, default, flags like "animation:yes").
+    //
+    //   P2 (keyframe-aware): every parameter value in an RPC call
+    //     accepts EITHER `{"value": <scalar>}` OR
+    //     `{"keyframes": [{"frame": <int>, "value": <scalar>}, ...]}`.
+    //     M1 never sends keyframes, but the shape is fixed from day one
+    //     so "make the effect follow motion" (Scenario B) is an
+    //     extension, not a redesign.
+    //
+    // `filters.available` lists all filters MLT provides (populated
+    // from yml at M2 time). `filters.attached` lists the filters
+    // currently applied to clips/tracks, keyed by target clip_id /
+    // track_id. Both arrays are empty until M2 lands.
+    doc["filters"] = nlohmann::json{
+        {"available", nlohmann::json::array()},
+        {"attached",  nlohmann::json::array()}
+    };
+
     return doc.dump();
 }
 
