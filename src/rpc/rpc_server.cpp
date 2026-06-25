@@ -87,9 +87,10 @@ bool socket_is_alive(const std::string& path) {
     return alive;
 }
 
-// Enumerate /tmp/vedit-*.sock via glob(3). Returns paths sorted as
-// glob returns them (lexical on glibc). Excludes `self_path` so the
-// sweep never unlinks the path we are about to bind.
+// Enumerate sibling sockets in the temp dir (vedit-*.sock). Excludes
+// `self_path` so the sweep never unlinks the path we are about to bind.
+// The temp dir is resolved via vedit::temp_dir() so the pattern matches
+// default_socket_path() on every platform.
 std::vector<std::string> list_vedit_sockets(const std::string& self_path) {
     std::vector<std::string> out;
     glob_t g;

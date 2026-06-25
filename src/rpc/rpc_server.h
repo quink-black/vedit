@@ -70,9 +70,9 @@ public:
     // file at `socket_path` first (typical for a path left over from a
     // previous crashed instance).
     //
-    // Additionally sweeps sibling sockets matching the
-    // `/tmp/vedit-*.sock` pattern, probing each via connect(2); any
-    // that return ECONNREFUSED are unlinked as stale.
+    // Additionally sweeps sibling sockets matching the `vedit-*.sock`
+    // pattern in the temp dir (vedit::temp_dir()), probing each via
+    // connect(2); any that return ECONNREFUSED are unlinked as stale.
     //
     // Throws std::system_error on bind/listen failure. Idempotent if
     // already running (no-op).

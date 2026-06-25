@@ -5,6 +5,14 @@
 #include "domain/export_service.h"
 #include "domain/ids.h"
 #include "domain/project_save_load.h"
+#include "rpc_methods.h"
+
+#include "rpc_dispatcher.h"
+#include "domain/app_controller.h"
+#include "domain/export_service.h"
+#include "domain/ids.h"
+#include "domain/project_save_load.h"
+#include "util/platform_compat.h"
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -22,14 +30,13 @@ void register_methods(Dispatcher& d, AppController& app) {
     // ---- app.identity ----
     //
     // Single round-trip the MCP server uses to confirm a socket at
-    // /tmp/vedit-*.sock actually belongs to a vedit instance (vs. a
-    // stray file), and to tell a multi-instance UI which window the
-    // agent is talking to. The socket path mirrors main.cpp; if the
-    // path construction ever diverges, factor it into AppController.
+    // vedit-*.sock actually belongs to a vedit instance (vs. a stray
+    // file), and to tell a multi-instance UI which window the agent is
+    // talking to. The socket path comes from vedit::default_socket_path()
+    // so it stays in sync with main.cpp.
     d.register_method("app.identity", [&](const nlohmann::json&) {
-        int pid = ::getpid();
-        std::string socket = std::string("/tmp/vedit-")
-                           + std::to_string(pid) + ".sock";
+        int pid = vedit::current_pid();
+        std::string socket = vedit::default_socket_path();
         return nlohmann::json{
             {"name",   "vedit"},
             {"pid",    pid},
@@ -46,15 +53,14 @@ void register_methods(Dispatcher& d, AppController& app) {
     // shim (vedit_client.discover_instances) and by multi-instance UIs.
     d.register_method("app.list_instances", [&](const nlohmann::json&) {
         nlohmann::json instances = nlohmann::json::array();
-
+#ifndef _WIN32
         glob_t g;
         std::memset(&g, 0, sizeof(g));
         if (::glob("/tmp/vedit-*.sock", 0, nullptr, &g) != 0) {
             return instances;
         }
 
-        std::string self_path = std::string("/tmp/vedit-")
-                              + std::to_string(::getpid()) + ".sock";
+        std::string self_path = vedit::default_socket_path();
 
         for (std::size_t i = 0; i < g.gl_pathc; ++i) {
             std::string path = g.gl_pathv[i];
@@ -117,6 +123,7 @@ void register_methods(Dispatcher& d, AppController& app) {
             }
         }
         ::globfree(&g);
+#endif  // !_WIN32
         return instances;
     });
 

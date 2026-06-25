@@ -1,7 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <unistd.h>
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -21,6 +20,7 @@
 #include "rpc/rpc_methods.h"
 #include "rpc/rpc_server.h"
 #include "util/logger.h"
+#include "util/platform_compat.h"
 
 // ============================================================================
 // Helpers
@@ -878,8 +878,7 @@ int main(int, char**) {
 
     vedit::rpc::Dispatcher dispatcher;
     vedit::rpc::register_methods(dispatcher, app);
-    std::string socket_path =
-        "/tmp/vedit-" + std::to_string(getpid()) + ".sock";
+    std::string socket_path = vedit::default_socket_path();
     vedit::rpc::RpcServer rpc_server(socket_path, dispatcher);
     rpc_server.start();
 
