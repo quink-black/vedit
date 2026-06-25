@@ -7,6 +7,14 @@
 #include "domain/project_save_load.h"
 
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <glob.h>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
 
 namespace vedit::rpc {
 
@@ -28,6 +36,88 @@ void register_methods(Dispatcher& d, AppController& app) {
             {"socket", socket},
             {"label",  std::string("vedit:") + std::to_string(pid)}
         };
+    });
+
+    // ---- app.list_instances ----
+    //
+    // Enumerate all running vedit instances on this host. Globs
+    // /tmp/vedit-*.sock, probes each with app.identity over a brief
+    // JSON-RPC handshake, and returns the alive list. Used by the MCP
+    // shim (vedit_client.discover_instances) and by multi-instance UIs.
+    d.register_method("app.list_instances", [&](const nlohmann::json&) {
+        nlohmann::json instances = nlohmann::json::array();
+
+        glob_t g;
+        std::memset(&g, 0, sizeof(g));
+        if (::glob("/tmp/vedit-*.sock", 0, nullptr, &g) != 0) {
+            return instances;
+        }
+
+        std::string self_path = std::string("/tmp/vedit-")
+                              + std::to_string(::getpid()) + ".sock";
+
+        for (std::size_t i = 0; i < g.gl_pathc; ++i) {
+            std::string path = g.gl_pathv[i];
+            if (path == self_path) continue;
+
+            int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            if (fd < 0) continue;
+
+            struct sockaddr_un addr;
+            std::memset(&addr, 0, sizeof(addr));
+            addr.sun_family = AF_UNIX;
+            std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+
+            if (::connect(fd, reinterpret_cast<struct sockaddr*>(&addr),
+                          sizeof(addr)) != 0) {
+                ::close(fd);
+                continue;
+            }
+
+            // Send a framed app.identity request and read back the
+            // response. This is a one-shot synchronous handshake; the
+            // request body is tiny (< 256 bytes) and the response
+            // equally small, so blocking I/O is fine here.
+            std::string req_body = R"({"jsonrpc":"2.0","method":"app.identity","id":1})";
+            std::uint32_t req_len_be = htonl(
+                static_cast<std::uint32_t>(req_body.size()));
+            if (::send(fd, &req_len_be, 4, MSG_NOSIGNAL) != 4 ||
+                ::send(fd, req_body.data(), req_body.size(), MSG_NOSIGNAL)
+                    != static_cast<ssize_t>(req_body.size())) {
+                ::close(fd);
+                continue;
+            }
+
+            std::uint32_t resp_len_be = 0;
+            if (::recv(fd, &resp_len_be, 4, 0) != 4) {
+                ::close(fd);
+                continue;
+            }
+            std::uint32_t resp_len = ntohl(resp_len_be);
+            if (resp_len == 0 || resp_len > 65536) {
+                ::close(fd);
+                continue;
+            }
+            std::string resp_body(resp_len, '\0');
+            if (::recv(fd, &resp_body[0], resp_len, 0)
+                    != static_cast<ssize_t>(resp_len)) {
+                ::close(fd);
+                continue;
+            }
+            ::close(fd);
+
+            try {
+                nlohmann::json parsed = nlohmann::json::parse(resp_body);
+                if (parsed.contains("result") && parsed["result"].contains("name")) {
+                    instances.push_back(parsed["result"]);
+                }
+            } catch (...) {
+                // Malformed response from a stale/incompatible socket —
+                // skip this entry.
+            }
+        }
+        ::globfree(&g);
+        return instances;
     });
 
     // ---- state.get ----

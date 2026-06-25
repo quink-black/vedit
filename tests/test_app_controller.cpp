@@ -1012,3 +1012,23 @@ TEST_CASE("state.get includes P1/P2 filter placeholder schema", "[t16]") {
     REQUIRE(result["filters"]["attached"].is_array());
     REQUIRE(result["filters"]["attached"].empty());
 }
+
+TEST_CASE("app.list_instances over RPC dispatcher", "[t16]") {
+    std::string clip = vedit::test::make_test_clip("list_instances");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","app.list_instances"},{"id",1}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"].is_array());
+    // In a test environment, no other vedit instance is running, so
+    // the array is empty. But it must still be a valid JSON array.
+    // A running vedit instance would return its identity entry.
+}
