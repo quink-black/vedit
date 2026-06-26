@@ -1223,4 +1223,36 @@ bool TimelineModel::set_composite_geometry(TrackId track_id,
     return true;
 }
 
+bool TimelineModel::get_composite_geometry(TrackId track_id,
+                                            double& x, double& y,
+                                            double& w, double& h) const {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return false;
+    if (tidx == 0) return false;
+    if (tracks_[tidx].info.kind != TrackKind::Video) return false;
+
+    int composite_idx = -1;
+    for (int i = 1; i <= tidx; ++i) {
+        if (tracks_[i - 1].info.kind == TrackKind::Video &&
+            tracks_[i].info.kind == TrackKind::Video) {
+            ++composite_idx;
+        }
+    }
+    if (composite_idx < 0 ||
+        composite_idx >= static_cast<int>(composites_.size())) {
+        return false;
+    }
+
+    const char* geo = composites_[composite_idx]->get("geometry");
+    if (!geo) return false;
+    // Geometry format: "X%/Y%:W%xH%"
+    double gx, gy, gw, gh;
+    if (std::sscanf(geo, "%lf%%/%lf%%:%lf%%x%lf%%",
+                    &gx, &gy, &gw, &gh) != 4) {
+        return false;
+    }
+    x = gx; y = gy; w = gw; h = gh;
+    return true;
+}
+
 } // namespace vedit

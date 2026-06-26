@@ -215,6 +215,11 @@ public:
     // x, y, w, h are percentages (0-100) of the profile.
     bool set_composite_geometry(TrackId track_id,
                                  double x, double y, double w, double h);
+    // Get the geometry rect for a video track's composite transition.
+    // Returns false if the track has no composite (track 0, non-video).
+    bool get_composite_geometry(TrackId track_id,
+                                 double& x, double& y,
+                                 double& w, double& h) const;
 
 private:
     struct TrackState {

@@ -119,6 +119,9 @@ public:
     // --- canvas composition ---
     bool composite_geometry_set(TrackId track_id,
                                  double x, double y, double w, double h);
+    bool composite_geometry_get(TrackId track_id,
+                                 double& x, double& y,
+                                 double& w, double& h) const;
 
     // --- project management ---
     // Clear the timeline and library for a new project.
