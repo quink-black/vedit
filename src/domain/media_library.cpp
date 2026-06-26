@@ -146,7 +146,13 @@ int MediaLibrary::import(const std::string& path, int video_index, int audio_ind
     // frame. from_producer mutates the shared mlt_profile in place,
     // so the timeline tractor/playlists (which hold a pointer to it)
     // pick up the new dimensions, fps, and colorspace.
-    profile_.from_producer(*producer);
+    //
+    // Only sync from the first imported media item. Changing the
+    // shared profile on every import would distort frame counts of
+    // clips already on the timeline.
+    if (producers_.empty()) {
+        profile_.from_producer(*producer);
+    }
     // vedit is a progressive editor; an interlaced source would set
     // progressive=0, which libx264 refuses to encode. Force it back.
     profile_.set_progressive(1);

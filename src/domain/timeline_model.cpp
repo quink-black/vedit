@@ -406,14 +406,12 @@ std::vector<ClipInfo> TimelineModel::clips_on_track(TrackId track) const {
 }
 
 int64_t TimelineModel::duration() const {
-    int64_t max_len = 0;
-    for (const auto& ts : tracks_) {
-        if (ts.playlist) {
-            int64_t len = ts.playlist->get_length();
-            if (len > max_len) max_len = len;
-        }
+    int64_t max_end = 0;
+    for (const auto& kv : clips_) {
+        int64_t end = kv.second.start + kv.second.length;
+        if (end > max_end) max_end = end;
     }
-    return max_len;
+    return max_end;
 }
 
 void TimelineModel::replant_compositions() {

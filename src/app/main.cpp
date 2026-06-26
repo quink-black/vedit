@@ -348,6 +348,11 @@ static void draw_transport_panel(vedit::AppController& app, GuiState& gui) {
                          timecode(pos, gui.project_fps).c_str())) {
         app.seek(pos);
     }
+
+    // Frame-accurate position display: frame number and total.
+    ImGui::SameLine();
+    ImGui::Text("f %d / %d", static_cast<int>(app.position()),
+                static_cast<int>(dur));
 }
 
 // Clamp a trim so the clip stays within its source media bounds:
@@ -950,6 +955,20 @@ int main(int, char**) {
                 } else {
                     gui.status = "Could not open: " + path;
                 }
+            }
+            // Arrow keys step frame-by-frame through the timeline.
+            // Consume the event so ImGui does not also use it for
+            // slider/focus navigation.
+            if (event.type == SDL_KEYDOWN) {
+                bool arrow_handled = false;
+                if (event.key.keysym.sym == SDLK_LEFT) {
+                    app.player().step_backward();
+                    arrow_handled = true;
+                } else if (event.key.keysym.sym == SDLK_RIGHT) {
+                    app.player().step_forward();
+                    arrow_handled = true;
+                }
+                if (arrow_handled) continue;
             }
         }
 
