@@ -159,7 +159,7 @@ struct GuiState {
 
     // Export settings dialog.
     bool show_export_dialog = false;
-    std::string export_dialog_path = "output.mp4";
+    std::string export_dialog_path = "export.mp4";
     int export_dialog_format = 0;  // 0=mp4, 1=mkv, 2=webm
     int export_dialog_video_codec = 0;  // 0=x264, 1=x265, 2=vp9, 3=av1
     int export_dialog_crf = 23;
@@ -207,11 +207,33 @@ static vedit::TrackId resolve_target_track(vedit::AppController& app,
 static void add_media_to_timeline(vedit::AppController& app, GuiState& gui,
                                   int media_index) {
     if (media_index < 0) return;
+    const auto* item = app.project().library().item(media_index);
+
+    // For media with both video and audio, automatically add an audio track
+    // alongside the video track so the user sees both and can control them.
+    if (item && item->has_video && item->has_audio) {
+        vedit::TrackId vtrack = resolve_target_track(app, gui);
+        auto vid = app.clip_append(vtrack, media_index);
+        if (vid.valid()) {
+            gui.selected_clip = vid;
+            auto aid = app.clip_detach_audio(vid);
+            if (aid.valid()) {
+                gui.status = "Added " + basename_of(item->path) +
+                             " with audio track.";
+            } else {
+                gui.status = "Added " + basename_of(item->path) +
+                             " (audio detach failed).";
+            }
+        } else {
+            gui.status = "Could not add clip.";
+        }
+        return;
+    }
+
     vedit::TrackId track = resolve_target_track(app, gui);
     auto id = app.clip_append(track, media_index);
     if (id.valid()) {
         gui.selected_clip = id;
-        const auto* item = app.project().library().item(media_index);
         gui.status = "Added " + (item ? basename_of(item->path) : "clip") +
                      " to " + app.project().timeline().track(track)->name + ".";
     } else {
@@ -1261,7 +1283,7 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
                 ImGui::TextDisabled(
                     "Changes are reflected in the preview immediately.");
                 static float geo_x = 0, geo_y = 0, geo_w = 100, geo_h = 100;
-                static vedit::TrackId geo_track{};
+                static vedit::TrackId geo_track{static_cast<uint32_t>(-1)};
                 if (geo_track != gui.active_track) {
                     geo_track = gui.active_track;
                     double gx, gy, gw, gh;
@@ -1684,7 +1706,7 @@ int main(int, char**) {
             ImGui::TextUnformatted("Output file:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(240);
-            static char export_path_buf[512] = "output.mp4";
+            static char export_path_buf[512] = "export.mp4";
             std::snprintf(export_path_buf, sizeof(export_path_buf), "%s",
                           gui.export_dialog_path.c_str());
             ImGui::InputText("##path", export_path_buf, sizeof(export_path_buf),
@@ -1695,8 +1717,11 @@ int main(int, char**) {
                 nfdfilteritem_t filters[] = { { "Video file", fmt_ext } };
                 nfdchar_t* out = nullptr;
                 std::string default_name = "export." + std::string(fmt_ext);
+                const char* home_dir = std::getenv("HOME");
                 nfdresult_t res = NFD_SaveDialog(
-                    &out, filters, 1, nullptr, default_name.c_str());
+                    &out, filters, 1,
+                    home_dir ? home_dir : nullptr,
+                    default_name.c_str());
                 if (res == NFD_OKAY && out) {
                     gui.export_dialog_path = out;
                     // Ensure the extension matches the format.
@@ -2021,6 +2046,44 @@ int main(int, char**) {
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs);
         ImGui::TextUnformatted(gui.status.c_str());
         ImGui::End();
+
+        // When an export is running but the dialog is closed, show a
+        // minimal progress bar and cancel button above the status line.
+        if (gui.export_job_id > 0) {
+            auto r = app.export_poll(gui.export_job_id);
+            if (r.found && r.state == "running") {
+                float bar_h = ImGui::GetFrameHeight() + 8.0f;
+                ImGui::SetNextWindowBgAlpha(0.90f);
+                ImGui::SetNextWindowPos(ImVec2(
+                    vp->WorkPos.x + margin,
+                    vp->WorkPos.y + vp->WorkSize.y -
+                        ImGui::GetFrameHeight() - margin - bar_h - 2.0f));
+                ImGui::Begin("##export_status", nullptr,
+                             ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings);
+                ImGui::ProgressBar(static_cast<float>(r.fraction),
+                                   ImVec2(160, 0));
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Cancel export")) {
+                    app.export_cancel(gui.export_job_id);
+                    gui.status = "Cancelling export...";
+                }
+                ImGui::End();
+            } else if (r.found) {
+                // Export finished while dialog was closed.
+                gui.export_job_id = 0;
+                if (r.state == "done")
+                    gui.status = "Exported to " + r.output_path;
+                else if (r.state == "cancelled")
+                    gui.status = "Export cancelled: " + r.output_path;
+                else
+                    gui.status = "Export failed: " +
+                        (r.error.empty() ? r.output_path : r.error);
+            }
+        }
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 18, 18, 23, 255);
