@@ -145,6 +145,7 @@ struct GuiState {
     float zoom = 8.0f;
     bool zoom_auto = true;
     int64_t last_fit_duration = -1;
+    bool expand_layout = false;   // auto-open Layout section on next frame
 
     DragMode drag = DragMode::None;
     vedit::ClipId drag_clip{0};
@@ -647,6 +648,7 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     vedit::ClipId hover_clip{0};
     DragMode hover_mode = DragMode::None;
     int hover_track_index = -1;
+    int hover_icon_track = -1;   // track whose settings icon is hovered
 
     for (size_t t = 0; t < tracks.size(); ++t) {
         float y0 = lanes_y0 + t * track_h + 2;
@@ -669,8 +671,23 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                                     ? "video" : "audio";
         dl->AddText(ImVec2(origin.x + 6, y0 + track_h * 0.5f + 6),
                     IM_COL32(150, 150, 160, 255), kind_hint);
+        // Settings icon for video tracks that have a composite (t > 0).
+        // The icon hints that the track has Layout controls in the
+        // Filters panel; clicking it selects the track and expands Layout.
+        if (tracks[t].kind == vedit::TrackKind::Video && t > 0) {
+            float icon_x = tl_x0 - 18;
+            float icon_y = y0 + track_h * 0.5f - 6;
+            dl->AddText(ImVec2(icon_x, icon_y),
+                        is_active ? IM_COL32(220, 220, 255, 255)
+                                  : IM_COL32(140, 140, 170, 255),
+                        "+");
+            if (mouse.x >= icon_x - 4 && mouse.x < tl_x0 &&
+                mouse.y >= y0 && mouse.y <= y1) {
+                hover_icon_track = static_cast<int>(t);
+            }
+        }
 
-        if (mouse.x >= origin.x && mouse.x < tl_x0 &&
+        if (mouse.x >= origin.x && mouse.x < tl_x0 - 22 &&
             mouse.y >= y0 && mouse.y <= y1) {
             hover_track_index = static_cast<int>(t);
         }
@@ -770,7 +787,12 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
 
     // ---- Press: decide what we're doing ----
     if (mouse_pressed) {
-        if (hover_track_index >= 0) {
+        if (hover_icon_track >= 0) {
+            gui.active_track = tracks[hover_icon_track].id;
+            gui.expand_layout = true;
+            gui.status = "Track " + tracks[hover_icon_track].name +
+                         " selected — Layout controls in Filters panel.";
+        } else if (hover_track_index >= 0) {
             gui.active_track = tracks[hover_track_index].id;
             gui.status = "New clips will go to " +
                          tracks[hover_track_index].name + ".";
@@ -1309,6 +1331,10 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
             gui.active_track, gx, gy, gw, gh);
         if (has_composite) {
             ImGui::Separator();
+            if (gui.expand_layout) {
+                ImGui::SetNextItemOpen(true);
+                gui.expand_layout = false;
+            }
             if (ImGui::CollapsingHeader("Layout")) {
                 ImGui::TextDisabled(
                     "Position and size of this track's video layer on the canvas.");
