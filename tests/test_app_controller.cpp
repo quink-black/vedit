@@ -1463,12 +1463,12 @@ TEST_CASE("project.set_profile changes output resolution", "[t19]") {
     // ffprobe the PNG dimensions.
     std::string cmd = "ffprobe -v error -show_entries stream=width,height "
                       "-of csv=p=0 \"" + png + "\" 2>&1";
-    std::FILE* p = popen(cmd.c_str(), "r");
+    std::FILE* p = VEDIT_POPEN(cmd.c_str(), "r");
     REQUIRE(p != nullptr);
     char buf[64];
     std::string result;
     while (fgets(buf, sizeof(buf), p)) result += buf;
-    pclose(p);
+    VEDIT_PCLOSE(p);
     // Strip trailing newline.
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
         result.pop_back();
@@ -1516,12 +1516,12 @@ TEST_CASE("composite geometry positions track on canvas", "[t19][export]") {
     // ffprobe resolution first.
     std::string cmd = "ffprobe -v error -show_entries stream=width,height "
                       "-of csv=p=0 \"" + png + "\" 2>&1";
-    std::FILE* p = popen(cmd.c_str(), "r");
+    std::FILE* p = VEDIT_POPEN(cmd.c_str(), "r");
     REQUIRE(p != nullptr);
     char buf[64];
     std::string res;
     while (fgets(buf, sizeof(buf), p)) res += buf;
-    pclose(p);
+    VEDIT_PCLOSE(p);
     while (!res.empty() && (res.back() == '\n' || res.back() == '\r'))
         res.pop_back();
     REQUIRE(res == "320,240");
