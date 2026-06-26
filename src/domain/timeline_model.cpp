@@ -520,13 +520,10 @@ bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name
         return false;
     }
 
-    // Attach to the cut's parent producer -- the actual producer stored
-    // in the playlist. Attaching to the cut itself (get_producer()) is
-    // wrong: pl->get_clip() returns a temporary wrapper whose lifetime
-    // ends when we delete it; the filter would be lost. The parent is
-    // the shared root producer that actually plays back.
-    Mlt::Producer& parent = cut->parent();
-    int rc = mlt_service_attach(MLT_SERVICE(parent.get_producer()),
+    // Attach to cut->parent() — the shared root producer stored in the
+    // playlist. pl->get_clip() returns a temporary cut wrapper; its
+    // parent() is the actual producer that plays back.
+    int rc = mlt_service_attach(MLT_SERVICE(cut->parent().get_producer()),
                                 MLT_FILTER(filter.get_filter()));
     delete cut;
     return rc == 0;
@@ -536,14 +533,13 @@ bool TimelineModel::detach_filter(ClipId clip_id, const std::string& filter_name
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
-    // Search on the parent producer, not the cut wrapper.
     Mlt::Producer& parent = cut->parent();
-    int idx = find_attached_filter(parent, filter_name);
-    if (idx < 0) {
+    int fidx = find_attached_filter(parent, filter_name);
+    if (fidx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = parent.filter(idx);
+    Mlt::Filter* filter = parent.filter(fidx);
     if (!filter) {
         delete cut;
         return false;
@@ -563,12 +559,12 @@ bool TimelineModel::set_filter_param(ClipId clip_id,
     if (!cut) return false;
 
     Mlt::Producer& parent = cut->parent();
-    int idx = find_attached_filter(parent, filter_name);
-    if (idx < 0) {
+    int fidx = find_attached_filter(parent, filter_name);
+    if (fidx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = parent.filter(idx);
+    Mlt::Filter* filter = parent.filter(fidx);
     if (!filter) {
         delete cut;
         return false;
@@ -586,12 +582,12 @@ std::string TimelineModel::get_filter_param(ClipId clip_id,
     if (!cut) return "";
 
     Mlt::Producer& parent = cut->parent();
-    int idx = find_attached_filter(parent, filter_name);
-    if (idx < 0) {
+    int fidx = find_attached_filter(parent, filter_name);
+    if (fidx < 0) {
         delete cut;
         return "";
     }
-    Mlt::Filter* filter = parent.filter(idx);
+    Mlt::Filter* filter = parent.filter(fidx);
     if (!filter) {
         delete cut;
         return "";
@@ -690,18 +686,35 @@ TimelineModel::attached_filters() const {
 
     for (const auto& ts : tracks_) {
         if (!ts.playlist) continue;
-        // Per-clip filters.
+        // Per-clip filters. Use the parent producer (not the cut
+        // from get_clip()) so we see the same filter set that
+        // attach_filter writes to.
         for (int i = 0; i < ts.playlist->count(); ++i) {
             if (ts.playlist->is_blank(i)) continue;
             Mlt::Producer* cut = ts.playlist->get_clip(i);
             if (!cut) continue;
             int64_t clip_id = read_clip_id(*cut);
-            int nf = cut->filter_count();
+            Mlt::Producer& parent = cut->parent();
+            int nf = parent.filter_count();
             for (int f = 0; f < nf; ++f) {
-                Mlt::Filter* filter = cut->filter(f);
+                Mlt::Filter* filter = parent.filter(f);
                 if (!filter) continue;
                 const char* svc = filter->get("mlt_service");
                 if (!svc || !svc[0]) { delete filter; continue; }
+                // Skip MLT-internal filters auto-attached by the
+                // producer (not user-visible or user-controllable).
+                if (std::strcmp(svc, "avcolor_space") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "avdeinterlace") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "sws_flags") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "color_transform") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "deinterlace") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "fieldorder") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "crop") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "swscale") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "resize") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "swresample") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "resample") == 0) { delete filter; continue; }
+                if (std::strcmp(svc, "audioconvert") == 0) { delete filter; continue; }
                 AttachedFilterInfo info;
                 info.target_type = "clip";
                 info.target_id = clip_id;
