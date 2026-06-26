@@ -688,6 +688,33 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                 ImVec2(ph_x, origin.y + content_h),
                 IM_COL32(255, 80, 80, 255), 2.0f);
 
+    // In-point marker (green triangle pointing right).
+    if (gui.export_dialog_in_point >= 0 &&
+        gui.export_dialog_in_point < dur) {
+        float in_x = tl_x0 + gui.export_dialog_in_point * px_per_frame;
+        dl->AddTriangleFilled(
+            ImVec2(in_x, origin.y + ruler_h - 8),
+            ImVec2(in_x + 8, origin.y + ruler_h),
+            ImVec2(in_x, origin.y + ruler_h + 8),
+            IM_COL32(80, 220, 80, 255));
+        dl->AddLine(ImVec2(in_x, origin.y + ruler_h),
+                    ImVec2(in_x, origin.y + content_h),
+                    IM_COL32(80, 220, 80, 180), 1.0f);
+    }
+    // Out-point marker (red triangle pointing left).
+    if (gui.export_dialog_out_point >= 0 &&
+        gui.export_dialog_out_point <= dur) {
+        float out_x = tl_x0 + gui.export_dialog_out_point * px_per_frame;
+        dl->AddTriangleFilled(
+            ImVec2(out_x, origin.y + ruler_h - 8),
+            ImVec2(out_x - 8, origin.y + ruler_h),
+            ImVec2(out_x, origin.y + ruler_h + 8),
+            IM_COL32(220, 80, 80, 255));
+        dl->AddLine(ImVec2(out_x, origin.y + ruler_h),
+                    ImVec2(out_x, origin.y + content_h),
+                    IM_COL32(220, 80, 80, 180), 1.0f);
+    }
+
     // ---- Press: decide what we're doing ----
     if (mouse_pressed) {
         if (hover_track_index >= 0) {
@@ -1428,6 +1455,7 @@ int main(int, char**) {
             // Arrow keys step frame-by-frame through the timeline.
             // Consume the event so ImGui does not also use it for
             // slider/focus navigation.
+            // I/O keys mark export in/out points at the current playhead.
             if (event.type == SDL_KEYDOWN) {
                 bool arrow_handled = false;
                 if (event.key.keysym.sym == SDLK_LEFT) {
@@ -1435,6 +1463,21 @@ int main(int, char**) {
                     arrow_handled = true;
                 } else if (event.key.keysym.sym == SDLK_RIGHT) {
                     app.player().step_forward();
+                    arrow_handled = true;
+                }
+                if (event.key.keysym.sym == SDLK_i) {
+                    gui.export_dialog_in_point = app.position();
+                    gui.export_dialog_use_range = true;
+                    gui.status = "In-point set at " +
+                        timecode(gui.export_dialog_in_point, gui.project_fps) +
+                        "  (press O to set out-point)";
+                    arrow_handled = true;
+                } else if (event.key.keysym.sym == SDLK_o) {
+                    gui.export_dialog_out_point = app.position();
+                    gui.export_dialog_use_range = true;
+                    gui.status = "Out-point set at " +
+                        timecode(gui.export_dialog_out_point, gui.project_fps) +
+                        "  (press I to set in-point)";
                     arrow_handled = true;
                 }
                 if (arrow_handled) continue;
@@ -1724,35 +1767,52 @@ int main(int, char**) {
                 }
                 if (gui.export_dialog_use_range) {
                     ImGui::Indent();
-                    ImGui::TextDisabled("Set the segment on the timeline to export:");
-                    ImGui::Spacing();
-                    auto tc_width = ImGui::CalcTextSize("00:00:00:00").x + 8;
-                    ImGui::SetNextItemWidth(tc_width);
-                    if (ImGui::InputScalar("Start frame", ImGuiDataType_S64,
-                                           &gui.export_dialog_in_point,
-                                           nullptr, nullptr, "%lld")) {
-                        if (gui.export_dialog_in_point < 0)
-                            gui.export_dialog_in_point = 0;
-                        if (gui.export_dialog_in_point > dur)
-                            gui.export_dialog_in_point = dur;
-                    }
+                    double fps = gui.project_fps;
+                    // In-point display + set button.
+                    ImGui::Text("In-point:  %s",
+                        gui.export_dialog_in_point >= 0
+                            ? timecode(gui.export_dialog_in_point, fps).c_str()
+                            : "not set");
                     ImGui::SameLine();
-                    ImGui::Text("= %s", timecode(gui.export_dialog_in_point, fps).c_str());
-                    ImGui::SetNextItemWidth(tc_width);
-                    if (ImGui::InputScalar("End frame", ImGuiDataType_S64,
-                                           &gui.export_dialog_out_point,
-                                           nullptr, nullptr, "%lld")) {
-                        if (gui.export_dialog_out_point < gui.export_dialog_in_point)
-                            gui.export_dialog_out_point = gui.export_dialog_in_point;
-                        if (gui.export_dialog_out_point > dur)
-                            gui.export_dialog_out_point = dur;
+                    if (ImGui::SmallButton("Set I##in")) {
+                        gui.export_dialog_in_point = app.position();
+                        gui.status = "In-point set at " +
+                            timecode(gui.export_dialog_in_point, fps) +
+                            "  (press I key or click 'Set I' to change)";
                     }
+                    // Out-point display + set button.
+                    ImGui::Text("Out-point: %s",
+                        gui.export_dialog_out_point >= 0
+                            ? timecode(gui.export_dialog_out_point, fps).c_str()
+                            : "not set");
                     ImGui::SameLine();
-                    ImGui::Text("= %s", timecode(gui.export_dialog_out_point, fps).c_str());
-                    ImGui::Spacing();
-                    ImGui::Text("Will export %s ~ %s",
-                        timecode(gui.export_dialog_in_point, fps).c_str(),
-                        timecode(gui.export_dialog_out_point, fps).c_str());
+                    if (ImGui::SmallButton("Set O##out")) {
+                        gui.export_dialog_out_point = app.position();
+                        gui.status = "Out-point set at " +
+                            timecode(gui.export_dialog_out_point, fps) +
+                            "  (press O key or click 'Set O' to change)";
+                    }
+                    // Validation: ensure out > in.
+                    if (gui.export_dialog_in_point >= 0 &&
+                        gui.export_dialog_out_point >= 0 &&
+                        gui.export_dialog_out_point <= gui.export_dialog_in_point) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                            "Out-point must be after in-point!");
+                    }
+                    // Summary.
+                    if (gui.export_dialog_in_point >= 0 &&
+                        gui.export_dialog_out_point >= 0 &&
+                        gui.export_dialog_out_point > gui.export_dialog_in_point) {
+                        ImGui::Spacing();
+                        ImGui::Text("Will export %s ~ %s",
+                            timecode(gui.export_dialog_in_point, fps).c_str(),
+                            timecode(gui.export_dialog_out_point, fps).c_str());
+                    } else {
+                        ImGui::Spacing();
+                        ImGui::TextDisabled(
+                            "Tip: play the video and press I/O keys (or click "
+                            "the buttons above) to mark in/out points on the fly.");
+                    }
                     ImGui::Unindent();
                 }
             }
