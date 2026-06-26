@@ -78,6 +78,7 @@ private:
     ProjectModel& project_;
     PreviewRenderer renderer_;
     bool attached_ = false;
+    bool playing_ = false;  // true between play() and pause()/EOF
     int64_t position_ = 0;
 
     // Freeze-frame cache (paused preview). Points into the renderer's

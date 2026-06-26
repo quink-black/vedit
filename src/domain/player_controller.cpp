@@ -23,12 +23,20 @@ bool PlayerController::play() {
     // When that happens running_ stays true but is_running() is false,
     // so PreviewRenderer::start() would early-return and playback would
     // never resume. Tear the consumer down first so start() rebuilds it.
+    //
+    // Rewind if position_ is at the end, regardless of whether the
+    // consumer self-stopped. After pause() tears down the renderer at
+    // EOF (running_ = false), has_self_stopped() returns false and the
+    // old code skipped the rewind. The producer would seek to dur-1,
+    // play one frame, and self-stop again -- "Play after EOF was flaky:
+    // the first click did nothing, the second worked."
+    int64_t dur = project_.timeline().duration();
+    bool at_end = (dur > 0 && position_ >= dur - 1);
     if (renderer_.has_self_stopped()) {
         renderer_.stop();
-        // Reached the end last time: rewind so Play restarts from the
-        // top instead of sitting on the final frame.
-        int64_t dur = project_.timeline().duration();
-        if (dur > 0 && position_ >= dur - 1) position_ = 0;
+        if (at_end) position_ = 0;
+    } else if (at_end) {
+        position_ = 0;
     }
     // Always (re)point at the current tractor and seek to the playhead
     // so playback resumes from where the user left off.
@@ -37,11 +45,12 @@ bool PlayerController::play() {
     producer->set_speed(1.0);
     producer->seek(static_cast<int>(position_));
     freeze_valid_ = false;  // realtime frames take over now
-    return renderer_.start();
+    playing_ = renderer_.start();
+    return playing_;
 }
 
 void PlayerController::pause() {
-    if (is_playing()) {
+    if (playing_) {
         // Capture where playback reached before stopping the consumer,
         // so the playhead and freeze frame land on the right frame.
         Mlt::Producer* producer = project_.producer();
@@ -49,23 +58,37 @@ void PlayerController::pause() {
             position_ = producer->position();
         }
         renderer_.stop();
+        playing_ = false;
+    } else if (renderer_.has_self_stopped()) {
+        // Consumer self-stopped at EOF but we haven't torn it down yet.
+        // Clean up so the renderer is ready for the next play/seek.
+        renderer_.stop();
     }
     freeze_dirty_ = true;  // need a fresh freeze frame at position_
 }
 
 bool PlayerController::is_playing() const {
-    return renderer_.is_running();
+    return playing_;
 }
 
 void PlayerController::seek(int64_t frame) {
     if (frame < 0) frame = 0;
     position_ = frame;
-    if (is_playing()) {
-        // Live seek: reposition the producer; the consumer will show the
-        // new region on its next frames.
-        Mlt::Producer* producer = project_.producer();
-        if (producer && producer->is_valid()) {
-            producer->seek(static_cast<int>(frame));
+    if (playing_) {
+        // If the consumer self-stopped at EOF, tear it down and
+        // transition to paused mode so the freeze frame is rendered.
+        if (renderer_.has_self_stopped()) {
+            renderer_.stop();
+            playing_ = false;
+            freeze_dirty_ = true;
+            render_freeze();
+        } else {
+            // Live seek: reposition the producer; the consumer will
+            // show the new region on its next frames.
+            Mlt::Producer* producer = project_.producer();
+            if (producer && producer->is_valid()) {
+                producer->seek(static_cast<int>(frame));
+            }
         }
     } else {
         // Paused: render a freeze frame at the new position (scrubbing).
@@ -133,7 +156,7 @@ void PlayerController::render_freeze() {
 }
 
 bool PlayerController::current_frame(int& w, int& h, const uint8_t*& image) {
-    if (is_playing()) {
+    if (playing_) {
         // Prefer a fresh realtime frame; if none arrived this tick, keep
         // showing whatever the texture already holds (caller decides).
         mlt_image_format fmt = mlt_image_none;

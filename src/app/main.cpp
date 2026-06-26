@@ -1205,16 +1205,22 @@ int main(int, char**) {
         rpc_server.drain();
 
         // If playback reached EOF (consumer self-stopped with
-        // terminate_on_pause), the GUI's is_playing() is already false
-        // but the consumer thread + running_ flag linger until an
-        // explicit stop. Tear it down here so the producer is in a
-        // clean state for the next Play/Seek, and the freeze frame
-        // shown matches the final frame. Without this, Play after EOF
-        // was flaky: the first click early-returned in start() (running_
-        // still true), the second rebuilt the consumer against a
-        // producer still holding the stale speed/position.
+        // terminate_on_pause), tear down the consumer and reset
+        // playing_ so the GUI shows the correct Play state.
+        // PlayerController::pause() handles this by checking
+        // has_self_stopped() when playing_ is still true.
+        //
+        // Also add a position-based fallback: some audio consumers
+        // (e.g. sdl2_audio on macOS) may not fire consumer-stopped,
+        // leaving playing_ stuck true. If the producer position is
+        // at the last frame while playing, treat that as EOF.
         if (app.player().has_self_stopped()) {
             app.pause();
+        } else if (app.is_playing()) {
+            int64_t dur = app.project().timeline().duration();
+            if (dur > 0 && app.position() >= dur - 1) {
+                app.pause();
+            }
         }
 
         int fw = 0, fh = 0;

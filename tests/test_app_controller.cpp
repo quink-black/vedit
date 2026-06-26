@@ -522,13 +522,16 @@ TEST_CASE("Export works after playback reached EOF", "[t9][export]") {
     app.clip_append(v1, mi);
 
     // Play to EOF. The 2s test clip under "null" audio consumer runs
-    // out well under this timeout; spin until the consumer self-stops.
+    // out well under this timeout; spin until the consumer self-stops
+    // (has_self_stopped), then call pause() to tear down the renderer
+    // and reset playing_ -- exactly what the GUI main loop does.
     REQUIRE(app.play());
-    for (int i = 0; i < 200 && app.is_playing(); ++i) {
+    for (int i = 0; i < 200 && !app.player().has_self_stopped(); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    REQUIRE_FALSE(app.is_playing());  // reached EOF
+    REQUIRE(app.player().has_self_stopped());
     app.pause();
+    REQUIRE_FALSE(app.is_playing());  // playing_ cleared by pause()
 
     // Now export from this state. Before the fix this produced an
     // empty 262-byte file; it must produce a real, non-empty MP4.
