@@ -33,8 +33,15 @@ public:
     // dimensions). Width/height are pixels; fps is frames per second.
     void set_profile(int width, int height, double fps);
 
+    // Whether the profile has been explicitly set by the user or RPC.
+    // When false, the first media import will sync the profile from
+    // the source media (auto-detect). When true, the profile is
+    // locked and imports will not overwrite it.
+    bool profile_is_user_set() const { return profile_user_set_; }
+
 private:
     Mlt::Profile profile_;
+    bool profile_user_set_ = false;
     std::unique_ptr<MediaLibrary> library_;
     std::unique_ptr<TimelineModel> timeline_;
     std::unique_ptr<PlayerController> player_;

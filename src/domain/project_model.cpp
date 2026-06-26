@@ -46,6 +46,7 @@ void ProjectModel::set_profile(int width, int height, double fps) {
         profile_.set_frame_rate(
             static_cast<int>(fps * den + 0.5), den);
     }
+    profile_user_set_ = true;
 }
 
 } // namespace vedit

@@ -136,26 +136,9 @@ int MediaLibrary::import(const std::string& path, int video_index, int audio_ind
         return -1;
     }
 
-    // Apply the caller's stream selection BEFORE profile_.from_producer
-    // so the profile reflects the chosen video stream's dimensions/fps.
+    // Apply the caller's stream selection before probe_streams so the
+    // producer reflects the chosen video stream's properties.
     apply_stream_selection(*producer, video_index, audio_index);
-
-    // Sync the project profile to the source media. The default MLT
-    // profile is DV/DVD PAL (720x576 interlaced); without this, a
-    // 864x486 source exports as 720x576 and the consumer scales every
-    // frame. from_producer mutates the shared mlt_profile in place,
-    // so the timeline tractor/playlists (which hold a pointer to it)
-    // pick up the new dimensions, fps, and colorspace.
-    //
-    // Only sync from the first imported media item. Changing the
-    // shared profile on every import would distort frame counts of
-    // clips already on the timeline.
-    if (producers_.empty()) {
-        profile_.from_producer(*producer);
-    }
-    // vedit is a progressive editor; an interlaced source would set
-    // progressive=0, which libx264 refuses to encode. Force it back.
-    profile_.set_progressive(1);
 
     MediaItem item;
     item.path = path;

@@ -20,7 +20,19 @@ AppController::~AppController() = default;
 
 int AppController::library_import(const std::string& path,
                                    int video_index, int audio_index) {
-    return project_->library().import(path, video_index, audio_index);
+    // Check if this is the first import and the user hasn't explicitly
+    // set a canvas resolution. If so, auto-detect the profile from the
+    // first media source.
+    bool is_first = project_->library().count() == 0;
+    int idx = project_->library().import(path, video_index, audio_index);
+    if (idx >= 0 && is_first && !project_->profile_is_user_set()) {
+        Mlt::Producer* producer = project_->library().producer(idx);
+        if (producer && producer->is_valid()) {
+            project_->profile().from_producer(*producer);
+            project_->profile().set_progressive(1);
+        }
+    }
+    return idx;
 }
 
 int AppController::library_count() const {
