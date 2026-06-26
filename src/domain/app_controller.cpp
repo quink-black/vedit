@@ -178,6 +178,18 @@ ClipId AppController::clip_detach_audio(ClipId id) {
     return new_id;
 }
 
+bool AppController::clip_set_audio_enabled(ClipId id, bool enabled) {
+    bool ok = project_->timeline().set_clip_audio_enabled(id, enabled);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::clip_set_video_enabled(ClipId id, bool enabled) {
+    bool ok = project_->timeline().set_clip_video_enabled(id, enabled);
+    player_->refresh();
+    return ok;
+}
+
 // --- transport ---
 
 bool AppController::play() {

@@ -477,6 +477,39 @@ ClipId TimelineModel::detach_audio(ClipId id) {
     return audio_clip;
 }
 
+bool TimelineModel::set_clip_audio_enabled(ClipId id, bool enabled) {
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    if (enabled) {
+        // Restore the original audio_index from the parent producer.
+        Mlt::Producer parent(cut->get_producer());
+        if (parent.is_valid()) {
+            int orig = parent.get_int("audio_index");
+            cut->set("audio_index", orig);
+        }
+    } else {
+        cut->set("audio_index", -1);
+    }
+    delete cut;
+    return true;
+}
+
+bool TimelineModel::set_clip_video_enabled(ClipId id, bool enabled) {
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    if (enabled) {
+        Mlt::Producer parent(cut->get_producer());
+        if (parent.is_valid()) {
+            int orig = parent.get_int("video_index");
+            cut->set("video_index", orig);
+        }
+    } else {
+        cut->set("video_index", -1);
+    }
+    delete cut;
+    return true;
+}
+
 int TimelineModel::clip_count() const {
     return static_cast<int>(clips_.size());
 }

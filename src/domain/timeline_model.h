@@ -135,6 +135,11 @@ public:
     // Detach audio from a video clip: create an audio-only track and
     // place the clip's audio there. Returns the new clip id.
     ClipId detach_audio(ClipId id);
+    // Enable or disable audio/video output for a specific clip.
+    // When audio is disabled, the clip produces no audio frames (sets
+    // audio_index=-1 on the MLT cut). Likewise for video.
+    bool set_clip_audio_enabled(ClipId id, bool enabled);
+    bool set_clip_video_enabled(ClipId id, bool enabled);
 
     // --- queries ---
     int clip_count() const;

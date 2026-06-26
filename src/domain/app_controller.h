@@ -75,6 +75,8 @@ public:
     bool clip_add_transition(TrackId track, int clip_index,
                              int length, const std::string& type = "luma");
     ClipId clip_detach_audio(ClipId id);
+    bool clip_set_audio_enabled(ClipId id, bool enabled);
+    bool clip_set_video_enabled(ClipId id, bool enabled);
 
     // --- filters (M2) ---
     const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
