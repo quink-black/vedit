@@ -49,16 +49,21 @@ void register_methods(Dispatcher& d, AppController& app) {
 
     // ---- app.list_instances ----
     //
-    // Enumerate all running vedit instances on this host. Globs
-    // /tmp/vedit-*.sock, probes each with app.identity over a brief
-    // JSON-RPC handshake, and returns the alive list. Used by the MCP
-    // shim (vedit_client.discover_instances) and by multi-instance UIs.
+    // Enumerate all running vedit instances on this host. Globs the
+    // temp directory for vedit-*.sock, probes each with app.identity
+    // over a brief JSON-RPC handshake, and returns the alive list.
+    // Used by the MCP shim (vedit_client.discover_instances) and by
+    // multi-instance UIs.
     d.register_method("app.list_instances", [&](const nlohmann::json&) {
         nlohmann::json instances = nlohmann::json::array();
 #ifndef _WIN32
+        // Use the same temp directory that default_socket_path() uses,
+        // not hardcoded /tmp (macOS uses a per-user temp dir).
+        std::string glob_pattern =
+            (vedit::temp_dir() / "vedit-*.sock").string();
         glob_t g;
         std::memset(&g, 0, sizeof(g));
-        if (::glob("/tmp/vedit-*.sock", 0, nullptr, &g) != 0) {
+        if (::glob(glob_pattern.c_str(), 0, nullptr, &g) != 0) {
             return instances;
         }
 
