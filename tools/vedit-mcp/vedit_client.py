@@ -1,7 +1,7 @@
 """vedit_client -- thin client for the vedit JSON-RPC server.
 
 The vedit GUI ships a JSON-RPC 2.0 server bound to a Unix Domain Socket
-at /tmp/vedit-<pid>.sock (POSIX only).
+in the platform temp directory (vedit-<pid>.sock, POSIX only).
 
 This module provides:
 
@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import glob
 import json
+import os
 import socket
 import struct
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -34,7 +36,10 @@ MAX_FRAME_BYTES = 64 * 1024 * 1024
 # without letting a stuck call hang the agent indefinitely.
 DEFAULT_TIMEOUT_S = 30.0
 
-SOCKET_GLOB = "/tmp/vedit-*.sock"
+
+def _socket_glob() -> str:
+    """Glob pattern for vedit socket files in the platform temp dir."""
+    return os.path.join(tempfile.gettempdir(), "vedit-*.sock")
 
 
 @dataclass
@@ -200,12 +205,13 @@ def _probe_socket(path: str, timeout: float = 0.5) -> Optional[Instance]:
 def discover_instances() -> list[Instance]:
     """Return every live vedit process reachable on this machine.
 
-    Walks /tmp/vedit-*.sock, probes each with app.identity, drops the
-    ones that don't answer or that don't identify as 'vedit'.  Sorted
-    by pid for stable output.  Empty list when nothing is running.
+    Walks the platform temp dir for vedit-*.sock, probes each with
+    app.identity, drops the ones that don't answer or that don't
+    identify as 'vedit'.  Sorted by pid for stable output.  Empty
+    list when nothing is running.
     """
     out: list[Instance] = []
-    for path in sorted(glob.glob(SOCKET_GLOB)):
+    for path in sorted(glob.glob(_socket_glob())):
         inst = _probe_socket(path)
         if inst is not None:
             out.append(inst)
