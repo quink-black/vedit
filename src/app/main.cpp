@@ -79,31 +79,6 @@ static std::string open_file_dialog() {
     return result;
 }
 
-static std::string save_file_dialog(const char* default_name) {
-    nfdfilteritem_t filters[] = { { "MP4 video", "mp4" } };
-    nfdchar_t* out = nullptr;
-    nfdresult_t res = NFD_SaveDialog(
-        &out, filters, sizeof(filters) / sizeof(filters[0]), nullptr,
-        default_name ? default_name : "export.mp4");
-    std::string result;
-    if (res == NFD_OKAY && out) {
-        result = out;
-        NFD_FreePath(out);
-    } else if (res == NFD_ERROR) {
-        const char* err = NFD_GetError();
-        vedit::Logger::log(vedit::Logger::Level::Warn,
-                           err ? err : "NFD save dialog error");
-    }
-    return result;
-}
-
-// Ensure the export path ends with .mp4 (NFD may not append it).
-static std::string ensure_mp4_ext(std::string path) {
-    if (path.size() < 4 || path.compare(path.size() - 4, 4, ".mp4") != 0)
-        path += ".mp4";
-    return path;
-}
-
 static std::string open_project_dialog() {
     nfdfilteritem_t filters[] = {
         { "MLT project", "mlt" },
@@ -802,24 +777,23 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         if (ImGui::MenuItem("Change speed...")) {
             gui.show_speed_dialog = true;
             gui.speed_dialog_val = 1.0;
+            gui.speed_dialog_clip = gui.selected_clip;
         }
         if (ImGui::MenuItem("Overwrite insert...")) {
             gui.show_overwrite_dialog = true;
+            gui.overwrite_dialog_position = app.position();
         }
         ImGui::Separator();
         // Add transition: only makes sense between two adjacent clips.
         if (sel_ci) {
-            int pl_idx = tl.playlist_index_of(gui.selected_clip);
-            bool can_transition = pl_idx >= 0;
-            if (!can_transition) ImGui::BeginDisabled();
             if (ImGui::MenuItem("Add transition (30 frames)")) {
-                if (app.clip_add_transition(sel_ci->track_id, pl_idx, 30)) {
+                int pl_idx = tl.playlist_index_of(gui.selected_clip);
+                if (pl_idx >= 0 && app.clip_add_transition(sel_ci->track_id, pl_idx, 30)) {
                     gui.status = "Added 30-frame transition.";
                 } else {
                     gui.status = "Transition failed (need an adjacent clip).";
                 }
             }
-            if (!can_transition) ImGui::EndDisabled();
         }
         ImGui::EndPopup();
     }
@@ -1257,6 +1231,21 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
             if (ImGui::CollapsingHeader("Layout")) {
                 ImGui::TextDisabled("x, y, w, h as %% of canvas");
                 static float geo_x = 0, geo_y = 0, geo_w = 100, geo_h = 100;
+static vedit::TrackId geo_track{};
+                if (geo_track != gui.active_track) {
+                    geo_track = gui.active_track;
+                    double gx, gy, gw, gh;
+                    if (app.composite_geometry_get(
+                            gui.active_track, gx, gy, gw, gh)) {
+                        geo_x = static_cast<float>(gx);
+                        geo_y = static_cast<float>(gy);
+                        geo_w = static_cast<float>(gw);
+                        geo_h = static_cast<float>(gh);
+                    } else {
+                        geo_x = 0; geo_y = 0;
+                        geo_w = 100; geo_h = 100;
+                    }
+                }
                 if (ImGui::SliderFloat("X %", &geo_x, 0, 100, "%.0f")) {
                     app.composite_geometry_set(gui.active_track,
                                                geo_x, geo_y, geo_w, geo_h);
@@ -1403,30 +1392,7 @@ int main(int, char**) {
 
     bool running = true;
     while (running) {
-        // Poll any active async export job and surface its progress.
-        if (gui.export_job_id > 0) {
-            auto r = app.export_poll(gui.export_job_id);
-            if (r.found) {
-                if (r.state == "running") {
-                    char buf[128];
-                    std::snprintf(buf, sizeof(buf),
-                                  "Exporting %s: %d%%",
-                                  r.output_path.c_str(),
-                                  static_cast<int>(r.fraction * 100));
-                    gui.status = buf;
-                } else {
-                    gui.export_job_id = 0;
-                    if (r.state == "done") {
-                        gui.status = "Exported to " + r.output_path;
-                    } else if (r.state == "cancelled") {
-                        gui.status = "Export cancelled: " + r.output_path;
-                    } else {
-                        gui.status = "Export failed: " +
-                                    (r.error.empty() ? r.output_path : r.error);
-                    }
-                }
-            }
-        }
+        // Export progress is shown inside the Export Settings dialog.
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -1520,6 +1486,15 @@ int main(int, char**) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New project")) {
                     app.project_new();
+                    gui.selected_media = -1;
+                    gui.selected_clip = vedit::ClipId{0};
+                    gui.active_track = vedit::TrackId{0};
+                    gui.export_job_id = 0;
+                    gui.drag = DragMode::None;
+                    gui.show_speed_dialog = false;
+                    gui.show_overwrite_dialog = false;
+                    gui.show_export_dialog = false;
+                    gui.show_profile_dialog = false;
                     gui.status = "New project created";
                 }
                 ImGui::Separator();
@@ -1715,48 +1690,66 @@ int main(int, char**) {
             }
 
             ImGui::Separator();
-            if (ImGui::Button("Export", ImVec2(120, 0))) {
-                nlohmann::json params;
-                const char* exts[] = { "mp4", "mkv", "webm" };
-                const char* vcodecs[] = { "libx264", "libx265", "libvpx-vp9", "libaom-av1" };
-                params["acodec"] = "aac";
-                params["vcodec"] = vcodecs[gui.export_dialog_video_codec];
-                params["crf"] = gui.export_dialog_crf;
-                params["f"] = exts[gui.export_dialog_format];
-
-                // Load preset properties if selected
-                if (gui.export_dialog_preset_index >= 0 &&
-                    gui.export_dialog_preset_index < static_cast<int>(presets.size())) {
-                    auto preset_props = vedit::ExportService::load_preset(
-                        presets[gui.export_dialog_preset_index].file_path);
-                    params.merge_patch(preset_props);
-                }
-
-                int64_t in_pt = gui.export_dialog_use_range
-                                    ? gui.export_dialog_in_point : -1;
-                int64_t out_pt = gui.export_dialog_use_range
-                                     ? gui.export_dialog_out_point : -1;
-                auto job_id = app.export_start(gui.export_dialog_path, params,
-                                               in_pt, out_pt);
-                if (job_id > 0) {
-                    gui.export_job_id = job_id;
-                    gui.status = "Export started...";
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    gui.status = "Export failed to start.";
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                ImGui::CloseCurrentPopup();
-            }
-
-            // Show cancel button during export
             if (gui.export_job_id > 0) {
-                ImGui::Separator();
-                if (ImGui::Button("Cancel Export")) {
-                    app.export_cancel(gui.export_job_id);
-                    gui.status = "Cancelling export...";
+                // Export in progress: show status and cancel.
+                auto r = app.export_poll(gui.export_job_id);
+                if (r.found && r.state == "running") {
+                    ImGui::TextUnformatted("Exporting...");
+                    ImGui::ProgressBar(static_cast<float>(r.fraction),
+                                       ImVec2(-1, 0));
+                    if (ImGui::Button("Cancel Export")) {
+                        app.export_cancel(gui.export_job_id);
+                        gui.status = "Cancelling export...";
+                    }
+                } else {
+                    // Finished (done / cancelled / failed) — close.
+                    gui.export_job_id = 0;
+                    if (r.found) {
+                        if (r.state == "done")
+                            gui.status = "Exported to " + r.output_path;
+                        else if (r.state == "cancelled")
+                            gui.status = "Export cancelled: " + r.output_path;
+                        else
+                            gui.status = "Export failed: " +
+                                (r.error.empty() ? r.output_path : r.error);
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+            } else {
+                // No active export: show settings form.
+                if (ImGui::Button("Export", ImVec2(120, 0))) {
+                    nlohmann::json params;
+                    const char* exts[] = { "mp4", "mkv", "webm" };
+                    const char* vcodecs[] = { "libx264", "libx265", "libvpx-vp9", "libaom-av1" };
+                    params["acodec"] = "aac";
+                    params["vcodec"] = vcodecs[gui.export_dialog_video_codec];
+                    params["crf"] = gui.export_dialog_crf;
+                    params["f"] = exts[gui.export_dialog_format];
+
+                    // Load preset properties if selected
+                    if (gui.export_dialog_preset_index >= 0 &&
+                        gui.export_dialog_preset_index < static_cast<int>(presets.size())) {
+                        auto preset_props = vedit::ExportService::load_preset(
+                            presets[gui.export_dialog_preset_index].file_path);
+                        params.merge_patch(preset_props);
+                    }
+
+                    int64_t in_pt = gui.export_dialog_use_range
+                                        ? gui.export_dialog_in_point : -1;
+                    int64_t out_pt = gui.export_dialog_use_range
+                                         ? gui.export_dialog_out_point : -1;
+                    auto job_id = app.export_start(gui.export_dialog_path, params,
+                                                   in_pt, out_pt);
+                    if (job_id > 0) {
+                        gui.export_job_id = job_id;
+                        gui.status = "Export started...";
+                    } else {
+                        gui.status = "Export failed to start.";
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                    ImGui::CloseCurrentPopup();
                 }
             }
 
@@ -1817,9 +1810,10 @@ int main(int, char**) {
                 if (tracks[i].id == gui.overwrite_dialog_track) track_sel = i;
             }
             if (!track_names.empty()) {
-                ImGui::Combo("Track", &track_sel, track_names.data(),
-                             static_cast<int>(track_names.size()));
-                gui.overwrite_dialog_track = tracks[track_sel].id;
+                if (ImGui::Combo("Track", &track_sel, track_names.data(),
+                             static_cast<int>(track_names.size()))) {
+                    gui.overwrite_dialog_track = tracks[track_sel].id;
+                }
             } else {
                 ImGui::TextDisabled("No tracks available.");
             }
