@@ -1703,46 +1703,58 @@ int main(int, char**) {
             }
 
             ImGui::Separator();
-            if (ImGui::Checkbox("Export partial timeline", &gui.export_dialog_use_range)) {
-                if (gui.export_dialog_use_range) {
-                    // Default to current position as in-point, end as out-point.
-                    if (gui.export_dialog_in_point < 0)
-                        gui.export_dialog_in_point = app.position();
-                    if (gui.export_dialog_out_point < 0 ||
-                        gui.export_dialog_out_point > dur)
-                        gui.export_dialog_out_point = dur;
-                }
-            }
-            if (gui.export_dialog_use_range) {
+            {
                 double fps = gui.project_fps;
-                ImGui::Indent();
-                ImGui::TextUnformatted("Export from Start to End:");
-                ImGui::Spacing();
-                ImGui::SetNextItemWidth(100);
-                if (ImGui::InputScalar("Start", ImGuiDataType_S64,
-                                       &gui.export_dialog_in_point, nullptr, nullptr, "%lld")) {
-                    if (gui.export_dialog_in_point < 0)
-                        gui.export_dialog_in_point = 0;
-                    if (gui.export_dialog_in_point > dur)
-                        gui.export_dialog_in_point = dur;
-                }
+                ImGui::TextUnformatted("Export range:");
                 ImGui::SameLine();
-                ImGui::TextDisabled("(%s)", timecode(gui.export_dialog_in_point, fps).c_str());
-                ImGui::SetNextItemWidth(100);
-                if (ImGui::InputScalar("End", ImGuiDataType_S64,
-                                       &gui.export_dialog_out_point, nullptr, nullptr, "%lld")) {
-                    if (gui.export_dialog_out_point < gui.export_dialog_in_point)
-                        gui.export_dialog_out_point = gui.export_dialog_in_point;
-                    if (gui.export_dialog_out_point > dur)
-                        gui.export_dialog_out_point = dur;
+                if (!gui.export_dialog_use_range) {
+                    ImGui::TextDisabled("Entire timeline  %s - %s",
+                        timecode(0, fps).c_str(),
+                        timecode(dur, fps).c_str());
                 }
-                ImGui::SameLine();
-                ImGui::TextDisabled("(%s)", timecode(gui.export_dialog_out_point, fps).c_str());
-                ImGui::Spacing();
-                ImGui::TextDisabled("Range: %s - %s",
-                    timecode(gui.export_dialog_in_point, fps).c_str(),
-                    timecode(gui.export_dialog_out_point, fps).c_str());
-                ImGui::Unindent();
+                if (ImGui::Checkbox("Only export a segment",
+                                    &gui.export_dialog_use_range)) {
+                    if (gui.export_dialog_use_range) {
+                        if (gui.export_dialog_in_point < 0)
+                            gui.export_dialog_in_point = app.position();
+                        if (gui.export_dialog_out_point < 0 ||
+                            gui.export_dialog_out_point > dur)
+                            gui.export_dialog_out_point = dur;
+                    }
+                }
+                if (gui.export_dialog_use_range) {
+                    ImGui::Indent();
+                    ImGui::TextDisabled("Set the segment on the timeline to export:");
+                    ImGui::Spacing();
+                    auto tc_width = ImGui::CalcTextSize("00:00:00:00").x + 8;
+                    ImGui::SetNextItemWidth(tc_width);
+                    if (ImGui::InputScalar("Start frame", ImGuiDataType_S64,
+                                           &gui.export_dialog_in_point,
+                                           nullptr, nullptr, "%lld")) {
+                        if (gui.export_dialog_in_point < 0)
+                            gui.export_dialog_in_point = 0;
+                        if (gui.export_dialog_in_point > dur)
+                            gui.export_dialog_in_point = dur;
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text("= %s", timecode(gui.export_dialog_in_point, fps).c_str());
+                    ImGui::SetNextItemWidth(tc_width);
+                    if (ImGui::InputScalar("End frame", ImGuiDataType_S64,
+                                           &gui.export_dialog_out_point,
+                                           nullptr, nullptr, "%lld")) {
+                        if (gui.export_dialog_out_point < gui.export_dialog_in_point)
+                            gui.export_dialog_out_point = gui.export_dialog_in_point;
+                        if (gui.export_dialog_out_point > dur)
+                            gui.export_dialog_out_point = dur;
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text("= %s", timecode(gui.export_dialog_out_point, fps).c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("Will export %s ~ %s",
+                        timecode(gui.export_dialog_in_point, fps).c_str(),
+                        timecode(gui.export_dialog_out_point, fps).c_str());
+                    ImGui::Unindent();
+                }
             }
 
             ImGui::Separator();
