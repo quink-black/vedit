@@ -525,14 +525,19 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                       IM_COL32(40, 40, 48, 255));
     {
         int fps = static_cast<int>(gui.project_fps > 0 ? gui.project_fps : 25);
+        const float kMinLabelSpacing = 42.0f;
+        float last_label_x = -kMinLabelSpacing;
         for (int64_t f = 0; f <= dur + fps; f += fps) {
             float x = tl_x0 + f * px_per_frame;
             if (x > origin.x + content_w) break;
             dl->AddLine(ImVec2(x, origin.y + 4), ImVec2(x, lanes_y0),
                         IM_COL32(90, 90, 100, 255), 1.0f);
-            std::string lbl = ruler_label(f, gui.project_fps);
-            dl->AddText(ImVec2(x + 3, origin.y + 3),
-                        IM_COL32(170, 170, 180, 255), lbl.c_str());
+            if (x - last_label_x >= kMinLabelSpacing) {
+                std::string lbl = ruler_label(f, gui.project_fps);
+                dl->AddText(ImVec2(x + 3, origin.y + 3),
+                            IM_COL32(170, 170, 180, 255), lbl.c_str());
+                last_label_x = x;
+            }
         }
     }
 
