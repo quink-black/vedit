@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 namespace vedit {
 
@@ -672,6 +673,72 @@ std::string TimelineModel::track_get_filter_param(TrackId track_id,
     const char* val = found->get(param.c_str());
     std::string result = val ? val : "";
     delete found;
+    return result;
+}
+
+std::vector<TimelineModel::AttachedFilterInfo>
+TimelineModel::attached_filters() const {
+    std::vector<AttachedFilterInfo> result;
+
+    for (const auto& ts : tracks_) {
+        if (!ts.playlist) continue;
+        // Per-clip filters.
+        for (int i = 0; i < ts.playlist->count(); ++i) {
+            if (ts.playlist->is_blank(i)) continue;
+            Mlt::Producer* cut = ts.playlist->get_clip(i);
+            if (!cut) continue;
+            int64_t clip_id = read_clip_id(*cut);
+            int nf = cut->filter_count();
+            for (int f = 0; f < nf; ++f) {
+                Mlt::Filter* filter = cut->filter(f);
+                if (!filter) continue;
+                const char* svc = filter->get("mlt_service");
+                if (!svc || !svc[0]) { delete filter; continue; }
+                AttachedFilterInfo info;
+                info.target_type = "clip";
+                info.target_id = clip_id;
+                info.filter_name = svc;
+                Mlt::Properties props(filter->get_properties());
+                for (int p = 0; p < props.count(); ++p) {
+                    const char* key = props.get_name(p);
+                    if (!key || key[0] == '_') continue;
+                    if (std::strcmp(key, "mlt_service") == 0 ||
+                        std::strcmp(key, "mlt_type") == 0 ||
+                        std::strcmp(key, "mlt_filter") == 0) continue;
+                    const char* val = props.get(key);
+                    if (val) info.params.emplace_back(key, val);
+                }
+                result.push_back(std::move(info));
+                delete filter;
+            }
+            delete cut;
+        }
+
+        // Per-track filters.
+        int nf = ts.playlist->filter_count();
+        for (int f = 0; f < nf; ++f) {
+            Mlt::Filter* filter = ts.playlist->filter(f);
+            if (!filter) continue;
+            const char* svc = filter->get("mlt_service");
+            if (!svc || !svc[0]) { delete filter; continue; }
+            AttachedFilterInfo info;
+            info.target_type = "track";
+            info.target_id = ts.info.id.value;
+            info.filter_name = svc;
+            Mlt::Properties props(filter->get_properties());
+            for (int p = 0; p < props.count(); ++p) {
+                const char* key = props.get_name(p);
+                if (!key || key[0] == '_') continue;
+                if (std::strcmp(key, "mlt_service") == 0 ||
+                    std::strcmp(key, "mlt_type") == 0 ||
+                    std::strcmp(key, "mlt_filter") == 0) continue;
+                const char* val = props.get(key);
+                if (val) info.params.emplace_back(key, val);
+            }
+            result.push_back(std::move(info));
+            delete filter;
+        }
+    }
     return result;
 }
 

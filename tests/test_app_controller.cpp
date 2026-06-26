@@ -1245,3 +1245,60 @@ TEST_CASE("per-track filter add/set/get/remove over RPC", "[t17]") {
     resp = nlohmann::json::parse(d.handle_request(req.dump()));
     REQUIRE(resp.contains("error"));
 }
+
+TEST_CASE("state.get reflects attached filters after add/remove", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("state_filters");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // No filters attached initially.
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","state.get"},{"id",1}};
+        nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+        REQUIRE(resp["result"]["filters"]["attached"].empty());
+    }
+
+    // Attach brightness.
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","filter.add"},{"id",2},
+                              {"params", {{"clip_id", cid.value}, {"filter", "brightness"}}}};
+        d.handle_request(req.dump());
+    }
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","filter.set_param"},{"id",3},
+                              {"params", {{"clip_id", cid.value}, {"filter", "brightness"},
+                                          {"param", "level"}, {"value", 1.5}}}};
+        d.handle_request(req.dump());
+    }
+
+    // Now state.get must show the filter.
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","state.get"},{"id",4}};
+        nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+        const auto& attached = resp["result"]["filters"]["attached"];
+        REQUIRE(attached.size() == 1);
+        REQUIRE(attached[0]["target_type"] == "clip");
+        REQUIRE(attached[0]["target_id"] == cid.value);
+        REQUIRE(attached[0]["filter"] == "brightness");
+        REQUIRE(attached[0]["params"].contains("level"));
+    }
+
+    // Remove it.
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","filter.remove"},{"id",5},
+                              {"params", {{"clip_id", cid.value}, {"filter", "brightness"}}}};
+        d.handle_request(req.dump());
+    }
+    {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","state.get"},{"id",6}};
+        nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+        REQUIRE(resp["result"]["filters"]["attached"].empty());
+    }
+}

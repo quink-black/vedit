@@ -146,6 +146,15 @@ public:
                                        const std::string& filter_name,
                                        const std::string& param);
 
+    // Enumerate attached filters for state.get projection.
+    struct AttachedFilterInfo {
+        std::string target_type;  // "clip" or "track"
+        int64_t target_id;
+        std::string filter_name;
+        std::vector<std::pair<std::string, std::string>> params;
+    };
+    std::vector<AttachedFilterInfo> attached_filters() const;
+
 private:
     struct TrackState {
         TrackInfo info;

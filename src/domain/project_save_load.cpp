@@ -231,12 +231,11 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
     }
     doc["tracks"] = std::move(tracks);
 
-    // ---- Filters placeholder (P1/P2 schema lock) ----
+    // ---- Filters (M2: populated) ----
     //
-    // P1 (generic, yml-driven): filter list from MLT repository.
-    // P2 (keyframe-aware): parameter value shape {value}|{keyframes}.
-    // M2 populates `available` from the catalog; `attached` stays
-    // empty until filter.add RPC is implemented (M2b).
+    // P1 (generic, yml-driven): available from MLT repository.
+    // P2 (keyframe-aware): params accept {value}|{keyframes}.
+    // attached lists all filters currently on clips/tracks.
     nlohmann::json available = nlohmann::json::array();
     for (const auto& f : catalog.filters()) {
         nlohmann::json fj;
@@ -256,9 +255,24 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
         fj["params"] = std::move(fparams);
         available.push_back(std::move(fj));
     }
+
+    nlohmann::json attached = nlohmann::json::array();
+    for (const auto& af : tl.attached_filters()) {
+        nlohmann::json afj;
+        afj["target_type"] = af.target_type;
+        afj["target_id"] = af.target_id;
+        afj["filter"] = af.filter_name;
+        nlohmann::json af_params = nlohmann::json::object();
+        for (const auto& [k, v] : af.params) {
+            af_params[k] = v;
+        }
+        afj["params"] = std::move(af_params);
+        attached.push_back(std::move(afj));
+    }
+
     doc["filters"] = nlohmann::json{
         {"available", std::move(available)},
-        {"attached",  nlohmann::json::array()}
+        {"attached",  std::move(attached)}
     };
 
     return doc.dump();

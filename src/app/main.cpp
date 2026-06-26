@@ -1072,6 +1072,89 @@ int main(int, char**) {
         draw_timeline_panel(app, gui);
         ImGui::EndChild();
 
+        // ---- Filters panel (M2) ----
+        // Shown when a clip is selected, or always visible with a
+        // track-level scope. Compact: list attached filters with inline
+        // param editing and add/remove buttons.
+        if (gui.selected_clip.valid() || gui.active_track.valid()) {
+            float filter_h = ImGui::GetFrameHeightWithSpacing() * 6.0f
+                           + ImGui::GetStyle().WindowPadding.y * 2.0f;
+            ImGui::BeginChild("filters", ImVec2(0, filter_h),
+                              ImGuiChildFlags_Borders);
+            ImGui::TextUnformatted("Filters");
+            ImGui::Separator();
+
+            // Collect attached filters from state.
+            auto attached = app.project().timeline().attached_filters();
+            std::vector<const vedit::TimelineModel::AttachedFilterInfo*> visible;
+            for (const auto& af : attached) {
+                bool match = false;
+                if (gui.selected_clip.valid() &&
+                    af.target_type == "clip" &&
+                    af.target_id == gui.selected_clip.value) match = true;
+                if (gui.active_track.valid() &&
+                    af.target_type == "track" &&
+                    af.target_id == gui.active_track.value) match = true;
+                if (match) visible.push_back(&af);
+            }
+
+            if (visible.empty()) {
+                ImGui::TextDisabled("No filters on the selection.\n"
+                                    "Use filter.add RPC to attach one.");
+            } else {
+                for (const auto* af : visible) {
+                    char label[128];
+                    std::snprintf(label, sizeof(label), "%s##%s_%s_%lld",
+                                  af->filter_name.c_str(),
+                                  af->target_type.c_str(),
+                                  af->filter_name.c_str(),
+                                  (long long)af->target_id);
+                    if (ImGui::TreeNode(label)) {
+                        // Inline param values.
+                        for (const auto& [k, v] : af->params) {
+                            char buf[256];
+                            std::snprintf(buf, sizeof(buf), "%s", v.c_str());
+                            ImGui::TextUnformatted(k.c_str());
+                            ImGui::SameLine(120);
+                            char input_id[300];
+                            std::snprintf(input_id, sizeof(input_id),
+                                          "##fp_%s_%lld_%s",
+                                          af->filter_name.c_str(),
+                                          (long long)af->target_id, k.c_str());
+                            if (ImGui::InputText(input_id, buf, sizeof(buf),
+                                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
+                                // Apply param change.
+                                if (af->target_type == "clip") {
+                                    app.filter_set_param(
+                                        vedit::ClipId{af->target_id},
+                                        af->filter_name, k, buf);
+                                } else {
+                                    app.track_filter_set_param(
+                                        vedit::TrackId{af->target_id},
+                                        af->filter_name, k, buf);
+                                }
+                            }
+                        }
+
+                        // Remove button.
+                        if (ImGui::Button("Remove")) {
+                            if (af->target_type == "clip") {
+                                app.filter_remove(
+                                    vedit::ClipId{af->target_id},
+                                    af->filter_name);
+                            } else {
+                                app.track_filter_remove(
+                                    vedit::TrackId{af->target_id},
+                                    af->filter_name);
+                            }
+                        }
+                        ImGui::TreePop();
+                    }
+                }
+            }
+            ImGui::EndChild();
+        }
+
         ImGui::End();
 
         // Status line. Offsets derive from the scaled frame height so
