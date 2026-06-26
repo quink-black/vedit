@@ -1175,8 +1175,7 @@ int main(int, char**) {
             }
 
             if (visible.empty()) {
-                ImGui::TextDisabled("No filters on the selection.\n"
-                                    "Use filter.add RPC to attach one.");
+                ImGui::TextDisabled("No filters on this clip/track.");
             } else {
                 for (const auto* af : visible) {
                     char label[128];
@@ -1229,7 +1228,35 @@ int main(int, char**) {
                 }
             }
 
-            // ---- Composite geometry editor (per-track canvas position) ----
+            // ---- Add filter combo ----
+            ImGui::Separator();
+            ImGui::TextUnformatted("Add filter:");
+            static int add_filter_idx = 0;
+            const auto& catalog = app.filter_catalog().filters();
+            if (!catalog.empty()) {
+                const char* preview = catalog[add_filter_idx % catalog.size()].id.c_str();
+                if (ImGui::BeginCombo("##addfilter", preview)) {
+                    for (size_t i = 0; i < catalog.size(); ++i) {
+                        bool sel = (static_cast<int>(i) == add_filter_idx);
+                        if (ImGui::Selectable(catalog[i].id.c_str(), sel)) {
+                            add_filter_idx = static_cast<int>(i);
+                        }
+                        if (sel) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Add")) {
+                    const auto& fid = catalog[add_filter_idx % catalog.size()].id;
+                    if (gui.selected_clip.valid()) {
+                        app.filter_add(gui.selected_clip, fid);
+                    } else if (gui.active_track.valid()) {
+                        app.track_filter_add(gui.active_track, fid);
+                    }
+                }
+            }
+
+            // ---- Composite geometry editor ----
             // Shown when a video track (not track 0) is selected.
             if (gui.active_track.valid()) {
                 const auto* trk = app.project().timeline().track(gui.active_track);
