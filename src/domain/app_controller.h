@@ -91,6 +91,10 @@ public:
     // --- profile (canvas) ---
     void profile_set(int width, int height, double fps);
 
+    // --- canvas composition ---
+    bool composite_geometry_set(TrackId track_id,
+                                 double x, double y, double w, double h);
+
     // --- transport ---
     bool play();
     void pause();

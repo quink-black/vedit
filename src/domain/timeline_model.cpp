@@ -740,4 +740,31 @@ TimelineModel::attached_filters() const {
     return result;
 }
 
+bool TimelineModel::set_composite_geometry(TrackId track_id,
+                                            double x, double y,
+                                            double w, double h) {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return false;
+    if (tidx == 0) return false;
+    if (tracks_[tidx].info.kind != TrackKind::Video) return false;
+
+    int composite_idx = -1;
+    for (int i = 1; i <= tidx; ++i) {
+        if (tracks_[i - 1].info.kind == TrackKind::Video &&
+            tracks_[i].info.kind == TrackKind::Video) {
+            ++composite_idx;
+        }
+    }
+    if (composite_idx < 0 ||
+        composite_idx >= static_cast<int>(composites_.size())) {
+        return false;
+    }
+
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.0f%%/%.0f%%:%.0f%%x%.0f%%",
+                  x, y, w, h);
+    composites_[composite_idx]->set("geometry", buf);
+    return true;
+}
+
 } // namespace vedit

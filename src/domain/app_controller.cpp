@@ -301,4 +301,11 @@ void AppController::profile_set(int width, int height, double fps) {
     project_->set_profile(width, height, fps);
 }
 
+bool AppController::composite_geometry_set(TrackId track_id,
+                                            double x, double y,
+                                            double w, double h) {
+    return project_->timeline().set_composite_geometry(
+        track_id, x, y, w, h);
+}
+
 } // namespace vedit

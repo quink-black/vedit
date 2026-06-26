@@ -451,6 +451,26 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
+    // ---- track.set_composite_geometry ----
+    //
+    // Set the geometry rect for a video track's composite transition.
+    // x, y, w, h are percentages (0-100) of the profile resolution.
+    // This positions the track's content on the canvas. Track 0 has
+    // no composite (it fills the canvas as background).
+    d.register_method("track.set_composite_geometry",
+                      [&](const nlohmann::json& params) {
+        TrackId tid{params.value("track_id", 0LL)};
+        double x = params.value("x", 0.0);
+        double y = params.value("y", 0.0);
+        double w = params.value("w", 100.0);
+        double h = params.value("h", 100.0);
+        if (!app.composite_geometry_set(tid, x, y, w, h))
+            throw RpcException(ErrorCode::ApplicationError,
+                               "set composite geometry failed "
+                               "(not a video track, or track 0)");
+        return nlohmann::json{{"ok", true}};
+    });
+
     // ---- export.start / export.poll / export.cancel ----
     //
     // Async export. export.start kicks off a worker-thread render and

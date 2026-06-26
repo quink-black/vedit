@@ -155,6 +155,12 @@ public:
     };
     std::vector<AttachedFilterInfo> attached_filters() const;
 
+    // --- canvas composition (composite geometry) ---
+    // Set the geometry rect for a video track's composite transition.
+    // x, y, w, h are percentages (0-100) of the profile.
+    bool set_composite_geometry(TrackId track_id,
+                                 double x, double y, double w, double h);
+
 private:
     struct TrackState {
         TrackInfo info;

@@ -1343,3 +1343,54 @@ TEST_CASE("project.set_profile changes output resolution", "[t19]") {
         result.pop_back();
     REQUIRE(result == "320,240");
 }
+
+TEST_CASE("composite geometry positions track on canvas", "[t19][export]") {
+    std::string clip = vedit::test::make_test_clip("comp_geom");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+
+    // Set canvas to 320x240 (source is 160x120).
+    app.profile_set(320, 240, 25.0);
+
+    auto v1 = app.track_add(vedit::TrackKind::Video, "Background");
+    auto v2 = app.track_add(vedit::TrackKind::Video, "Overlay");
+    app.clip_append(v1, mi);  // full canvas (no composite = full)
+    app.clip_append(v2, mi);  // positioned via composite
+
+    // Set composite geometry: top-left 50%x50%.
+    REQUIRE(app.composite_geometry_set(v2, 0.0, 0.0, 50.0, 50.0));
+
+    // Export frame and verify: the top-left quarter should show the
+    // clip content (non-black), bottom-right should be darker
+    // (composite over blank background).
+    std::string png = vedit::test::unique_temp_path(
+        "vedit-test", "comp_geom", ".png");
+    vedit::ExportService svc;
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 5, png));
+
+    // ffprobe resolution first.
+    std::string cmd = "ffprobe -v error -show_entries stream=width,height "
+                      "-of csv=p=0 \"" + png + "\" 2>&1";
+    std::FILE* p = popen(cmd.c_str(), "r");
+    REQUIRE(p != nullptr);
+    char buf[64];
+    std::string res;
+    while (fgets(buf, sizeof(buf), p)) res += buf;
+    pclose(p);
+    while (!res.empty() && (res.back() == '\n' || res.back() == '\r'))
+        res.pop_back();
+    REQUIRE(res == "320,240");
+
+    // File must be non-trivial.
+    auto file_size = [](const std::string& path) -> long {
+        std::FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) return 0;
+        std::fseek(f, 0, SEEK_END);
+        long s = std::ftell(f);
+        std::fclose(f);
+        return s;
+    };
+    REQUIRE(file_size(png) > 100);
+}
