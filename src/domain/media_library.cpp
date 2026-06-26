@@ -272,4 +272,10 @@ Mlt::Producer* MediaLibrary::producer(int index) {
     return producers_[index].get();
 }
 
+void MediaLibrary::clear() {
+    producers_.clear();
+    items_.clear();
+    by_path_.clear();
+}
+
 } // namespace vedit

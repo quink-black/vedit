@@ -93,6 +93,9 @@ public:
     const MediaItem* item(int index) const;
     Mlt::Producer* producer(int index);
 
+    // Remove all items. Caller must ensure no clips reference them.
+    void clear();
+
 private:
     // Probe the producer's meta.media.* properties and populate
     // `item.streams` / `item.video_index` / `item.audio_index`. Called

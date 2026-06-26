@@ -120,6 +120,10 @@ public:
     bool composite_geometry_set(TrackId track_id,
                                  double x, double y, double w, double h);
 
+    // --- project management ---
+    // Clear the timeline and library for a new project.
+    void project_new();
+
     // --- transport ---
     bool play();
     void pause();

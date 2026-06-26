@@ -379,4 +379,11 @@ bool AppController::composite_geometry_set(TrackId track_id,
         track_id, x, y, w, h);
 }
 
+void AppController::project_new() {
+    auto& tl = project_->timeline();
+    while (tl.track_count() > 0)
+        tl.remove_track(tl.tracks()[0].id);
+    project_->library().clear();
+}
+
 } // namespace vedit

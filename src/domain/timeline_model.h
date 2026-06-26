@@ -92,6 +92,11 @@ public:
     // Resolve a clip's media_index from its cut's parent producer.
     int media_index_of(ClipId id) const;
 
+    // Resolve a clip's playlist index (including blanks) within its
+    // track. Returns -1 if not found. Used for add_transition which
+    // needs the raw MLT playlist index.
+    int playlist_index_of(ClipId id) const;
+
     // Count clips referencing a given library media index. Used by
     // MediaLibrary removal to refuse dropping a source still in use.
     int count_clips_for_media(int media_index) const;

@@ -491,6 +491,24 @@ int TimelineModel::media_index_of(ClipId id) const {
     return found == clips_.end() ? -1 : found->second.media_index;
 }
 
+int TimelineModel::playlist_index_of(ClipId id) const {
+    auto found = clips_.find(id.value);
+    if (found == clips_.end()) return -1;
+    TrackId tid = found->second.track_id;
+    int tidx = track_index(tid);
+    if (tidx < 0) return -1;
+    auto& pl = tracks_[tidx].playlist;
+    for (int i = 0; i < pl->count(); ++i) {
+        if (pl->is_blank(i)) continue;
+        Mlt::Producer* cut = pl->get_clip(i);
+        if (!cut) continue;
+        int64_t cid = cut->get_int("vedit_clip_id");
+        delete cut;
+        if (cid == id.value) return i;
+    }
+    return -1;
+}
+
 int TimelineModel::count_clips_for_media(int media_index) const {
     int n = 0;
     for (const auto& [_, info] : clips_) {
