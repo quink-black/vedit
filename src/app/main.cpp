@@ -161,8 +161,8 @@ struct GuiState {
     // Export settings dialog.
     bool show_export_dialog = false;
     std::string export_dialog_path = "export.mp4";
-    int export_dialog_format = 0;  // 0=mp4, 1=mkv, 2=webm
-    int export_dialog_video_codec = 0;  // 0=x264, 1=x265, 2=vp9, 3=av1
+    int export_dialog_format = 0;  // 0=mp4, 1=mkv
+    int export_dialog_video_codec = 0;  // 0=x264, 1=x265
     int export_dialog_crf = 23;
     int export_dialog_in_point = -1;
     int export_dialog_out_point = -1;
@@ -293,7 +293,7 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
                 const auto* item = app.project().library().item(idx);
                 if (item && item->fps > 0) gui.project_fps = item->fps;
                 gui.status = "Imported " + basename_of(path) +
-                             " — double-click it (or drag it) to add to the timeline.";
+                             " -- double-click it (or drag it) to add to the timeline.";
             } else {
                 gui.status = "Could not open: " + path;
             }
@@ -1520,7 +1520,7 @@ int main(int, char**) {
                     const auto* item = app.project().library().item(idx);
                     if (item && item->fps > 0) gui.project_fps = item->fps;
                     gui.status = "Imported " + basename_of(path) +
-                                 " — double-click it in Media to add to the timeline.";
+                                 " -- double-click it in Media to add to the timeline.";
                 } else {
                     gui.status = "Could not open: " + path;
                 }
@@ -1776,11 +1776,13 @@ int main(int, char**) {
                 if (res == NFD_OKAY && out) {
                     gui.export_dialog_path = out;
                     // Ensure the extension matches the format.
-                    if (gui.export_dialog_path.size() >= 4 &&
-                        gui.export_dialog_path.compare(
-                            gui.export_dialog_path.size() - 4, 4,
-                            std::string(".") + fmt_ext) != 0) {
-                        gui.export_dialog_path += "." + std::string(fmt_ext);
+                    std::string expected_ext = "." + std::string(fmt_ext);
+                    auto pos = gui.export_dialog_path.rfind('.');
+                    if (pos == std::string::npos ||
+                        gui.export_dialog_path.substr(pos) != expected_ext) {
+                        if (pos != std::string::npos)
+                            gui.export_dialog_path.resize(pos);
+                        gui.export_dialog_path += expected_ext;
                     }
                     NFD_FreePath(out);
                 }

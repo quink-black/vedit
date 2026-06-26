@@ -300,6 +300,14 @@ async def list_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Timeline position in frames",
                     },
+                    "in": {
+                        "type": "integer",
+                        "description": "Source in-point (frames). Omit for start.",
+                    },
+                    "out": {
+                        "type": "integer",
+                        "description": "Source out-point (frames). Omit for end.",
+                    },
                 },
                 "required": ["track_id", "media_index", "position"],
             },
@@ -465,7 +473,8 @@ async def list_tools() -> list[Tool]:
                 "Render the timeline to a video file (MP4 by default). "
                 "Same assembly as preview, swapped consumer -- the "
                 "export reflects exactly what is on the timeline. "
-                "Blocking: returns once the render is complete."
+                "Returns a job_id immediately; use export_poll to "
+                "check progress (state, fraction)."
             ),
             inputSchema={
                 "type": "object",
@@ -650,6 +659,14 @@ async def list_tools() -> list[Tool]:
                     "position": {
                         "type": "integer",
                         "description": "Timeline frame position",
+                    },
+                    "in": {
+                        "type": "integer",
+                        "description": "Source in-point (frames). Omit for start.",
+                    },
+                    "out": {
+                        "type": "integer",
+                        "description": "Source out-point (frames). Omit for end.",
                     },
                 },
                 "required": ["track_id", "media_index", "position"],
@@ -916,11 +933,16 @@ async def call_tool(
             return _ok(_call(instance, "clip.append", params))
 
         if name == "insert_clip":
-            return _ok(_call(instance, "clip.insert", {
+            params = {
                 "track_id": int(arguments["track_id"]),
                 "media_index": int(arguments["media_index"]),
                 "position": int(arguments["position"]),
-            }))
+            }
+            if "in" in arguments:
+                params["in"] = int(arguments["in"])
+            if "out" in arguments:
+                params["out"] = int(arguments["out"])
+            return _ok(_call(instance, "clip.insert", params))
 
         if name == "remove_clip":
             return _ok(_call(instance, "clip.remove",
@@ -1039,11 +1061,16 @@ async def call_tool(
 
         # ---- Advanced clip operations ----
         if name == "overwrite_clip":
-            return _ok(_call(instance, "clip.overwrite", {
+            params = {
                 "track_id": int(arguments["track_id"]),
                 "media_index": int(arguments["media_index"]),
                 "position": int(arguments["position"]),
-            }))
+            }
+            if "in" in arguments:
+                params["in"] = int(arguments["in"])
+            if "out" in arguments:
+                params["out"] = int(arguments["out"])
+            return _ok(_call(instance, "clip.overwrite", params))
 
         if name == "lift_clip":
             return _ok(_call(instance, "clip.lift",

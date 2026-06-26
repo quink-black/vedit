@@ -403,6 +403,7 @@ void AppController::project_new() {
     while (tl.track_count() > 0)
         tl.remove_track(tl.tracks()[0].id);
     project_->library().clear();
+    player_->refresh();
 }
 
 } // namespace vedit
