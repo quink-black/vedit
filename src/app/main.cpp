@@ -878,33 +878,159 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
             ImGui::Separator();
             ImGui::TextUnformatted(af->filter_name.c_str());
             for (const auto& [k, v] : af->params) {
-                std::string display;
+                std::string raw_val;
                 if (v.contains("value")) {
                     const auto& sv = v["value"];
-                    display = sv.is_string() ? sv.get<std::string>()
+                    raw_val = sv.is_string() ? sv.get<std::string>()
                                              : sv.dump();
                 } else if (v.contains("keyframes")) {
-                    display = "keyframes (" +
-                              std::to_string(v["keyframes"].size()) + ")";
+                    raw_val = "keyframes";
                 } else {
-                    display = v.dump();
+                    raw_val = v.dump();
                 }
-                char buf[256];
-                std::snprintf(buf, sizeof(buf), "%s", display.c_str());
-                ImGui::PushID(k.c_str());
-                ImGui::TextUnformatted(k.c_str());
-                ImGui::SameLine(120);
-                if (ImGui::InputText("##v", buf, sizeof(buf),
-                                     ImGuiInputTextFlags_EnterReturnsTrue)) {
-                    if (af->target_type == "clip") {
-                        app.filter_set_param(vedit::ClipId{af->target_id},
-                                             af->filter_name, k, buf);
-                    } else {
-                        app.track_filter_set_param(vedit::TrackId{af->target_id},
-                                                    af->filter_name, k, buf);
+
+                // Detect animation string: "frame=value;frame=value;..."
+                bool is_anim = raw_val.find('=') != std::string::npos &&
+                               raw_val.find(';') != std::string::npos;
+                if (is_anim) {
+                    // Parse keyframes from the MLT animation string.
+                    struct KF { int frame; std::string value; };
+                    std::vector<KF> kfs;
+                    size_t pos = 0;
+                    while (pos < raw_val.size()) {
+                        size_t eq = raw_val.find('=', pos);
+                        size_t semi = raw_val.find(';', eq);
+                        if (eq == std::string::npos) break;
+                        KF kf;
+                        kf.frame = std::atoi(raw_val.c_str() + pos);
+                        size_t vstart = eq + 1;
+                        size_t vend = (semi == std::string::npos)
+                                          ? raw_val.size() : semi;
+                        kf.value = raw_val.substr(vstart, vend - vstart);
+                        kfs.push_back(std::move(kf));
+                        if (semi == std::string::npos) break;
+                        pos = semi + 1;
                     }
+
+                    ImGui::PushID(k.c_str());
+                    ImGui::TextUnformatted(k.c_str());
+                    ImGui::SameLine(120);
+                    ImGui::TextDisabled("keyframes (%zu)", kfs.size());
+
+                    // Add keyframe at playhead.
+                    int64_t playhead = static_cast<int64_t>(app.position());
+                    if (ImGui::SmallButton("Add at playhead")) {
+                        // Find interpolated value at playhead.
+                        std::string interp_val = "0";
+                        for (size_t i = 0; i < kfs.size(); ++i) {
+                            if (kfs[i].frame == playhead) {
+                                interp_val = kfs[i].value;
+                                break;
+                            }
+                            if (kfs[i].frame > playhead) {
+                                interp_val = (i > 0) ? kfs[i - 1].value
+                                                      : kfs[i].value;
+                                break;
+                            }
+                            if (i == kfs.size() - 1)
+                                interp_val = kfs[i].value;
+                        }
+                        KF nkf;
+                        nkf.frame = static_cast<int>(playhead);
+                        nkf.value = interp_val;
+                        kfs.push_back(std::move(nkf));
+                        // Sort by frame.
+                        std::sort(kfs.begin(), kfs.end(),
+                                  [](const KF& a, const KF& b) {
+                                      return a.frame < b.frame;
+                                  });
+                        // Rebuild animation string and apply.
+                        std::string new_anim;
+                        for (const auto& kf : kfs) {
+                            if (!new_anim.empty()) new_anim += ';';
+                            new_anim += std::to_string(kf.frame);
+                            new_anim += '=';
+                            new_anim += kf.value;
+                        }
+                        if (af->target_type == "clip") {
+                            app.filter_set_param(
+                                vedit::ClipId{af->target_id},
+                                af->filter_name, k, new_anim);
+                        } else {
+                            app.track_filter_set_param(
+                                vedit::TrackId{af->target_id},
+                                af->filter_name, k, new_anim);
+                        }
+                    }
+
+                    // Keyframe table.
+                    if (ImGui::BeginTable("##kftable", 3,
+                            ImGuiTableFlags_Borders |
+                            ImGuiTableFlags_RowBg)) {
+                        ImGui::TableSetupColumn("Frame",
+                            ImGuiTableColumnFlags_WidthFixed, 60);
+                        ImGui::TableSetupColumn("Value");
+                        ImGui::TableSetupColumn("##del",
+                            ImGuiTableColumnFlags_WidthFixed, 30);
+                        ImGui::TableHeadersRow();
+
+                        for (size_t i = 0; i < kfs.size(); ++i) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::Text("%d", kfs[i].frame);
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextUnformatted(kfs[i].value.c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            char del_label[32];
+                            std::snprintf(del_label, sizeof(del_label),
+                                          "X##kfdel_%zu", i);
+                            if (ImGui::SmallButton(del_label)) {
+                                kfs.erase(kfs.begin() + i);
+                                // Rebuild and apply.
+                                std::string new_anim;
+                                for (const auto& kf : kfs) {
+                                    if (!new_anim.empty()) new_anim += ';';
+                                    new_anim += std::to_string(kf.frame);
+                                    new_anim += '=';
+                                    new_anim += kf.value;
+                                }
+                                if (new_anim.empty()) new_anim = "0";
+                                if (af->target_type == "clip") {
+                                    app.filter_set_param(
+                                        vedit::ClipId{af->target_id},
+                                        af->filter_name, k, new_anim);
+                                } else {
+                                    app.track_filter_set_param(
+                                        vedit::TrackId{af->target_id},
+                                        af->filter_name, k, new_anim);
+                                }
+                                break;
+                            }
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::PopID();
+                } else {
+                    // Static param — editable text field.
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf), "%s", raw_val.c_str());
+                    ImGui::PushID(k.c_str());
+                    ImGui::TextUnformatted(k.c_str());
+                    ImGui::SameLine(120);
+                    if (ImGui::InputText("##v", buf, sizeof(buf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        if (af->target_type == "clip") {
+                            app.filter_set_param(
+                                vedit::ClipId{af->target_id},
+                                af->filter_name, k, buf);
+                        } else {
+                            app.track_filter_set_param(
+                                vedit::TrackId{af->target_id},
+                                af->filter_name, k, buf);
+                        }
+                    }
+                    ImGui::PopID();
                 }
-                ImGui::PopID();
             }
         }
     }
