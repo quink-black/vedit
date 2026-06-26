@@ -152,6 +152,15 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
     nlohmann::json doc;
     doc["project"] = "vedit";
 
+    // Profile (canvas dimensions). Agent needs this to know the
+    // current output resolution before positioning clips.
+    doc["profile"] = nlohmann::json{
+        {"width",  project.profile().width()},
+        {"height", project.profile().height()},
+        {"fps",    project.profile().fps()},
+        {"progressive", 1}
+    };
+
     // Library: list every imported source with its probed metadata and
     // the full stream list (video / audio / subtitle). The agent uses
     // this to choose a media_index for clip.append/insert, pick which
