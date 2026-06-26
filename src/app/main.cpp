@@ -1716,9 +1716,10 @@ int main(int, char**) {
             if (gui.export_dialog_use_range) {
                 double fps = gui.project_fps;
                 ImGui::Indent();
-                ImGui::TextUnformatted("Only the range below will be exported:");
-                ImGui::SetNextItemWidth(120);
-                if (ImGui::InputScalar("In point", ImGuiDataType_S64,
+                ImGui::TextUnformatted("Export from Start to End:");
+                ImGui::Spacing();
+                ImGui::SetNextItemWidth(100);
+                if (ImGui::InputScalar("Start", ImGuiDataType_S64,
                                        &gui.export_dialog_in_point, nullptr, nullptr, "%lld")) {
                     if (gui.export_dialog_in_point < 0)
                         gui.export_dialog_in_point = 0;
@@ -1726,9 +1727,9 @@ int main(int, char**) {
                         gui.export_dialog_in_point = dur;
                 }
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s", timecode(gui.export_dialog_in_point, fps).c_str());
-                ImGui::SetNextItemWidth(120);
-                if (ImGui::InputScalar("Out point", ImGuiDataType_S64,
+                ImGui::TextDisabled("(%s)", timecode(gui.export_dialog_in_point, fps).c_str());
+                ImGui::SetNextItemWidth(100);
+                if (ImGui::InputScalar("End", ImGuiDataType_S64,
                                        &gui.export_dialog_out_point, nullptr, nullptr, "%lld")) {
                     if (gui.export_dialog_out_point < gui.export_dialog_in_point)
                         gui.export_dialog_out_point = gui.export_dialog_in_point;
@@ -1736,7 +1737,11 @@ int main(int, char**) {
                         gui.export_dialog_out_point = dur;
                 }
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s", timecode(gui.export_dialog_out_point, fps).c_str());
+                ImGui::TextDisabled("(%s)", timecode(gui.export_dialog_out_point, fps).c_str());
+                ImGui::Spacing();
+                ImGui::TextDisabled("Range: %s - %s",
+                    timecode(gui.export_dialog_in_point, fps).c_str(),
+                    timecode(gui.export_dialog_out_point, fps).c_str());
                 ImGui::Unindent();
             }
 
