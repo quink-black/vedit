@@ -190,51 +190,85 @@ struct GuiState {
 // ============================================================================
 
 static vedit::TrackId resolve_target_track(vedit::AppController& app,
-                                           GuiState& gui) {
+                                           GuiState& gui,
+                                           vedit::TrackKind kind) {
     auto& tl = app.project().timeline();
-    if (gui.active_track.valid() && tl.track(gui.active_track) != nullptr)
-        return gui.active_track;
-    if (tl.track_count() == 0) {
-        auto id = app.track_add(vedit::TrackKind::Video);
-        gui.active_track = id;
-        return id;
+
+    // If the active track matches the requested kind, use it.
+    if (gui.active_track.valid() && tl.track(gui.active_track) != nullptr) {
+        if (tl.track(gui.active_track)->kind == kind)
+            return gui.active_track;
     }
-    auto first = tl.tracks()[0].id;
-    gui.active_track = first;
-    return first;
+
+    // Find the first existing track of the right kind.
+    for (const auto& t : tl.tracks()) {
+        if (t.kind == kind) {
+            gui.active_track = t.id;
+            return t.id;
+        }
+    }
+
+    // No track of this kind exists — create one.
+    auto id = app.track_add(kind);
+    gui.active_track = id;
+    return id;
+}
+
+// Find the last audio track, or create one if none exists.
+static vedit::TrackId ensure_audio_track(vedit::AppController& app,
+                                         GuiState& gui) {
+    auto& tl = app.project().timeline();
+    vedit::TrackId last_audio{0};
+    for (const auto& t : tl.tracks()) {
+        if (t.kind == vedit::TrackKind::Audio)
+            last_audio = t.id;
+    }
+    if (last_audio.valid()) return last_audio;
+    return app.track_add(vedit::TrackKind::Audio);
 }
 
 static void add_media_to_timeline(vedit::AppController& app, GuiState& gui,
                                   int media_index) {
     if (media_index < 0) return;
     const auto* item = app.project().library().item(media_index);
+    if (!item) { gui.status = "Could not add clip."; return; }
 
-    // For media with both video and audio, automatically add an audio track
-    // alongside the video track so the user sees both and can control them.
-    if (item && item->has_video && item->has_audio) {
-        vedit::TrackId vtrack = resolve_target_track(app, gui);
+    if (item->has_video && item->has_audio) {
+        // Add video clip to a video track, then detach its audio to an
+        // audio track (reusing an existing one or creating a new one).
+        vedit::TrackId vtrack = resolve_target_track(
+            app, gui, vedit::TrackKind::Video);
         auto vid = app.clip_append(vtrack, media_index);
-        if (vid.valid()) {
-            gui.selected_clip = vid;
-            auto aid = app.clip_detach_audio(vid);
-            if (aid.valid()) {
-                gui.status = "Added " + basename_of(item->path) +
-                             " with audio track.";
-            } else {
-                gui.status = "Added " + basename_of(item->path) +
-                             " (audio detach failed).";
-            }
+        if (!vid.valid()) {
+            gui.status = "Could not add video clip.";
+            return;
+        }
+        gui.selected_clip = vid;
+
+        vedit::TrackId atrack = ensure_audio_track(app, gui);
+        auto aid = app.clip_append(atrack, media_index);
+        if (aid.valid()) {
+            // Mute audio on the video clip and video on the audio clip
+            // so they don't double-up.
+            app.clip_set_audio_enabled(vid, false);
+            app.clip_set_video_enabled(aid, false);
+            gui.status = "Added " + basename_of(item->path) +
+                         " with audio track.";
         } else {
-            gui.status = "Could not add clip.";
+            gui.status = "Added " + basename_of(item->path) +
+                         " (audio track failed).";
         }
         return;
     }
 
-    vedit::TrackId track = resolve_target_track(app, gui);
+    // Video-only or audio-only: pick the right kind of track.
+    vedit::TrackKind kind = item->has_video ? vedit::TrackKind::Video
+                                            : vedit::TrackKind::Audio;
+    vedit::TrackId track = resolve_target_track(app, gui, kind);
     auto id = app.clip_append(track, media_index);
     if (id.valid()) {
         gui.selected_clip = id;
-        gui.status = "Added " + (item ? basename_of(item->path) : "clip") +
+        gui.status = "Added " + basename_of(item->path) +
                      " to " + app.project().timeline().track(track)->name + ".";
     } else {
         gui.status = "Could not add clip.";
@@ -497,13 +531,10 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
     }
 
     // Delete the active track. Visible button because right-click
-    // context menus are not discoverable. Only enabled when there is
-    // more than one track (the last track is kept so the timeline is
-    // never empty).
+    // context menus are not discoverable.
     ImGui::SameLine();
     auto& tl_pre = app.project().timeline();
-    bool can_delete_track = tl_pre.track_count() > 1 &&
-                            gui.active_track.valid() &&
+    bool can_delete_track = gui.active_track.valid() &&
                             tl_pre.track(gui.active_track) != nullptr;
     if (!can_delete_track) ImGui::BeginDisabled();
     if (ImGui::Button("Delete track")) {
@@ -846,24 +877,20 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         }
         ImGui::EndPopup();
     }
-    if (ImGui::BeginPopup("##track_ctx")) {
-        auto& tl2 = app.project().timeline();
-        if (gui.active_track.valid() && tl2.track(gui.active_track)) {
-            ImGui::Text("Track: %s", tl2.track(gui.active_track)->name.c_str());
-            ImGui::Separator();
-            if (tl2.track_count() > 1) {
+        if (ImGui::BeginPopup("##track_ctx")) {
+            auto& tl2 = app.project().timeline();
+            if (gui.active_track.valid() && tl2.track(gui.active_track)) {
+                ImGui::Text("Track: %s", tl2.track(gui.active_track)->name.c_str());
+                ImGui::Separator();
                 if (ImGui::MenuItem("Delete track")) {
                     app.track_remove(gui.active_track);
                     gui.active_track = tl2.tracks().empty()
                         ? vedit::TrackId{0} : tl2.tracks()[0].id;
                     gui.status = "Deleted track.";
                 }
-            } else {
-                ImGui::TextDisabled("(can't delete the last track)");
             }
+            ImGui::EndPopup();
         }
-        ImGui::EndPopup();
-    }
 
     // ---- Drag: apply the in-progress operation ----
     if (mouse_down && gui.drag != DragMode::None) {
