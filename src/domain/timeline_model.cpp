@@ -520,7 +520,13 @@ bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name
         return false;
     }
 
-    int rc = mlt_service_attach(MLT_SERVICE(cut->get_producer()),
+    // Attach to the cut's parent producer -- the actual producer stored
+    // in the playlist. Attaching to the cut itself (get_producer()) is
+    // wrong: pl->get_clip() returns a temporary wrapper whose lifetime
+    // ends when we delete it; the filter would be lost. The parent is
+    // the shared root producer that actually plays back.
+    Mlt::Producer& parent = cut->parent();
+    int rc = mlt_service_attach(MLT_SERVICE(parent.get_producer()),
                                 MLT_FILTER(filter.get_filter()));
     delete cut;
     return rc == 0;
@@ -530,17 +536,19 @@ bool TimelineModel::detach_filter(ClipId clip_id, const std::string& filter_name
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
-    int idx = find_attached_filter(*cut, filter_name);
+    // Search on the parent producer, not the cut wrapper.
+    Mlt::Producer& parent = cut->parent();
+    int idx = find_attached_filter(parent, filter_name);
     if (idx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = cut->filter(idx);
+    Mlt::Filter* filter = parent.filter(idx);
     if (!filter) {
         delete cut;
         return false;
     }
-    int rc = mlt_service_detach(MLT_SERVICE(cut->get_producer()),
+    int rc = mlt_service_detach(MLT_SERVICE(parent.get_producer()),
                                 MLT_FILTER(filter->get_filter()));
     delete filter;
     delete cut;
@@ -554,12 +562,13 @@ bool TimelineModel::set_filter_param(ClipId clip_id,
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
-    int idx = find_attached_filter(*cut, filter_name);
+    Mlt::Producer& parent = cut->parent();
+    int idx = find_attached_filter(parent, filter_name);
     if (idx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = cut->filter(idx);
+    Mlt::Filter* filter = parent.filter(idx);
     if (!filter) {
         delete cut;
         return false;
@@ -576,12 +585,13 @@ std::string TimelineModel::get_filter_param(ClipId clip_id,
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return "";
 
-    int idx = find_attached_filter(*cut, filter_name);
+    Mlt::Producer& parent = cut->parent();
+    int idx = find_attached_filter(parent, filter_name);
     if (idx < 0) {
         delete cut;
         return "";
     }
-    Mlt::Filter* filter = cut->filter(idx);
+    Mlt::Filter* filter = parent.filter(idx);
     if (!filter) {
         delete cut;
         return "";
