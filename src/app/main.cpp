@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -803,6 +804,24 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
         return;
     }
 
+    // Determine whether the active target is video, audio, or both.
+    // A clip inherits its media type; a track is both unless all its
+    // clips are the same type.
+    bool target_is_video = true;
+    bool target_is_audio = true;
+    if (gui.selected_clip.valid()) {
+        const auto* ci = app.project().timeline().clip(gui.selected_clip);
+        if (ci) {
+            const auto* item = app.project().library().item(ci->media_index);
+            if (item) {
+                target_is_video = item->has_video;
+                target_is_audio = item->has_audio;
+            }
+        }
+    }
+    // For tracks, allow both video and audio filters.
+    // Individual clip type filtering is only for clip-level filters.
+
     // Collect attached filters from state.
     auto attached = app.project().timeline().attached_filters();
     std::vector<const vedit::TimelineModel::AttachedFilterInfo*> visible;
@@ -817,74 +836,130 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
         if (match) visible.push_back(&af);
     }
 
+    // --- Active filters ---
     if (visible.empty()) {
-        ImGui::TextDisabled("No filters on this clip/track.");
+        ImGui::TextDisabled("No filters.");
     } else {
-        for (const auto* af : visible) {
+        ImGui::TextUnformatted("Active:");
+        static int selected_filter_idx = -1;
+        for (size_t i = 0; i < visible.size(); ++i) {
+            const auto* af = visible[i];
             char label[128];
-            std::snprintf(label, sizeof(label), "%s##%s_%s_%lld",
-                          af->filter_name.c_str(),
-                          af->target_type.c_str(),
-                          af->filter_name.c_str(),
-                          (long long)af->target_id);
-            if (ImGui::TreeNode(label)) {
-                for (const auto& [k, v] : af->params) {
-                    char buf[256];
-                    std::snprintf(buf, sizeof(buf), "%s", v.c_str());
-                    ImGui::TextUnformatted(k.c_str());
-                    ImGui::SameLine(120);
-                    char input_id[300];
-                    std::snprintf(input_id, sizeof(input_id),
-                                  "##fp_%s_%lld_%s",
-                                  af->filter_name.c_str(),
-                                  (long long)af->target_id, k.c_str());
-                    if (ImGui::InputText(input_id, buf, sizeof(buf),
-                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        if (af->target_type == "clip") {
-                            app.filter_set_param(
-                                vedit::ClipId{af->target_id},
-                                af->filter_name, k, buf);
-                        } else {
-                            app.track_filter_set_param(
-                                vedit::TrackId{af->target_id},
-                                af->filter_name, k, buf);
-                        }
-                    }
+            std::snprintf(label, sizeof(label), "%s##act_%zu", af->filter_name.c_str(), i);
+            bool sel = (static_cast<int>(i) == selected_filter_idx);
+            if (ImGui::Selectable(label, &sel)) {
+                selected_filter_idx = static_cast<int>(i);
+            }
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
+            char xbtn[64];
+            std::snprintf(xbtn, sizeof(xbtn), "X##rm_%zu", i);
+            if (ImGui::SmallButton(xbtn)) {
+                if (af->target_type == "clip") {
+                    app.filter_remove(vedit::ClipId{af->target_id}, af->filter_name);
+                } else {
+                    app.track_filter_remove(vedit::TrackId{af->target_id}, af->filter_name);
                 }
-                if (ImGui::Button("Remove")) {
+                selected_filter_idx = -1;
+            }
+        }
+
+        // Show parameters for the selected filter.
+        if (selected_filter_idx >= 0 &&
+            selected_filter_idx < static_cast<int>(visible.size())) {
+            const auto* af = visible[selected_filter_idx];
+            ImGui::Separator();
+            ImGui::TextUnformatted(af->filter_name.c_str());
+            for (const auto& [k, v] : af->params) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "%s", v.c_str());
+                ImGui::PushID(k.c_str());
+                ImGui::TextUnformatted(k.c_str());
+                ImGui::SameLine(120);
+                if (ImGui::InputText("##v", buf, sizeof(buf),
+                                     ImGuiInputTextFlags_EnterReturnsTrue)) {
                     if (af->target_type == "clip") {
-                        app.filter_remove(
-                            vedit::ClipId{af->target_id}, af->filter_name);
+                        app.filter_set_param(vedit::ClipId{af->target_id},
+                                             af->filter_name, k, buf);
                     } else {
-                        app.track_filter_remove(
-                            vedit::TrackId{af->target_id}, af->filter_name);
+                        app.track_filter_set_param(vedit::TrackId{af->target_id},
+                                                    af->filter_name, k, buf);
                     }
                 }
-                ImGui::TreePop();
+                ImGui::PopID();
             }
         }
     }
 
-    // Add filter combo.
+    // --- Add filter ---
     ImGui::Separator();
-    ImGui::TextUnformatted("Add filter:");
-    static int add_filter_idx = 0;
+    ImGui::TextUnformatted("Add:");
+
+    // Build a filtered list: only show compatible filters.
     const auto& catalog = app.filter_catalog().filters();
-    if (!catalog.empty()) {
-        const char* preview = catalog[add_filter_idx % catalog.size()].id.c_str();
+    struct Candidate {
+        size_t index;
+        const char* label;
+    };
+    std::vector<Candidate> candidates;
+    static char filter_search[64] = "";
+    ImGui::PushItemWidth(-1);
+    ImGui::InputTextWithHint("##fsearch", "Search filters...",
+                             filter_search, sizeof(filter_search));
+    ImGui::PopItemWidth();
+
+    for (size_t i = 0; i < catalog.size(); ++i) {
+        const auto& f = catalog[i];
+        // Only show compatible filters for clip targets.
+        if (gui.selected_clip.valid()) {
+            if (f.is_audio && !target_is_audio) continue;
+            if (f.is_video && !target_is_video) continue;
+        }
+        // Filter by search text.
+        if (filter_search[0]) {
+            std::string lower_id = f.id;
+            std::string lower_title = f.title;
+            std::string lower_desc = f.description;
+            std::transform(lower_id.begin(), lower_id.end(), lower_id.begin(), ::tolower);
+            std::transform(lower_title.begin(), lower_title.end(), lower_title.begin(), ::tolower);
+            std::transform(lower_desc.begin(), lower_desc.end(), lower_desc.begin(), ::tolower);
+            std::string q(filter_search);
+            std::transform(q.begin(), q.end(), q.begin(), ::tolower);
+            if (lower_id.find(q) == std::string::npos &&
+                lower_title.find(q) == std::string::npos &&
+                lower_desc.find(q) == std::string::npos) continue;
+        }
+        candidates.push_back({i, f.id.c_str()});
+    }
+
+    static int add_filter_idx = 0;
+    if (candidates.empty()) {
+        ImGui::TextDisabled("No matching filters.");
+    } else {
+        // Clamp add_filter_idx to valid range.
+        if (add_filter_idx >= static_cast<int>(candidates.size()))
+            add_filter_idx = 0;
+
+        const char* preview = candidates[add_filter_idx].label;
         if (ImGui::BeginCombo("##addfilter", preview)) {
-            for (size_t i = 0; i < catalog.size(); ++i) {
+            for (size_t i = 0; i < candidates.size(); ++i) {
                 bool sel = (static_cast<int>(i) == add_filter_idx);
-                if (ImGui::Selectable(catalog[i].id.c_str(), sel)) {
+                const auto& f = catalog[candidates[i].index];
+                char item_label[256];
+                std::snprintf(item_label, sizeof(item_label), "%s##add_%zu", f.id.c_str(), i);
+                if (ImGui::Selectable(item_label, sel)) {
                     add_filter_idx = static_cast<int>(i);
                 }
                 if (sel) ImGui::SetItemDefaultFocus();
+                // Tooltip with description.
+                if (ImGui::IsItemHovered() && !f.description.empty()) {
+                    ImGui::SetTooltip("%s", f.description.c_str());
+                }
             }
             ImGui::EndCombo();
         }
         ImGui::SameLine();
         if (ImGui::Button("Add")) {
-            const auto& fid = catalog[add_filter_idx % catalog.size()].id;
+            const auto& fid = catalog[candidates[add_filter_idx].index].id;
             if (gui.selected_clip.valid()) {
                 app.filter_add(gui.selected_clip, fid);
             } else if (gui.active_track.valid()) {
