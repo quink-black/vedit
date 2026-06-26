@@ -1299,10 +1299,15 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
     }
 
     // --- Layout ---
-    // Composite geometry editor (video tracks only, not track 0).
+    // Composite geometry editor — only meaningful for video tracks that
+    // have a composite transition (i.e. the 2nd+ consecutive video track).
+    // The first video track is the background and has no composite, so
+    // the sliders would be non-functional; hide the section entirely.
     if (gui.active_track.valid()) {
-        const auto* trk = app.project().timeline().track(gui.active_track);
-        if (trk && trk->kind == vedit::TrackKind::Video) {
+        double gx, gy, gw, gh;
+        bool has_composite = app.composite_geometry_get(
+            gui.active_track, gx, gy, gw, gh);
+        if (has_composite) {
             ImGui::Separator();
             if (ImGui::CollapsingHeader("Layout")) {
                 ImGui::TextDisabled(
@@ -1313,17 +1318,10 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
                 static vedit::TrackId geo_track{static_cast<uint32_t>(-1)};
                 if (geo_track != gui.active_track) {
                     geo_track = gui.active_track;
-                    double gx, gy, gw, gh;
-                    if (app.composite_geometry_get(
-                            gui.active_track, gx, gy, gw, gh)) {
-                        geo_x = static_cast<float>(gx);
-                        geo_y = static_cast<float>(gy);
-                        geo_w = static_cast<float>(gw);
-                        geo_h = static_cast<float>(gh);
-                    } else {
-                        geo_x = 0; geo_y = 0;
-                        geo_w = 100; geo_h = 100;
-                    }
+                    geo_x = static_cast<float>(gx);
+                    geo_y = static_cast<float>(gy);
+                    geo_w = static_cast<float>(gw);
+                    geo_h = static_cast<float>(gh);
                 }
                 if (ImGui::SliderFloat("X %", &geo_x, 0, 100, "%.0f")) {
                     app.composite_geometry_set(gui.active_track,
