@@ -850,7 +850,12 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
             char label[128];
             std::snprintf(label, sizeof(label), "%s##act_%zu", af->filter_name.c_str(), i);
             bool sel = (static_cast<int>(i) == selected_filter_idx);
-            if (ImGui::Selectable(label, &sel)) {
+            // Constrain Selectable width to text size so the X button
+            // on the same line can receive clicks.
+            ImVec2 label_size = ImGui::CalcTextSize(af->filter_name.c_str());
+            float sel_w = label_size.x + ImGui::GetStyle().FramePadding.x * 2;
+            if (ImGui::Selectable(label, &sel, ImGuiSelectableFlags_None,
+                                  ImVec2(sel_w, 0))) {
                 selected_filter_idx = static_cast<int>(i);
             }
             ImGui::SameLine();
