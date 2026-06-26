@@ -764,6 +764,8 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         else if (gui.drag == DragMode::TrimRight) gui.status = "Trimmed clip's right edge.";
         gui.drag = DragMode::None;
         gui.drag_clip = vedit::ClipId{0};
+        // Force auto-fit after trim/move so zoom adjusts to the new content.
+        gui.last_fit_duration = -1;
     }
 
     ImGui::EndChild();
