@@ -75,20 +75,37 @@ function(vedit_build_mlt)
             -DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET})
     endif()
 
-    ExternalProject_Add(mlt_external
-        GIT_REPOSITORY https://github.com/mltframework/mlt.git
-        GIT_TAG        v7.40.0
-        GIT_SHALLOW    TRUE
-        GIT_SUBMODULES ""     # skip glaxnimate (MOD_GLAXNIMATE_QT6=OFF)
-        SOURCE_DIR     "${MLT_PREFIX}/src"
-        BINARY_DIR     "${MLT_PREFIX}/build"
-        INSTALL_DIR    "${MLT_INSTALL}"
-        CMAKE_GENERATOR "${CMAKE_GENERATOR}"
-        CMAKE_ARGS      ${MLT_CMAKE_ARGS}
-        BUILD_BYPRODUCTS
-            "${MLT_INSTALL}/lib/mlt-7.lib"
-            "${MLT_INSTALL}/lib/mlt++-7.lib"
-    )
+    # Only build MLT if it is not already installed. After the first
+    # build incremental reconfigures skip the ExternalProject entirely,
+    # avoiding the git-update + cmake-configure overhead (~10 s per
+    # no-op build).
+    set(_mlt_installed TRUE)
+    foreach(_lib "lib/mlt-7.lib" "lib/mlt++-7.lib"
+                 "mlt-7.dll" "mlt++-7.dll")
+        if(NOT EXISTS "${MLT_INSTALL}/${_lib}")
+            set(_mlt_installed FALSE)
+            break()
+        endif()
+    endforeach()
+
+    if(NOT _mlt_installed)
+        ExternalProject_Add(mlt_external
+            GIT_REPOSITORY https://github.com/mltframework/mlt.git
+            GIT_TAG        v7.40.0
+            GIT_SHALLOW    TRUE
+            GIT_SUBMODULES ""     # skip glaxnimate (MOD_GLAXNIMATE_QT6=OFF)
+            SOURCE_DIR     "${MLT_PREFIX}/src"
+            BINARY_DIR     "${MLT_PREFIX}/build"
+            INSTALL_DIR    "${MLT_INSTALL}"
+            CMAKE_GENERATOR "${CMAKE_GENERATOR}"
+            CMAKE_ARGS      ${MLT_CMAKE_ARGS}
+            BUILD_BYPRODUCTS
+                "${MLT_INSTALL}/lib/mlt-7.lib"
+                "${MLT_INSTALL}/lib/mlt++-7.lib"
+        )
+    else()
+        message(STATUS "MLT already installed -- skipping ExternalProject")
+    endif()
 
     # Create IMPORTED targets pointing at the MLT install prefix.
     # ExternalProject_Add runs at build time, not configure time, so

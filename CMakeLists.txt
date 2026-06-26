@@ -144,8 +144,12 @@ add_subdirectory(src/app)
 # so vedit_core must not link until mlt_external has built and installed.
 # VEDIT_MLT_INSTALL_DIR lets mlt_runtime.cpp set MLT_REPOSITORY/MLT_DATA
 # before Factory::init() so MLT finds its modules and presets.
+# When MLT is already installed the ExternalProject target is not created;
+# guard the dependency so incremental configures do not fail.
 if(WIN32 AND MSVC)
-    add_dependencies(vedit_core mlt_external)
+    if(TARGET mlt_external)
+        add_dependencies(vedit_core mlt_external)
+    endif()
     target_compile_definitions(vedit_core PRIVATE
         VEDIT_MLT_INSTALL_DIR="${VEDIT_MLT_INSTALL_DIR}")
 endif()
