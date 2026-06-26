@@ -845,6 +845,7 @@ bool TimelineModel::set_filter_param_keyframes(
                 int n = mlt_animation_key_count(anim);
                 for (int j = 0; j < n; ++j) {
                     mlt_animation_item_s item;
+                    item.property = mlt_property_init();
                     if (mlt_animation_key_get(anim, &item, j) == 0 &&
                         item.frame == target_frame) {
                         mlt_animation_key_set_type(anim, j,
@@ -852,6 +853,7 @@ bool TimelineModel::set_filter_param_keyframes(
                                 kf["type"].get<std::string>()));
                         break;
                     }
+                    mlt_property_close(item.property);
                 }
                 // Do NOT call mlt_animation_close — borrowed pointer.
             }
@@ -892,6 +894,7 @@ nlohmann::json TimelineModel::get_filter_param_keyframes(
             nlohmann::json kfs = nlohmann::json::array();
             int n = mlt_animation_key_count(anim);
             mlt_animation_item_s item;
+            item.property = mlt_property_init();
             for (int i = 0; i < n; ++i) {
                 if (mlt_animation_key_get(anim, &item, i) == 0) {
                     nlohmann::json kf;
@@ -905,6 +908,7 @@ nlohmann::json TimelineModel::get_filter_param_keyframes(
             // Do NOT call mlt_animation_close — the animation is
             // owned by the mlt_properties, closing it frees memory
             // still in use (use-after-free).
+            mlt_property_close(item.property);
             delete filter;
             delete cut;
             nlohmann::json result;
@@ -1053,6 +1057,7 @@ bool TimelineModel::track_set_filter_param_keyframes(
                 int n = mlt_animation_key_count(anim);
                 for (int j = 0; j < n; ++j) {
                     mlt_animation_item_s item;
+                    item.property = mlt_property_init();
                     if (mlt_animation_key_get(anim, &item, j) == 0 &&
                         item.frame == target_frame) {
                         mlt_animation_key_set_type(anim, j,
@@ -1060,6 +1065,7 @@ bool TimelineModel::track_set_filter_param_keyframes(
                                 kf["type"].get<std::string>()));
                         break;
                     }
+                    mlt_property_close(item.property);
                 }
                 // Do NOT call mlt_animation_close — borrowed pointer.
             }
@@ -1088,6 +1094,7 @@ nlohmann::json TimelineModel::track_get_filter_param_keyframes(
         if (anim) {
             int n = mlt_animation_key_count(anim);
             mlt_animation_item_s item;
+            item.property = mlt_property_init();
             for (int i = 0; i < n; ++i) {
                 if (mlt_animation_key_get(anim, &item, i) == 0) {
                     nlohmann::json kf;
@@ -1099,6 +1106,7 @@ nlohmann::json TimelineModel::track_get_filter_param_keyframes(
                 }
             }
             // Do NOT call mlt_animation_close — borrowed pointer.
+            mlt_property_close(item.property);
         }
         delete found;
         nlohmann::json result;
@@ -1123,6 +1131,7 @@ static nlohmann::json param_value_to_json(Mlt::Properties& props,
         if (anim) {
             int n = mlt_animation_key_count(anim);
             mlt_animation_item_s item;
+            item.property = mlt_property_init();
             for (int i = 0; i < n; ++i) {
                 if (mlt_animation_key_get(anim, &item, i) == 0) {
                     nlohmann::json kf;
@@ -1135,6 +1144,7 @@ static nlohmann::json param_value_to_json(Mlt::Properties& props,
                 }
             }
             // Do NOT call mlt_animation_close — borrowed pointer.
+            mlt_property_close(item.property);
         }
         nlohmann::json result;
         result["keyframes"] = std::move(kfs);
