@@ -1033,6 +1033,10 @@ int main(int, char**) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Help")) {
+                // TextWrapped inside a menu needs a wrapping width;
+                // without one the menu defaults to 0-width and the
+                // text stacks vertically. Push a reasonable width.
+                ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 360.0f);
                 ImGui::TextWrapped(
                     "vedit — a tiny video editor.\n\n"
                     "1. File > Open video (or drag a file in) to import media.\n"
@@ -1044,6 +1048,7 @@ int main(int, char**) {
                     "Total duration = the longest track's length. Add, move, or\n"
                     "trim clips to change it; the exported video matches it.\n\n"
                     "7. File > Export video to render an MP4.");
+                ImGui::PopTextWrapPos();
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
