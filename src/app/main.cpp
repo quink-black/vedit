@@ -889,27 +889,21 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
                     raw_val = v.dump();
                 }
 
-                // Detect animation string: "frame=value;frame=value;..."
-                bool is_anim = raw_val.find('=') != std::string::npos &&
-                               raw_val.find(';') != std::string::npos;
+                // Use structured JSON from attached_filters() to detect
+                // animation instead of fragile string heuristic.
+                bool is_anim = v.contains("keyframes");
                 if (is_anim) {
-                    // Parse keyframes from the MLT animation string.
+                    // Parse keyframes from the JSON array provided by
+                    // attached_filters() / param_value_to_json().
                     struct KF { int frame; std::string value; };
                     std::vector<KF> kfs;
-                    size_t pos = 0;
-                    while (pos < raw_val.size()) {
-                        size_t eq = raw_val.find('=', pos);
-                        size_t semi = raw_val.find(';', eq);
-                        if (eq == std::string::npos) break;
+                    for (const auto& jkf : v["keyframes"]) {
                         KF kf;
-                        kf.frame = std::atoi(raw_val.c_str() + pos);
-                        size_t vstart = eq + 1;
-                        size_t vend = (semi == std::string::npos)
-                                          ? raw_val.size() : semi;
-                        kf.value = raw_val.substr(vstart, vend - vstart);
+                        kf.frame = jkf.value("frame", 0);
+                        const auto& jv = jkf["value"];
+                        kf.value = jv.is_string()
+                            ? jv.get<std::string>() : jv.dump();
                         kfs.push_back(std::move(kf));
-                        if (semi == std::string::npos) break;
-                        pos = semi + 1;
                     }
 
                     ImGui::PushID(k.c_str());

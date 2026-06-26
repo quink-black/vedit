@@ -783,6 +783,30 @@ bool TimelineModel::set_filter_param_keyframes(
     mlt_properties_set(filter->get_properties(),
                        param.c_str(), anim_str.c_str());
 
+    // Set keyframe types. Use frame-number lookup because MLT sorts
+    // keyframes internally after parsing the animation string.
+    for (const auto& kf : keyframes) {
+        if (kf.contains("type") && kf["type"] != "linear") {
+            mlt_animation anim = mlt_properties_get_animation(
+                filter->get_properties(), param.c_str());
+            if (anim) {
+                int target_frame = kf.value("frame", 0);
+                int n = mlt_animation_key_count(anim);
+                for (int j = 0; j < n; ++j) {
+                    mlt_animation_item_s item;
+                    if (mlt_animation_key_get(anim, &item, j) == 0 &&
+                        item.frame == target_frame) {
+                        mlt_animation_key_set_type(anim, j,
+                            keyframe_type_from_string(
+                                kf["type"].get<std::string>()));
+                        break;
+                    }
+                }
+                // Do NOT call mlt_animation_close — borrowed pointer.
+            }
+        }
+    }
+
     delete filter;
     delete cut;
     return true;
@@ -827,7 +851,9 @@ nlohmann::json TimelineModel::get_filter_param_keyframes(
                     kfs.push_back(std::move(kf));
                 }
             }
-            mlt_animation_close(anim);
+            // Do NOT call mlt_animation_close — the animation is
+            // owned by the mlt_properties, closing it frees memory
+            // still in use (use-after-free).
             delete filter;
             delete cut;
             nlohmann::json result;
@@ -963,15 +989,28 @@ bool TimelineModel::track_set_filter_param_keyframes(
     }
     found->set(param.c_str(), anim_str.c_str());
 
-    for (size_t i = 0; i < keyframes.size(); ++i) {
-        const auto& kf = keyframes[i];
+    // Set keyframe types. The input JSON array may not be sorted by
+    // frame, but MLT internally sorts keyframes by frame after
+    // parsing the animation string. Use frame-number lookup instead
+    // of array index to set the correct keyframe.
+    for (const auto& kf : keyframes) {
         if (kf.contains("type") && kf["type"] != "linear") {
             mlt_animation anim = mlt_properties_get_animation(
                 found->get_properties(), param.c_str());
             if (anim) {
-                mlt_animation_key_set_type(anim, static_cast<int>(i),
-                    keyframe_type_from_string(kf["type"].get<std::string>()));
-                mlt_animation_close(anim);
+                int target_frame = kf.value("frame", 0);
+                int n = mlt_animation_key_count(anim);
+                for (int j = 0; j < n; ++j) {
+                    mlt_animation_item_s item;
+                    if (mlt_animation_key_get(anim, &item, j) == 0 &&
+                        item.frame == target_frame) {
+                        mlt_animation_key_set_type(anim, j,
+                            keyframe_type_from_string(
+                                kf["type"].get<std::string>()));
+                        break;
+                    }
+                }
+                // Do NOT call mlt_animation_close — borrowed pointer.
             }
         }
     }
@@ -1008,7 +1047,7 @@ nlohmann::json TimelineModel::track_get_filter_param_keyframes(
                     kfs.push_back(std::move(kf));
                 }
             }
-            mlt_animation_close(anim);
+            // Do NOT call mlt_animation_close — borrowed pointer.
         }
         delete found;
         nlohmann::json result;
@@ -1044,7 +1083,7 @@ static nlohmann::json param_value_to_json(Mlt::Properties& props,
                     kfs.push_back(std::move(kf));
                 }
             }
-            mlt_animation_close(anim);
+            // Do NOT call mlt_animation_close — borrowed pointer.
         }
         nlohmann::json result;
         result["keyframes"] = std::move(kfs);
