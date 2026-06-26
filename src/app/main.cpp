@@ -124,9 +124,9 @@ struct GuiState {
     vedit::TrackId active_track{0};
     std::string status = "Open a video to begin (File > Open).";
     double project_fps = 25.0;
-    float zoom = 8.0f;  // pixels per frame on the timeline
-    bool zoom_auto = true;  // re-fit zoom to the panel until the user touches it
-    int64_t last_fit_duration = -1;  // duration when we last auto-fit
+    float zoom = 8.0f;
+    bool zoom_auto = true;
+    int64_t last_fit_duration = -1;
 
     DragMode drag = DragMode::None;
     vedit::ClipId drag_clip{0};
@@ -136,9 +136,14 @@ struct GuiState {
     int64_t drag_orig_start = 0;
     int64_t drag_source_len = 0;  // source clip length, for trim clamping
 
-    // Async export job id (0 = none). Set by File > Export video;
-    // polled each frame so the status bar reflects progress.
+    // Async export job id (0 = none).
     int64_t export_job_id = 0;
+
+    // Profile settings dialog.
+    bool show_profile_dialog = false;
+    int profile_dialog_w = 1920;
+    int profile_dialog_h = 1080;
+    float profile_dialog_fps = 25.0f;
 };
 
 // ============================================================================
@@ -1047,6 +1052,13 @@ int main(int, char**) {
                         gui.status = "Nothing to export — add a clip first.";
                     }
                 }
+                if (ImGui::MenuItem("Project settings...")) {
+                    auto& p = app.profile();
+                    gui.profile_dialog_w = p.width();
+                    gui.profile_dialog_h = p.height();
+                    gui.profile_dialog_fps = static_cast<float>(p.fps());
+                    gui.show_profile_dialog = true;
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Quit")) running = false;
                 ImGui::EndMenu();
@@ -1071,6 +1083,39 @@ int main(int, char**) {
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
+        }
+
+        // ---- Project settings dialog ----
+        if (gui.show_profile_dialog) {
+            ImGui::OpenPopup("Project Settings");
+            gui.show_profile_dialog = false;
+        }
+        if (ImGui::BeginPopupModal("Project Settings", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Canvas resolution and framerate.");
+            ImGui::Separator();
+            ImGui::InputInt("Width", &gui.profile_dialog_w);
+            ImGui::InputInt("Height", &gui.profile_dialog_h);
+            ImGui::InputFloat("FPS", &gui.profile_dialog_fps);
+            ImGui::Separator();
+            if (ImGui::Button("Apply", ImVec2(120, 0))) {
+                if (gui.profile_dialog_w > 0 && gui.profile_dialog_h > 0 &&
+                    gui.profile_dialog_fps > 0) {
+                    app.profile_set(gui.profile_dialog_w,
+                                    gui.profile_dialog_h,
+                                    gui.profile_dialog_fps);
+                    gui.status = "Profile set to " +
+                                 std::to_string(gui.profile_dialog_w) + "x" +
+                                 std::to_string(gui.profile_dialog_h) + " @ " +
+                                 std::to_string(gui.profile_dialog_fps) + "fps";
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         float full_w = ImGui::GetContentRegionAvail().x;
@@ -1183,6 +1228,38 @@ int main(int, char**) {
                     }
                 }
             }
+
+            // ---- Composite geometry editor (per-track canvas position) ----
+            // Shown when a video track (not track 0) is selected.
+            if (gui.active_track.valid()) {
+                const auto* trk = app.project().timeline().track(gui.active_track);
+                if (trk && trk->kind == vedit::TrackKind::Video) {
+                    int tidx = -1;
+                    auto tracks = app.project().timeline().tracks();
+                    for (size_t i = 0; i < tracks.size(); ++i) {
+                        if (tracks[i].id == gui.active_track) { tidx = static_cast<int>(i); break; }
+                    }
+                    if (tidx > 0) {
+                        ImGui::Separator();
+                        ImGui::TextUnformatted("Composite Geometry");
+                        ImGui::TextDisabled("x, y, w, h as %% of canvas");
+                        static float geo_x = 0, geo_y = 0, geo_w = 100, geo_h = 100;
+                        if (ImGui::SliderFloat("X %", &geo_x, 0, 100, "%.0f")) {
+                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
+                        }
+                        if (ImGui::SliderFloat("Y %", &geo_y, 0, 100, "%.0f")) {
+                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
+                        }
+                        if (ImGui::SliderFloat("W %", &geo_w, 0, 100, "%.0f")) {
+                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
+                        }
+                        if (ImGui::SliderFloat("H %", &geo_h, 0, 100, "%.0f")) {
+                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
+                        }
+                    }
+                }
+            }
+
             ImGui::EndChild();
         }
 
