@@ -202,20 +202,15 @@ int64_t AppController::position() const {
 
 // --- export (async) ---
 
-int64_t AppController::export_start(const std::string& output_path) {
+int64_t AppController::export_start(const std::string& output_path,
+                                     const nlohmann::json& params,
+                                     int64_t in_point, int64_t out_point) {
     if (output_path.empty()) return 0;
-    // Pause preview so the worker has exclusive access to the producer.
-    // MLT producers are not thread-safe; running export and preview
-    // simultaneously on the same tractor corrupts state.
     pause();
 
     auto job = std::make_shared<ExportService::ExportJob>();
     job->output_path = output_path;
 
-    // Capture by value: producer/profile live on project_ (owned by
-    // this AppController, which outlives the job because we hold the
-    // shared_ptr in export_jobs_). The worker reads cancel_requested
-    // in its progress callback.
     Mlt::Producer* producer = project_->producer();
     Mlt::Profile* profile = &project_->profile();
     if (!producer || !profile) return 0;
@@ -228,31 +223,32 @@ int64_t AppController::export_start(const std::string& output_path) {
             }
         };
 
+    ExportService::CancelFn on_cancel =
+        [job_weak]() -> bool {
+            if (auto j = job_weak.lock()) {
+                return j->cancel_requested.load();
+            }
+            return true;
+        };
+
     int64_t job_id = next_export_job_id_++;
     export_jobs_[job_id] = job;
 
-    // The worker lives on job->worker, joined by ExportJob's
-    // destructor (which runs when the last shared_ptr drops — either
-    // here in AppController's destructor or after an explicit clear).
-    // This guarantees the producer/profile the worker touches stay
-    // alive for the duration of the encode: AppController owns the
-    // project_, and export_jobs_ holds the job shared_ptr, so neither
-    // can be destroyed while the worker runs.
     job->worker = std::thread([job, producer, profile, output_path,
-                               on_progress = std::move(on_progress)]() mutable {
+                               on_progress = std::move(on_progress),
+                               on_cancel = std::move(on_cancel),
+                               params, in_point, out_point]() mutable {
         ExportService svc;
         bool ok = false;
         try {
             ok = svc.render(*producer, *profile, output_path,
-                            std::move(on_progress));
+                            std::move(on_progress), params,
+                            in_point, out_point,
+                            std::move(on_cancel));
         } catch (const std::exception& ex) {
             std::lock_guard<std::mutex> lk(job->mu);
             job->error = ex.what();
         }
-        // Cancel signal is best-effort: MLT's run() blocks until
-        // terminate_on_pause fires, so a long encode can't be
-        // interrupted mid-stream. We still record the requested state
-        // so the caller knows cancellation was attempted.
         if (job->cancel_requested.load()) {
             job->state.store(ExportService::JobState::Cancelled);
         } else if (ok) {

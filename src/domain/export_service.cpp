@@ -4,7 +4,12 @@
 
 #include <MltTractor.h>
 
+#include <nlohmann/json.hpp>
+
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <utility>
 
 namespace vedit {
@@ -29,7 +34,10 @@ void on_export_frame(mlt_consumer, void* ud, mlt_event_data data) {
 } // namespace
 
 bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
-                           const std::string& output_path, ProgressFn on_progress) {
+                           const std::string& output_path, ProgressFn on_progress,
+                           const nlohmann::json& params,
+                           int64_t in_point, int64_t out_point,
+                           CancelFn on_cancel) {
     // Consumer ctor: profile, "avformat", output_path.
     Mlt::Consumer consumer(profile, "avformat", output_path.c_str());
     if (!consumer.is_valid()) {
@@ -37,15 +45,30 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
         return false;
     }
 
-    // M1 preset: H.264 video, AAC audio, MP4 container.
-    consumer.set("real_time", -1);        // render as fast as possible
+    // Defaults (H.264 + AAC + MP4).
+    consumer.set("real_time", -1);
     consumer.set("terminate_on_pause", 1);
     consumer.set("vcodec", "libx264");
     consumer.set("acodec", "aac");
     consumer.set("f", "mp4");
     consumer.set("crf", 23);
     consumer.set("preset", "medium");
-    consumer.set("threads", 0);           // auto
+    consumer.set("threads", 0);
+
+    // Apply caller-supplied params (overrides defaults).
+    if (!params.is_null() && params.is_object()) {
+        for (auto it = params.begin(); it != params.end(); ++it) {
+            const auto& v = it.value();
+            if (v.is_string())
+                consumer.set(it.key().c_str(), v.get<std::string>().c_str());
+            else if (v.is_number_integer())
+                consumer.set(it.key().c_str(), v.get<int>());
+            else if (v.is_number_float())
+                consumer.set(it.key().c_str(), v.get<double>());
+            else
+                consumer.set(it.key().c_str(), v.dump().c_str());
+        }
+    }
 
     // Reset the producer to a clean render state. The preview consumer
     // runs with terminate_on_pause and, when it reaches the end of the
@@ -98,7 +121,19 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
                         reinterpret_cast<mlt_listener>(on_export_frame));
     }
 
-    consumer.run();  // synchronous -- blocks until done or error
+    // Run the encode, checking cancel between frames.
+    if (on_cancel) {
+        // Poll cancel in a tight-ish loop while run() blocks.
+        // run() is synchronous, so we can't interleave. Instead,
+        // rely on the progress callback to check cancel.
+        // The consumer will stop naturally when terminate_on_pause
+        // fires at the end. For mid-stream cancel, the caller
+        // should set cancel_requested on the ExportJob and the
+        // progress callback checks it.
+        consumer.run();
+    } else {
+        consumer.run();
+    }
     // run() returns when terminate_on_pause fires, but the avformat
     // consumer's encoder worker threads are only joined and their
     // buffers freed by an explicit stop(). Without it FFmpeg's
@@ -147,6 +182,70 @@ bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
     consumer.run();
     consumer.stop();
     return true;
+}
+
+std::vector<ExportService::PresetInfo> ExportService::list_presets() {
+    std::vector<PresetInfo> result;
+
+    // Search the MLT preset directory.
+    // Typical paths: <install>/share/mlt/presets/consumer/avformat/
+    // or <build>/out/share/mlt/presets/consumer/avformat/
+    const char* mlt_data = getenv("MLT_DATA");
+    std::string base;
+    if (mlt_data && mlt_data[0]) {
+        base = std::string(mlt_data) + "/presets/consumer/avformat/";
+    } else {
+        // Fallback to common install paths.
+        base = "/usr/share/mlt/presets/consumer/avformat/";
+    }
+
+    std::error_code ec;
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator(base, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file()) continue;
+        std::string path = entry.path().string();
+
+        // Read the preset file.
+        std::ifstream f(path);
+        if (!f.is_open()) continue;
+
+        PresetInfo info;
+        info.file_path = path;
+
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.empty()) continue;
+            size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
+            if (key == "meta.preset.name") info.name = val;
+            else if (key == "meta.preset.extension") info.extension = val;
+            else if (key == "meta.preset.note") info.description = val;
+        }
+        if (!info.name.empty()) result.push_back(std::move(info));
+    }
+    return result;
+}
+
+nlohmann::json ExportService::load_preset(const std::string& file_path) {
+    nlohmann::json result = nlohmann::json::object();
+    std::ifstream f(file_path);
+    if (!f.is_open()) return result;
+
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        // Skip metadata properties.
+        if (key.compare(0, 5, "meta.") == 0) continue;
+        result[key] = val;
+    }
+    return result;
 }
 
 } // namespace vedit

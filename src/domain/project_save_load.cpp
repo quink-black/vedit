@@ -1,5 +1,6 @@
 #include "project_save_load.h"
 
+#include "export_service.h"
 #include "filter_catalog.h"
 #include "media_library.h"
 #include "project_model.h"
@@ -283,6 +284,20 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
         {"available", std::move(available)},
         {"attached",  std::move(attached)}
     };
+
+    // Export presets.
+    {
+        auto presets = ExportService::list_presets();
+        nlohmann::json export_presets = nlohmann::json::array();
+        for (const auto& p : presets) {
+            nlohmann::json pj;
+            pj["name"] = p.name;
+            pj["extension"] = p.extension;
+            pj["description"] = p.description;
+            export_presets.push_back(std::move(pj));
+        }
+        doc["export_presets"] = std::move(export_presets);
+    }
 
     return doc.dump();
 }

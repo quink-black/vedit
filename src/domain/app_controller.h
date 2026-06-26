@@ -134,7 +134,9 @@ public:
     // worker thread; the caller polls export_poll(job_id) for state.
     // The preview consumer is paused first so the worker has exclusive
     // access to the producer.
-    int64_t export_start(const std::string& output_path);
+    int64_t export_start(const std::string& output_path,
+                         const nlohmann::json& params = nullptr,
+                         int64_t in_point = -1, int64_t out_point = -1);
 
     // Poll an export job. `state` is one of "running" / "done" /
     // "failed" / "cancelled"; `fraction` in [0,1]. Returns false if

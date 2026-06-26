@@ -556,7 +556,10 @@ void register_methods(Dispatcher& d, AppController& app) {
     d.register_method("export.start", [&](const nlohmann::json& params) {
         std::string path = params.value("path", "");
         if (path.empty()) throw RpcException(ErrorCode::InvalidParams, "missing path");
-        int64_t job_id = app.export_start(path);
+        nlohmann::json codec_params = params.value("params", nlohmann::json::object());
+        int64_t in = params.value("in", -1LL);
+        int64_t out = params.value("out", -1LL);
+        int64_t job_id = app.export_start(path, codec_params, in, out);
         if (job_id == 0) throw RpcException(ErrorCode::ApplicationError, "export start failed");
         return nlohmann::json{{"job_id", job_id}};
     });
@@ -580,6 +583,27 @@ void register_methods(Dispatcher& d, AppController& app) {
         if (!app.export_cancel(job_id))
             throw RpcException(ErrorCode::ApplicationError, "cancel failed (unknown id or not running)");
         return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("export.list_presets", [&](const nlohmann::json&) {
+        auto presets = ExportService::list_presets();
+        nlohmann::json result = nlohmann::json::array();
+        for (const auto& p : presets) {
+            nlohmann::json pj;
+            pj["name"] = p.name;
+            pj["extension"] = p.extension;
+            pj["description"] = p.description;
+            pj["file"] = p.file_path;
+            result.push_back(std::move(pj));
+        }
+        return result;
+    });
+
+    d.register_method("export.load_preset", [&](const nlohmann::json& params) {
+        std::string path = params.value("file", "");
+        if (path.empty())
+            throw RpcException(ErrorCode::InvalidParams, "missing file");
+        return ExportService::load_preset(path);
     });
 }
 

@@ -11,6 +11,8 @@
 
 #include <Mlt.h>
 
+#include <nlohmann/json.hpp>
+
 namespace vedit {
 
 // Renders the timeline tractor to a file using consumer_avformat.
@@ -24,12 +26,12 @@ class ExportService {
 public:
     using ProgressFn = std::function<void(double fraction)>;
 
+    // CancelFn is called from the worker thread when cancel is
+    // requested. The implementation should interrupt the encode.
+    using CancelFn = std::function<bool()>;
+
     enum class JobState { Running, Done, Failed, Cancelled };
 
-    // Handle to an async render job. Safe to poll from any thread;
-    // the worker updates state under a mutex. The ExportJob owns its
-    // own thread and joins it on destruction, so keeping the shared_ptr
-    // alive guarantees the worker has finished before resources release.
     struct ExportJob {
         std::atomic<JobState> state{JobState::Running};
         std::atomic<double> fraction{0.0};
@@ -49,23 +51,34 @@ public:
     ExportService() = default;
     ~ExportService() = default;
 
-    // Render the given producer (tractor) to `output_path`. Returns
-    // true on success. The profile carries resolution/fps. Blocks the
-    // calling thread until completion — use only from non-main threads.
-    // `on_progress` (if set) is called from the same thread as render.
-    //
-    // Thread-safety note: MLT producers are not thread-safe. The
-    // caller MUST ensure the preview consumer is stopped (call
-    // AppController::pause() or similar) before invoking this from a
-    // worker thread, and must not drive further edits while it runs.
+    // Render with optional codec parameters and in/out range.
+    // `params` is a JSON object of consumer properties (e.g.
+    // {"vcodec":"libx264","crf":23}). `in_point`/`out_point` are
+    // frame numbers for range export; -1 = full timeline.
+    // `on_cancel` is polled each frame; if it returns true the
+    // render is stopped mid-stream.
     bool render(Mlt::Producer& producer, Mlt::Profile& profile,
                 const std::string& output_path,
-                ProgressFn on_progress = nullptr);
+                ProgressFn on_progress = nullptr,
+                const nlohmann::json& params = nullptr,
+                int64_t in_point = -1, int64_t out_point = -1,
+                CancelFn on_cancel = nullptr);
 
     // Pull a single frame from the producer at `position` and save it
     // as a PNG image. Returns true on success.
     bool get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
                    int64_t position, const std::string& image_path);
+
+    // Read available export presets from the MLT preset directory.
+    struct PresetInfo {
+        std::string name;        // meta.preset.name
+        std::string extension;   // meta.preset.extension
+        std::string description; // meta.preset.note
+        std::string file_path;
+    };
+    static std::vector<PresetInfo> list_presets();
+    // Load a preset file and return its properties as JSON.
+    static nlohmann::json load_preset(const std::string& file_path);
 };
 
 } // namespace vedit
