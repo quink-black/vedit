@@ -143,6 +143,41 @@ ClipId AppController::clip_split(ClipId id, int64_t at_timeline_position) {
     return new_id;
 }
 
+ClipId AppController::clip_overwrite(TrackId track, int media_index,
+                                      int64_t position,
+                                      int64_t in_point, int64_t out_point) {
+    auto id = project_->timeline().overwrite_clip(
+        track, media_index, position, in_point, out_point);
+    player_->refresh();
+    return id;
+}
+
+bool AppController::clip_lift(ClipId id) {
+    bool ok = project_->timeline().lift_clip(id);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::clip_change_speed(ClipId id, double speed) {
+    bool ok = project_->timeline().change_clip_speed(id, speed);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::clip_add_transition(TrackId track, int clip_index,
+                                         int length, const std::string& type) {
+    bool ok = project_->timeline().add_transition(
+        track, clip_index, length, type);
+    player_->refresh();
+    return ok;
+}
+
+ClipId AppController::clip_detach_audio(ClipId id) {
+    auto new_id = project_->timeline().detach_audio(id);
+    player_->refresh();
+    return new_id;
+}
+
 // --- transport ---
 
 bool AppController::play() {

@@ -67,6 +67,15 @@ public:
     bool clip_trim(ClipId id, int64_t new_in, int64_t new_out);
     ClipId clip_split(ClipId id, int64_t at_timeline_position);
 
+    // --- advanced editing (M4) ---
+    ClipId clip_overwrite(TrackId track, int media_index, int64_t position,
+                          int64_t in_point = -1, int64_t out_point = -1);
+    bool clip_lift(ClipId id);
+    bool clip_change_speed(ClipId id, double speed);
+    bool clip_add_transition(TrackId track, int clip_index,
+                             int length, const std::string& type = "luma");
+    ClipId clip_detach_audio(ClipId id);
+
     // --- filters (M2) ---
     const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
     bool filter_add(ClipId clip_id, const std::string& name);

@@ -397,6 +397,51 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"clip_id", new_id.value}};
     });
 
+    d.register_method("clip.overwrite", [&](const nlohmann::json& params) {
+        TrackId tid{params.value("track_id", 0LL)};
+        int mi = params.value("media_index", -1);
+        int64_t pos = params.value("position", 0LL);
+        int64_t in = params.value("in", -1LL);
+        int64_t out = params.value("out", -1LL);
+        auto id = app.clip_overwrite(tid, mi, pos, in, out);
+        if (!id.valid())
+            throw RpcException(ErrorCode::ApplicationError, "overwrite failed");
+        return nlohmann::json{{"clip_id", id.value}};
+    });
+
+    d.register_method("clip.lift", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!app.clip_lift(id))
+            throw RpcException(ErrorCode::ApplicationError, "lift failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("clip.change_speed", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        double speed = params.value("speed", 1.0);
+        if (!app.clip_change_speed(id, speed))
+            throw RpcException(ErrorCode::ApplicationError, "change_speed failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("clip.detach_audio", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        auto new_id = app.clip_detach_audio(id);
+        if (!new_id.valid())
+            throw RpcException(ErrorCode::ApplicationError, "detach_audio failed");
+        return nlohmann::json{{"clip_id", new_id.value}};
+    });
+
+    d.register_method("transition.add", [&](const nlohmann::json& params) {
+        TrackId tid{params.value("track_id", 0LL)};
+        int clip_idx = params.value("clip_index", 0);
+        int length = params.value("length", 30);
+        std::string type = params.value("type", "luma");
+        if (!app.clip_add_transition(tid, clip_idx, length, type))
+            throw RpcException(ErrorCode::ApplicationError, "transition.add failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
     // ---- player.play / player.pause / player.seek ----
     d.register_method("player.play", [&](const nlohmann::json&) {
         if (!app.play()) throw RpcException(ErrorCode::ApplicationError, "play failed");

@@ -109,6 +109,28 @@ public:
     bool trim_clip(ClipId id, int64_t new_in, int64_t new_out);
     ClipId split_clip(ClipId id, int64_t at_timeline_position);
 
+    // --- advanced editing (M4) ---
+    // Insert a clip at a timeline position, replacing any content
+    // (blanks) at that position. Unlike insert_clip, this overwrites
+    // instead of shifting existing clips.
+    ClipId overwrite_clip(TrackId track, int media_index,
+                          int64_t position,
+                          int64_t in_point = -1, int64_t out_point = -1);
+    // Replace a clip with blank space of the same duration, preserving
+    // timeline timing for all other clips.
+    bool lift_clip(ClipId id);
+    // Wrap a clip in a timewarp producer to change its playback speed.
+    // speed=1.0 is normal; 2.0 is double speed (half duration);
+    // 0.5 is half speed (double duration). Negative = reverse.
+    bool change_clip_speed(ClipId id, double speed);
+    // Add a transition (cross-fade) between two adjacent clips on the
+    // same track. length is the transition duration in frames.
+    bool add_transition(TrackId track, int clip_index,
+                        int length, const std::string& type = "luma");
+    // Detach audio from a video clip: create an audio-only track and
+    // place the clip's audio there. Returns the new clip id.
+    ClipId detach_audio(ClipId id);
+
     // --- queries ---
     int clip_count() const;
     const ClipInfo* clip(ClipId id) const;

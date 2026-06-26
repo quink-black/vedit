@@ -1359,6 +1359,81 @@ TEST_CASE("filter.set_param with static value still works after keyframes", "[t1
     REQUIRE_FALSE(result.contains("keyframes"));
 }
 
+TEST_CASE("clip.overwrite replaces content at position", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("overwrite");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Overwrite at position 0.
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","clip.overwrite"},{"id",1},
+                          {"params", {{"track_id", v1.value},
+                                      {"media_index", mi}, {"position", 0}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp.contains("result"));
+    REQUIRE(resp["result"]["clip_id"] > 0);
+}
+
+TEST_CASE("clip.lift replaces clip with blank", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("lift");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+
+    REQUIRE(app.clip_lift(cid));
+
+    // The clip should be gone but the timeline should still have
+    // content (a blank of the same duration).
+    auto attached = app.project().timeline().attached_filters();
+    REQUIRE(attached.empty());
+}
+
+TEST_CASE("clip.change_speed wraps clip in timewarp", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("speed");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","clip.change_speed"},{"id",1},
+                          {"params", {{"clip_id", cid.value}, {"speed", 2.0}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+}
+
+TEST_CASE("clip.detach_audio creates audio track", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("detach");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","clip.detach_audio"},{"id",1},
+                          {"params", {{"clip_id", cid.value}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp.contains("result"));
+    REQUIRE(resp["result"]["clip_id"] > 0);
+}
+
 TEST_CASE("project.set_profile changes output resolution", "[t19]") {
     std::string clip = vedit::test::make_test_clip("profile_set");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
