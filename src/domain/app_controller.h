@@ -88,6 +88,9 @@ public:
                                        const std::string& filter_name,
                                        const std::string& param);
 
+    // --- profile (canvas) ---
+    void profile_set(int width, int height, double fps);
+
     // --- transport ---
     bool play();
     void pause();

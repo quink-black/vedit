@@ -1302,3 +1302,44 @@ TEST_CASE("state.get reflects attached filters after add/remove", "[t18]") {
         REQUIRE(resp["result"]["filters"]["attached"].empty());
     }
 }
+
+TEST_CASE("project.set_profile changes output resolution", "[t19]") {
+    std::string clip = vedit::test::make_test_clip("profile_set");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Set profile to 320x240 @ 25fps.
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","project.set_profile"},
+                          {"id",1},
+                          {"params", {{"width", 320}, {"height", 240},
+                                      {"fps", 25.0}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Export a frame and verify resolution via ffprobe.
+    std::string png = vedit::test::unique_temp_path(
+        "vedit-test", "profile_set", ".png");
+    vedit::ExportService svc;
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 0, png));
+
+    // ffprobe the PNG dimensions.
+    std::string cmd = "ffprobe -v error -show_entries stream=width,height "
+                      "-of csv=p=0 \"" + png + "\" 2>&1";
+    std::FILE* p = popen(cmd.c_str(), "r");
+    REQUIRE(p != nullptr);
+    char buf[64];
+    std::string result;
+    while (fgets(buf, sizeof(buf), p)) result += buf;
+    pclose(p);
+    // Strip trailing newline.
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+        result.pop_back();
+    REQUIRE(result == "320,240");
+}

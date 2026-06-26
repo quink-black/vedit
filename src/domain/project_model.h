@@ -28,6 +28,11 @@ public:
     // renderer will export (T9).
     Mlt::Producer* producer() { return timeline_.get() ? timeline_->producer() : nullptr; }
 
+    // Set the output canvas resolution and framerate. Must be called
+    // before clips are placed (the profile determines the render
+    // dimensions). Width/height are pixels; fps is frames per second.
+    void set_profile(int width, int height, double fps);
+
 private:
     Mlt::Profile profile_;
     std::unique_ptr<MediaLibrary> library_;

@@ -434,6 +434,23 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
+    // ---- project.set_profile ----
+    //
+    // Set the output canvas resolution and framerate. Call before
+    // placing clips; the profile determines render dimensions. Width
+    // and height are pixels; fps is frames per second (accepts 29.97
+    // etc., rounded to rational internally).
+    d.register_method("project.set_profile", [&](const nlohmann::json& params) {
+        int width = params.value("width", 0);
+        int height = params.value("height", 0);
+        double fps = params.value("fps", 0.0);
+        if (width <= 0 || height <= 0 || fps <= 0)
+            throw RpcException(ErrorCode::InvalidParams,
+                               "width, height, and fps are required");
+        app.profile_set(width, height, fps);
+        return nlohmann::json{{"ok", true}};
+    });
+
     // ---- export.start / export.poll / export.cancel ----
     //
     // Async export. export.start kicks off a worker-thread render and

@@ -297,4 +297,8 @@ std::string AppController::track_filter_get_param(TrackId track_id,
         track_id, filter_name, param);
 }
 
+void AppController::profile_set(int width, int height, double fps) {
+    project_->set_profile(width, height, fps);
+}
+
 } // namespace vedit

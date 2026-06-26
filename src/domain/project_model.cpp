@@ -16,4 +16,24 @@ ProjectModel::ProjectModel()
 
 ProjectModel::~ProjectModel() = default;
 
+void ProjectModel::set_profile(int width, int height, double fps) {
+    if (width > 0) profile_.set_width(width);
+    if (height > 0) profile_.set_height(height);
+    profile_.set_progressive(1);
+    if (fps > 0) {
+        // Convert fps to a rational (frame_rate_num / frame_rate_den).
+        // MLT stores fps as numerator/denominator; approximate the
+        // double as a rational with den=1001 for common NTSC rates or
+        // den=1 for integer rates.
+        int den = 1;
+        double frac = fps - static_cast<int>(fps);
+        if (frac > 0.029 && frac < 0.031) {
+            // 29.97 / 59.94 / 23.976 etc. — use 1001 denominator
+            den = 1001;
+        }
+        profile_.set_frame_rate(
+            static_cast<int>(fps * den + 0.5), den);
+    }
+}
+
 } // namespace vedit
