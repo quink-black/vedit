@@ -790,6 +790,148 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
 }
 
 // ============================================================================
+// Filter panel (right sidebar, always visible)
+// ============================================================================
+
+static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
+    ImGui::TextUnformatted("Filters");
+    ImGui::Separator();
+
+    bool has_selection = gui.selected_clip.valid() || gui.active_track.valid();
+    if (!has_selection) {
+        ImGui::TextDisabled("Select a clip or track to edit filters.");
+        return;
+    }
+
+    // Collect attached filters from state.
+    auto attached = app.project().timeline().attached_filters();
+    std::vector<const vedit::TimelineModel::AttachedFilterInfo*> visible;
+    for (const auto& af : attached) {
+        bool match = false;
+        if (gui.selected_clip.valid() &&
+            af.target_type == "clip" &&
+            af.target_id == gui.selected_clip.value) match = true;
+        if (gui.active_track.valid() &&
+            af.target_type == "track" &&
+            af.target_id == gui.active_track.value) match = true;
+        if (match) visible.push_back(&af);
+    }
+
+    if (visible.empty()) {
+        ImGui::TextDisabled("No filters on this clip/track.");
+    } else {
+        for (const auto* af : visible) {
+            char label[128];
+            std::snprintf(label, sizeof(label), "%s##%s_%s_%lld",
+                          af->filter_name.c_str(),
+                          af->target_type.c_str(),
+                          af->filter_name.c_str(),
+                          (long long)af->target_id);
+            if (ImGui::TreeNode(label)) {
+                for (const auto& [k, v] : af->params) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf), "%s", v.c_str());
+                    ImGui::TextUnformatted(k.c_str());
+                    ImGui::SameLine(120);
+                    char input_id[300];
+                    std::snprintf(input_id, sizeof(input_id),
+                                  "##fp_%s_%lld_%s",
+                                  af->filter_name.c_str(),
+                                  (long long)af->target_id, k.c_str());
+                    if (ImGui::InputText(input_id, buf, sizeof(buf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        if (af->target_type == "clip") {
+                            app.filter_set_param(
+                                vedit::ClipId{af->target_id},
+                                af->filter_name, k, buf);
+                        } else {
+                            app.track_filter_set_param(
+                                vedit::TrackId{af->target_id},
+                                af->filter_name, k, buf);
+                        }
+                    }
+                }
+                if (ImGui::Button("Remove")) {
+                    if (af->target_type == "clip") {
+                        app.filter_remove(
+                            vedit::ClipId{af->target_id}, af->filter_name);
+                    } else {
+                        app.track_filter_remove(
+                            vedit::TrackId{af->target_id}, af->filter_name);
+                    }
+                }
+                ImGui::TreePop();
+            }
+        }
+    }
+
+    // Add filter combo.
+    ImGui::Separator();
+    ImGui::TextUnformatted("Add filter:");
+    static int add_filter_idx = 0;
+    const auto& catalog = app.filter_catalog().filters();
+    if (!catalog.empty()) {
+        const char* preview = catalog[add_filter_idx % catalog.size()].id.c_str();
+        if (ImGui::BeginCombo("##addfilter", preview)) {
+            for (size_t i = 0; i < catalog.size(); ++i) {
+                bool sel = (static_cast<int>(i) == add_filter_idx);
+                if (ImGui::Selectable(catalog[i].id.c_str(), sel)) {
+                    add_filter_idx = static_cast<int>(i);
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add")) {
+            const auto& fid = catalog[add_filter_idx % catalog.size()].id;
+            if (gui.selected_clip.valid()) {
+                app.filter_add(gui.selected_clip, fid);
+            } else if (gui.active_track.valid()) {
+                app.track_filter_add(gui.active_track, fid);
+            }
+        }
+    }
+
+    // Composite geometry editor (video tracks only, not track 0).
+    if (gui.active_track.valid()) {
+        const auto* trk = app.project().timeline().track(gui.active_track);
+        if (trk && trk->kind == vedit::TrackKind::Video) {
+            int tidx = -1;
+            auto tracks = app.project().timeline().tracks();
+            for (size_t i = 0; i < tracks.size(); ++i) {
+                if (tracks[i].id == gui.active_track) {
+                    tidx = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (tidx > 0) {
+                ImGui::Separator();
+                ImGui::TextUnformatted("Composite Geometry");
+                ImGui::TextDisabled("x, y, w, h as %% of canvas");
+                static float geo_x = 0, geo_y = 0, geo_w = 100, geo_h = 100;
+                if (ImGui::SliderFloat("X %", &geo_x, 0, 100, "%.0f")) {
+                    app.composite_geometry_set(gui.active_track,
+                                               geo_x, geo_y, geo_w, geo_h);
+                }
+                if (ImGui::SliderFloat("Y %", &geo_y, 0, 100, "%.0f")) {
+                    app.composite_geometry_set(gui.active_track,
+                                               geo_x, geo_y, geo_w, geo_h);
+                }
+                if (ImGui::SliderFloat("W %", &geo_w, 0, 100, "%.0f")) {
+                    app.composite_geometry_set(gui.active_track,
+                                               geo_x, geo_y, geo_w, geo_h);
+                }
+                if (ImGui::SliderFloat("H %", &geo_h, 0, 100, "%.0f")) {
+                    app.composite_geometry_set(gui.active_track,
+                                               geo_x, geo_y, geo_w, geo_h);
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
 // main
 // ============================================================================
 
@@ -1052,34 +1194,18 @@ int main(int, char**) {
                         gui.status = "Nothing to export — add a clip first.";
                     }
                 }
-                if (ImGui::MenuItem("Project settings...")) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Quit")) running = false;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Project")) {
+                if (ImGui::MenuItem("Canvas resolution...")) {
                     auto& p = app.profile();
                     gui.profile_dialog_w = p.width();
                     gui.profile_dialog_h = p.height();
                     gui.profile_dialog_fps = static_cast<float>(p.fps());
                     gui.show_profile_dialog = true;
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Quit")) running = false;
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Help")) {
-                // TextWrapped inside a menu needs a wrapping width;
-                // without one the menu defaults to 0-width and the
-                // text stacks vertically. Push a reasonable width.
-                ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 360.0f);
-                ImGui::TextWrapped(
-                    "vedit — a tiny video editor.\n\n"
-                    "1. File > Open video (or drag a file in) to import media.\n"
-                    "2. Double-click a media item to add it as a clip on the timeline.\n"
-                    "3. Drag a clip to move it; drag its edges to shorten/lengthen.\n"
-                    "4. Click the ruler (top of timeline) to scrub the preview.\n"
-                    "5. Right-click a clip or track for delete / cut actions.\n"
-                    "6. Upper video tracks overlay lower ones (like layers).\n\n"
-                    "Total duration = the longest track's length. Add, move, or\n"
-                    "trim clips to change it; the exported video matches it.\n\n"
-                    "7. File > Export video to render an MP4.");
-                ImGui::PopTextWrapPos();
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -1092,11 +1218,40 @@ int main(int, char**) {
         }
         if (ImGui::BeginPopupModal("Project Settings", nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Canvas resolution and framerate.");
+            ImGui::TextUnformatted("Canvas resolution and framerate.");
             ImGui::Separator();
-            ImGui::InputInt("Width", &gui.profile_dialog_w);
-            ImGui::InputInt("Height", &gui.profile_dialog_h);
-            ImGui::InputFloat("FPS", &gui.profile_dialog_fps);
+
+            // Raw inputs without +/- step buttons.
+            ImGui::InputInt("Width", &gui.profile_dialog_w, 0, 0,
+                            ImGuiInputTextFlags_CharsDecimal);
+            ImGui::InputInt("Height", &gui.profile_dialog_h, 0, 0,
+                            ImGuiInputTextFlags_CharsDecimal);
+            // Quick-fill resolution presets.
+            if (ImGui::Button("720p")) {
+                gui.profile_dialog_w = 1280; gui.profile_dialog_h = 720;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("1080p")) {
+                gui.profile_dialog_w = 1920; gui.profile_dialog_h = 1080;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("4K")) {
+                gui.profile_dialog_w = 3840; gui.profile_dialog_h = 2160;
+            }
+
+            ImGui::Spacing();
+
+            ImGui::InputFloat("FPS", &gui.profile_dialog_fps, 0.0f, 0.0f, "%.2f",
+                              ImGuiInputTextFlags_CharsDecimal);
+            // Quick-fill FPS presets.
+            if (ImGui::Button("24")) gui.profile_dialog_fps = 24.0f;
+            ImGui::SameLine();
+            if (ImGui::Button("25")) gui.profile_dialog_fps = 25.0f;
+            ImGui::SameLine();
+            if (ImGui::Button("30")) gui.profile_dialog_fps = 30.0f;
+            ImGui::SameLine();
+            if (ImGui::Button("60")) gui.profile_dialog_fps = 60.0f;
+
             ImGui::Separator();
             if (ImGui::Button("Apply", ImVec2(120, 0))) {
                 if (gui.profile_dialog_w > 0 && gui.profile_dialog_h > 0 &&
@@ -1144,151 +1299,16 @@ int main(int, char**) {
         draw_transport_panel(app, gui);
         ImGui::EndChild();
 
-        ImGui::BeginChild("timeline", ImVec2(0, 0), ImGuiChildFlags_Borders);
+        float tl_w = full_w * 0.74f;
+        ImGui::BeginChild("timeline", ImVec2(tl_w, 0), ImGuiChildFlags_Borders);
         draw_timeline_panel(app, gui);
         ImGui::EndChild();
 
-        // ---- Filters panel (M2) ----
-        // Shown when a clip is selected, or always visible with a
-        // track-level scope. Compact: list attached filters with inline
-        // param editing and add/remove buttons.
-        if (gui.selected_clip.valid() || gui.active_track.valid()) {
-            float filter_h = ImGui::GetFrameHeightWithSpacing() * 6.0f
-                           + ImGui::GetStyle().WindowPadding.y * 2.0f;
-            ImGui::BeginChild("filters", ImVec2(0, filter_h),
-                              ImGuiChildFlags_Borders);
-            ImGui::TextUnformatted("Filters");
-            ImGui::Separator();
+        ImGui::SameLine();
 
-            // Collect attached filters from state.
-            auto attached = app.project().timeline().attached_filters();
-            std::vector<const vedit::TimelineModel::AttachedFilterInfo*> visible;
-            for (const auto& af : attached) {
-                bool match = false;
-                if (gui.selected_clip.valid() &&
-                    af.target_type == "clip" &&
-                    af.target_id == gui.selected_clip.value) match = true;
-                if (gui.active_track.valid() &&
-                    af.target_type == "track" &&
-                    af.target_id == gui.active_track.value) match = true;
-                if (match) visible.push_back(&af);
-            }
-
-            if (visible.empty()) {
-                ImGui::TextDisabled("No filters on this clip/track.");
-            } else {
-                for (const auto* af : visible) {
-                    char label[128];
-                    std::snprintf(label, sizeof(label), "%s##%s_%s_%lld",
-                                  af->filter_name.c_str(),
-                                  af->target_type.c_str(),
-                                  af->filter_name.c_str(),
-                                  (long long)af->target_id);
-                    if (ImGui::TreeNode(label)) {
-                        // Inline param values.
-                        for (const auto& [k, v] : af->params) {
-                            char buf[256];
-                            std::snprintf(buf, sizeof(buf), "%s", v.c_str());
-                            ImGui::TextUnformatted(k.c_str());
-                            ImGui::SameLine(120);
-                            char input_id[300];
-                            std::snprintf(input_id, sizeof(input_id),
-                                          "##fp_%s_%lld_%s",
-                                          af->filter_name.c_str(),
-                                          (long long)af->target_id, k.c_str());
-                            if (ImGui::InputText(input_id, buf, sizeof(buf),
-                                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                                // Apply param change.
-                                if (af->target_type == "clip") {
-                                    app.filter_set_param(
-                                        vedit::ClipId{af->target_id},
-                                        af->filter_name, k, buf);
-                                } else {
-                                    app.track_filter_set_param(
-                                        vedit::TrackId{af->target_id},
-                                        af->filter_name, k, buf);
-                                }
-                            }
-                        }
-
-                        // Remove button.
-                        if (ImGui::Button("Remove")) {
-                            if (af->target_type == "clip") {
-                                app.filter_remove(
-                                    vedit::ClipId{af->target_id},
-                                    af->filter_name);
-                            } else {
-                                app.track_filter_remove(
-                                    vedit::TrackId{af->target_id},
-                                    af->filter_name);
-                            }
-                        }
-                        ImGui::TreePop();
-                    }
-                }
-            }
-
-            // ---- Add filter combo ----
-            ImGui::Separator();
-            ImGui::TextUnformatted("Add filter:");
-            static int add_filter_idx = 0;
-            const auto& catalog = app.filter_catalog().filters();
-            if (!catalog.empty()) {
-                const char* preview = catalog[add_filter_idx % catalog.size()].id.c_str();
-                if (ImGui::BeginCombo("##addfilter", preview)) {
-                    for (size_t i = 0; i < catalog.size(); ++i) {
-                        bool sel = (static_cast<int>(i) == add_filter_idx);
-                        if (ImGui::Selectable(catalog[i].id.c_str(), sel)) {
-                            add_filter_idx = static_cast<int>(i);
-                        }
-                        if (sel) ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Add")) {
-                    const auto& fid = catalog[add_filter_idx % catalog.size()].id;
-                    if (gui.selected_clip.valid()) {
-                        app.filter_add(gui.selected_clip, fid);
-                    } else if (gui.active_track.valid()) {
-                        app.track_filter_add(gui.active_track, fid);
-                    }
-                }
-            }
-
-            // ---- Composite geometry editor ----
-            // Shown when a video track (not track 0) is selected.
-            if (gui.active_track.valid()) {
-                const auto* trk = app.project().timeline().track(gui.active_track);
-                if (trk && trk->kind == vedit::TrackKind::Video) {
-                    int tidx = -1;
-                    auto tracks = app.project().timeline().tracks();
-                    for (size_t i = 0; i < tracks.size(); ++i) {
-                        if (tracks[i].id == gui.active_track) { tidx = static_cast<int>(i); break; }
-                    }
-                    if (tidx > 0) {
-                        ImGui::Separator();
-                        ImGui::TextUnformatted("Composite Geometry");
-                        ImGui::TextDisabled("x, y, w, h as %% of canvas");
-                        static float geo_x = 0, geo_y = 0, geo_w = 100, geo_h = 100;
-                        if (ImGui::SliderFloat("X %", &geo_x, 0, 100, "%.0f")) {
-                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
-                        }
-                        if (ImGui::SliderFloat("Y %", &geo_y, 0, 100, "%.0f")) {
-                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
-                        }
-                        if (ImGui::SliderFloat("W %", &geo_w, 0, 100, "%.0f")) {
-                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
-                        }
-                        if (ImGui::SliderFloat("H %", &geo_h, 0, 100, "%.0f")) {
-                            app.composite_geometry_set(gui.active_track, geo_x, geo_y, geo_w, geo_h);
-                        }
-                    }
-                }
-            }
-
-            ImGui::EndChild();
-        }
+        ImGui::BeginChild("filters", ImVec2(0, 0), ImGuiChildFlags_Borders);
+        draw_filter_panel(app, gui);
+        ImGui::EndChild();
 
         ImGui::End();
 
