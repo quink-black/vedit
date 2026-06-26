@@ -1344,6 +1344,18 @@ TEST_CASE("project.set_profile changes output resolution", "[t19]") {
     REQUIRE(result == "320,240");
 }
 
+TEST_CASE("profile_set updates SAR and DAR to square pixel", "[t19]") {
+    vedit::AppController app;
+    app.profile_set(1280, 480, 25.0);
+
+    auto& p = app.profile();
+    REQUIRE(p.sample_aspect_num() == 1);
+    REQUIRE(p.sample_aspect_den() == 1);
+    // 1280/160 = 8, 480/160 = 3
+    REQUIRE(p.display_aspect_num() == 8);
+    REQUIRE(p.display_aspect_den() == 3);
+}
+
 TEST_CASE("composite geometry positions track on canvas", "[t19][export]") {
     std::string clip = vedit::test::make_test_clip("comp_geom");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

@@ -1,5 +1,7 @@
 #include "project_model.h"
 
+#include <numeric>  // std::gcd
+
 #include "util/logger.h"
 
 namespace vedit {
@@ -20,6 +22,16 @@ void ProjectModel::set_profile(int width, int height, double fps) {
     if (width > 0) profile_.set_width(width);
     if (height > 0) profile_.set_height(height);
     profile_.set_progressive(1);
+    // MLT's default profile (DV PAL) has non-square pixels
+    // (SAR 16:15). When the user sets a custom canvas resolution,
+    // square pixels are the expected default. Without this, the
+    // rescale pipeline computes the wrong output dimensions (e.g.,
+    // a 1280x480 canvas with SAR 16:15 produces a 640x480 export).
+    profile_.set_sample_aspect(1, 1);
+    if (width > 0 && height > 0) {
+        int gcd = std::gcd(width, height);
+        profile_.set_display_aspect(width / gcd, height / gcd);
+    }
     if (fps > 0) {
         // Convert fps to a rational (frame_rate_num / frame_rate_den).
         // MLT stores fps as numerator/denominator; approximate the
