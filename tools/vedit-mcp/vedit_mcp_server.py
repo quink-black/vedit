@@ -478,6 +478,378 @@ async def list_tools() -> list[Tool]:
                 "required": ["path"],
             },
         ),
+        # ---- Filter operations ----
+        Tool(
+            name="list_filters",
+            description=(
+                "List all available MLT filters with their parameter "
+                "metadata. Use this to discover what filters can be "
+                "applied and what parameters they accept."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="add_filter",
+            description=(
+                "Add a filter to a clip or track. Specify either "
+                "clip_id (from get_state.tracks[].clips[].id) or "
+                "track_id (from get_state.tracks[].id). filter_name "
+                "comes from list_filters."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_type": {
+                        "type": "string",
+                        "enum": ["clip", "track"],
+                        "description": "Apply to a clip or a track",
+                    },
+                    "target_id": {
+                        "type": "integer",
+                        "description": "clip_id or track_id from get_state",
+                    },
+                    "filter_name": {
+                        "type": "string",
+                        "description": "Filter identifier from list_filters (e.g. 'avfilter.hflip')",
+                    },
+                },
+                "required": ["target_type", "target_id", "filter_name"],
+            },
+        ),
+        Tool(
+            name="remove_filter",
+            description="Remove a filter from a clip or track.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_type": {
+                        "type": "string",
+                        "enum": ["clip", "track"],
+                    },
+                    "target_id": {"type": "integer"},
+                    "filter_name": {"type": "string"},
+                },
+                "required": ["target_type", "target_id", "filter_name"],
+            },
+        ),
+        Tool(
+            name="set_filter_param",
+            description=(
+                "Set a filter parameter value. target_type/target_id "
+                "select the clip or track. filter_name is the filter "
+                "identifier. param is the parameter name (from "
+                "list_filters). value is a string. For animated "
+                "(keyframe) values, pass keyframes as a JSON array of "
+                "{frame, value, type} objects."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_type": {
+                        "type": "string",
+                        "enum": ["clip", "track"],
+                    },
+                    "target_id": {"type": "integer"},
+                    "filter_name": {"type": "string"},
+                    "param": {"type": "string"},
+                    "value": {
+                        "type": "string",
+                        "description": "Scalar value as string, e.g. '3' or '0xff0000ff'",
+                    },
+                },
+                "required": ["target_type", "target_id", "filter_name", "param", "value"],
+            },
+        ),
+        Tool(
+            name="get_filter_param",
+            description=(
+                "Get a filter parameter value (including keyframes). "
+                "Returns the current value or animation data."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_type": {
+                        "type": "string",
+                        "enum": ["clip", "track"],
+                    },
+                    "target_id": {"type": "integer"},
+                    "filter_name": {"type": "string"},
+                    "param": {"type": "string"},
+                },
+                "required": ["target_type", "target_id", "filter_name", "param"],
+            },
+        ),
+        # ---- Media library ----
+        Tool(
+            name="remove_media",
+            description=(
+                "Remove a media item from the library. Refuses if any "
+                "clip on the timeline still references it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "Media index from get_state.library[].index",
+                    },
+                },
+                "required": ["index"],
+            },
+        ),
+        # ---- Composite geometry ----
+        Tool(
+            name="set_composite_geometry",
+            description=(
+                "Set the position and size of a video track's content "
+                "on the canvas. x, y, w, h are percentages (0-100) of "
+                "the output resolution. Track 0 (background) has no "
+                "composite. Use this to create picture-in-picture or "
+                "split-screen layouts."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "track_id": {
+                        "type": "integer",
+                        "description": "Track id from get_state (must be a video track > 0)",
+                    },
+                    "x": {
+                        "type": "number",
+                        "description": "X offset as percentage (default: 0)",
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "Y offset as percentage (default: 0)",
+                    },
+                    "w": {
+                        "type": "number",
+                        "description": "Width as percentage (default: 100)",
+                    },
+                    "h": {
+                        "type": "number",
+                        "description": "Height as percentage (default: 100)",
+                    },
+                },
+                "required": ["track_id"],
+            },
+        ),
+        # ---- Advanced clip operations ----
+        Tool(
+            name="overwrite_clip",
+            description=(
+                "Insert a clip at a position, overwriting any existing "
+                "clips at that position (ripple insert with overwrite)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "track_id": {"type": "integer"},
+                    "media_index": {"type": "integer"},
+                    "position": {
+                        "type": "integer",
+                        "description": "Timeline frame position",
+                    },
+                },
+                "required": ["track_id", "media_index", "position"],
+            },
+        ),
+        Tool(
+            name="lift_clip",
+            description=(
+                "Remove a clip and close the gap (ripple delete). "
+                "Shifts later clips left to fill the space."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {
+                        "type": "integer",
+                        "description": "Clip id from get_state",
+                    },
+                },
+                "required": ["clip_id"],
+            },
+        ),
+        Tool(
+            name="change_speed",
+            description=(
+                "Change the playback speed of a clip. speed=1.0 is "
+                "normal, 2.0 is double speed, 0.5 is half speed."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "speed": {
+                        "type": "number",
+                        "description": "Speed multiplier (default: 1.0)",
+                    },
+                },
+                "required": ["clip_id", "speed"],
+            },
+        ),
+        Tool(
+            name="detach_audio",
+            description=(
+                "Split audio from a video clip into a separate audio "
+                "track. Returns the new audio clip id."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                },
+                "required": ["clip_id"],
+            },
+        ),
+        Tool(
+            name="add_transition",
+            description=(
+                "Add a cross-fade transition between two adjacent clips "
+                "on a track. clip_index is the playlist index (including "
+                "blanks). length is in frames (default: 30)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "track_id": {"type": "integer"},
+                    "clip_index": {
+                        "type": "integer",
+                        "description": "Playlist index of the first clip",
+                    },
+                    "length": {
+                        "type": "integer",
+                        "description": "Transition length in frames (default: 30)",
+                    },
+                },
+                "required": ["track_id", "clip_index"],
+            },
+        ),
+        # ---- Frame capture ----
+        Tool(
+            name="get_frame",
+            description=(
+                "Render a single composed frame at a specific position "
+                "and save it as a PNG file. Returns the file path and "
+                "frame position."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "position": {
+                        "type": "integer",
+                        "description": "Frame number to capture",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Output PNG file path",
+                    },
+                },
+                "required": ["path"],
+            },
+        ),
+        Tool(
+            name="screenshot",
+            description=(
+                "Capture a screenshot of the current playhead position "
+                "as a PNG file. Convenience wrapper around get_frame "
+                "that uses the current position."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Output PNG file path",
+                    },
+                },
+                "required": ["path"],
+            },
+        ),
+        # ---- Project settings ----
+        Tool(
+            name="set_profile",
+            description=(
+                "Set the output canvas resolution and framerate. Call "
+                "before placing clips; the profile determines render "
+                "dimensions."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "width": {
+                        "type": "integer",
+                        "description": "Canvas width in pixels",
+                    },
+                    "height": {
+                        "type": "integer",
+                        "description": "Canvas height in pixels",
+                    },
+                    "fps": {
+                        "type": "number",
+                        "description": "Frames per second (e.g. 25, 29.97)",
+                    },
+                },
+                "required": ["width", "height", "fps"],
+            },
+        ),
+        # ---- Export management ----
+        Tool(
+            name="export_poll",
+            description=(
+                "Check the progress of an async export job. Returns "
+                "state ('running'/'done'/'failed'/'cancelled') and "
+                "fraction (0.0 to 1.0)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "integer",
+                        "description": "Job id from export",
+                    },
+                },
+                "required": ["job_id"],
+            },
+        ),
+        Tool(
+            name="export_cancel",
+            description="Cancel a running export job.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "integer"},
+                },
+                "required": ["job_id"],
+            },
+        ),
+        Tool(
+            name="export_list_presets",
+            description=(
+                "List available MLT avformat export presets (H.264, "
+                "H.265, ProRes, etc.)."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="export_load_preset",
+            description=(
+                "Load a specific export preset and return its "
+                "default codec parameters."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "Preset file path from export_list_presets",
+                    },
+                },
+                "required": ["file"],
+            },
+        ),
     ]
 
 
@@ -595,6 +967,141 @@ async def call_tool(
         if name == "export":
             return _ok(_call(instance, "export.start",
                              {"path": str(arguments["path"])}))
+
+        # ---- Filter operations ----
+        if name == "list_filters":
+            return _ok(_call(instance, "filter.list"))
+
+        if name == "add_filter":
+            target_type = str(arguments["target_type"])
+            filter_name = str(arguments["filter_name"])
+            target_id = int(arguments["target_id"])
+            if target_type == "track":
+                return _ok(_call(instance, "filter.add",
+                                 {"track_id": target_id, "filter": filter_name}))
+            else:
+                return _ok(_call(instance, "filter.add",
+                                 {"clip_id": target_id, "filter": filter_name}))
+
+        if name == "remove_filter":
+            target_type = str(arguments["target_type"])
+            filter_name = str(arguments["filter_name"])
+            target_id = int(arguments["target_id"])
+            if target_type == "track":
+                return _ok(_call(instance, "filter.remove",
+                                 {"track_id": target_id, "filter": filter_name}))
+            else:
+                return _ok(_call(instance, "filter.remove",
+                                 {"clip_id": target_id, "filter": filter_name}))
+
+        if name == "set_filter_param":
+            target_type = str(arguments["target_type"])
+            filter_name = str(arguments["filter_name"])
+            target_id = int(arguments["target_id"])
+            param = str(arguments["param"])
+            value = str(arguments["value"])
+            params = {"filter": filter_name, "param": param, "value": value}
+            if target_type == "track":
+                params["track_id"] = target_id
+            else:
+                params["clip_id"] = target_id
+            return _ok(_call(instance, "filter.set_param", params))
+
+        if name == "get_filter_param":
+            target_type = str(arguments["target_type"])
+            filter_name = str(arguments["filter_name"])
+            target_id = int(arguments["target_id"])
+            param = str(arguments["param"])
+            params = {"filter": filter_name, "param": param}
+            if target_type == "track":
+                params["track_id"] = target_id
+            else:
+                params["clip_id"] = target_id
+            return _ok(_call(instance, "filter.get_param", params))
+
+        # ---- Media library ----
+        if name == "remove_media":
+            return _ok(_call(instance, "library.remove",
+                             {"index": int(arguments["index"])}))
+
+        # ---- Composite geometry ----
+        if name == "set_composite_geometry":
+            params = {"track_id": int(arguments["track_id"])}
+            if "x" in arguments:
+                params["x"] = float(arguments["x"])
+            if "y" in arguments:
+                params["y"] = float(arguments["y"])
+            if "w" in arguments:
+                params["w"] = float(arguments["w"])
+            if "h" in arguments:
+                params["h"] = float(arguments["h"])
+            return _ok(_call(instance, "track.set_composite_geometry", params))
+
+        # ---- Advanced clip operations ----
+        if name == "overwrite_clip":
+            return _ok(_call(instance, "clip.overwrite", {
+                "track_id": int(arguments["track_id"]),
+                "media_index": int(arguments["media_index"]),
+                "position": int(arguments["position"]),
+            }))
+
+        if name == "lift_clip":
+            return _ok(_call(instance, "clip.lift",
+                             {"clip_id": int(arguments["clip_id"])}))
+
+        if name == "change_speed":
+            return _ok(_call(instance, "clip.change_speed", {
+                "clip_id": int(arguments["clip_id"]),
+                "speed": float(arguments["speed"]),
+            }))
+
+        if name == "detach_audio":
+            return _ok(_call(instance, "clip.detach_audio",
+                             {"clip_id": int(arguments["clip_id"])}))
+
+        if name == "add_transition":
+            params = {
+                "track_id": int(arguments["track_id"]),
+                "clip_index": int(arguments["clip_index"]),
+            }
+            if "length" in arguments:
+                params["length"] = int(arguments["length"])
+            return _ok(_call(instance, "transition.add", params))
+
+        # ---- Frame capture ----
+        if name == "get_frame":
+            params = {"path": str(arguments["path"])}
+            if "position" in arguments:
+                params["position"] = int(arguments["position"])
+            return _ok(_call(instance, "player.get_frame", params))
+
+        if name == "screenshot":
+            return _ok(_call(instance, "view.screenshot",
+                             {"path": str(arguments["path"])}))
+
+        # ---- Project settings ----
+        if name == "set_profile":
+            return _ok(_call(instance, "project.set_profile", {
+                "width": int(arguments["width"]),
+                "height": int(arguments["height"]),
+                "fps": float(arguments["fps"]),
+            }))
+
+        # ---- Export management ----
+        if name == "export_poll":
+            return _ok(_call(instance, "export.poll",
+                             {"job_id": int(arguments["job_id"])}))
+
+        if name == "export_cancel":
+            return _ok(_call(instance, "export.cancel",
+                             {"job_id": int(arguments["job_id"])}))
+
+        if name == "export_list_presets":
+            return _ok(_call(instance, "export.list_presets"))
+
+        if name == "export_load_preset":
+            return _ok(_call(instance, "export.load_preset",
+                             {"file": str(arguments["file"])}))
 
         return _error(f"unknown tool: {name}")
 
