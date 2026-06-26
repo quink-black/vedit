@@ -1229,9 +1229,12 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
         if (trk && trk->kind == vedit::TrackKind::Video) {
             ImGui::Separator();
             if (ImGui::CollapsingHeader("Layout")) {
-                ImGui::TextDisabled("x, y, w, h as %% of canvas");
+                ImGui::TextDisabled(
+                    "Position and size of this track's video layer on the canvas.");
+                ImGui::TextDisabled(
+                    "Changes are reflected in the preview immediately.");
                 static float geo_x = 0, geo_y = 0, geo_w = 100, geo_h = 100;
-static vedit::TrackId geo_track{};
+                static vedit::TrackId geo_track{};
                 if (geo_track != gui.active_track) {
                     geo_track = gui.active_track;
                     double gx, gy, gw, gh;
@@ -1259,6 +1262,12 @@ static vedit::TrackId geo_track{};
                                                geo_x, geo_y, geo_w, geo_h);
                 }
                 if (ImGui::SliderFloat("H %", &geo_h, 0, 100, "%.0f")) {
+                    app.composite_geometry_set(gui.active_track,
+                                               geo_x, geo_y, geo_w, geo_h);
+                }
+                if (ImGui::Button("Reset to full canvas")) {
+                    geo_x = 0; geo_y = 0;
+                    geo_w = 100; geo_h = 100;
                     app.composite_geometry_set(gui.active_track,
                                                geo_x, geo_y, geo_w, geo_h);
                 }
@@ -1629,31 +1638,49 @@ int main(int, char**) {
             auto& tl = app.project().timeline();
             int64_t dur = std::max<int64_t>(1, tl.duration());
 
-            ImGui::TextUnformatted("Output file");
+            ImGui::TextUnformatted("Output file:");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(280);
+            ImGui::SetNextItemWidth(240);
             static char export_path_buf[512] = "output.mp4";
             std::snprintf(export_path_buf, sizeof(export_path_buf), "%s",
                           gui.export_dialog_path.c_str());
-            if (ImGui::InputText("##path", export_path_buf, sizeof(export_path_buf))) {
-                gui.export_dialog_path = export_path_buf;
+            ImGui::InputText("##path", export_path_buf, sizeof(export_path_buf),
+                             ImGuiInputTextFlags_ReadOnly);
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...")) {
+                const char* fmt_ext = gui.export_dialog_format == 1 ? "mkv" : "mp4";
+                nfdfilteritem_t filters[] = { { "Video file", fmt_ext } };
+                nfdchar_t* out = nullptr;
+                std::string default_name = "export." + std::string(fmt_ext);
+                nfdresult_t res = NFD_SaveDialog(
+                    &out, filters, 1, nullptr, default_name.c_str());
+                if (res == NFD_OKAY && out) {
+                    gui.export_dialog_path = out;
+                    // Ensure the extension matches the format.
+                    if (gui.export_dialog_path.size() >= 4 &&
+                        gui.export_dialog_path.compare(
+                            gui.export_dialog_path.size() - 4, 4,
+                            std::string(".") + fmt_ext) != 0) {
+                        gui.export_dialog_path += "." + std::string(fmt_ext);
+                    }
+                    NFD_FreePath(out);
+                }
             }
 
             ImGui::Separator();
             ImGui::TextUnformatted("Container");
-            const char* container_names[] = { "MP4", "MKV", "WebM" };
-            ImGui::Combo("Format", &gui.export_dialog_format, container_names, 3);
+            const char* container_names[] = { "MP4", "MKV" };
+            ImGui::Combo("Format", &gui.export_dialog_format, container_names, 2);
 
             ImGui::TextUnformatted("Video codec");
-            const char* vcodec_names[] = { "H.264 (libx264)", "H.265 (libx265)",
-                                           "VP9 (libvpx-vp9)", "AV1 (libaom-av1)" };
-            ImGui::Combo("Codec", &gui.export_dialog_video_codec, vcodec_names, 4);
+            const char* vcodec_names[] = { "H.264 (libx264)", "H.265 (libx265)" };
+            ImGui::Combo("Codec", &gui.export_dialog_video_codec, vcodec_names, 2);
 
-            ImGui::TextUnformatted("Quality (CRF, lower is better)");
+            ImGui::TextUnformatted("Quality (CRF)");
             ImGui::SetNextItemWidth(200);
             ImGui::SliderInt("CRF", &gui.export_dialog_crf, 0, 51, "%d");
             ImGui::SameLine();
-            ImGui::TextDisabled("(18=high, 23=medium, 28=low)");
+            ImGui::TextDisabled("(0=lossless, 18=high, 23=medium, 28=low, 51=worst)");
 
             ImGui::Separator();
             // Presets
@@ -1676,17 +1703,41 @@ int main(int, char**) {
             }
 
             ImGui::Separator();
-            ImGui::Checkbox("Export range only", &gui.export_dialog_use_range);
+            if (ImGui::Checkbox("Export partial timeline", &gui.export_dialog_use_range)) {
+                if (gui.export_dialog_use_range) {
+                    // Default to current position as in-point, end as out-point.
+                    if (gui.export_dialog_in_point < 0)
+                        gui.export_dialog_in_point = app.position();
+                    if (gui.export_dialog_out_point < 0 ||
+                        gui.export_dialog_out_point > dur)
+                        gui.export_dialog_out_point = dur;
+                }
+            }
             if (gui.export_dialog_use_range) {
-                ImGui::SetNextItemWidth(100);
-                ImGui::InputScalar("In point", ImGuiDataType_S64,
-                                   &gui.export_dialog_in_point, nullptr, nullptr, "%lld");
+                double fps = gui.project_fps;
+                ImGui::Indent();
+                ImGui::TextUnformatted("Only the range below will be exported:");
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::InputScalar("In point", ImGuiDataType_S64,
+                                       &gui.export_dialog_in_point, nullptr, nullptr, "%lld")) {
+                    if (gui.export_dialog_in_point < 0)
+                        gui.export_dialog_in_point = 0;
+                    if (gui.export_dialog_in_point > dur)
+                        gui.export_dialog_in_point = dur;
+                }
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(100);
-                ImGui::InputScalar("Out point", ImGuiDataType_S64,
-                                   &gui.export_dialog_out_point, nullptr, nullptr, "%lld");
+                ImGui::TextDisabled("%s", timecode(gui.export_dialog_in_point, fps).c_str());
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::InputScalar("Out point", ImGuiDataType_S64,
+                                       &gui.export_dialog_out_point, nullptr, nullptr, "%lld")) {
+                    if (gui.export_dialog_out_point < gui.export_dialog_in_point)
+                        gui.export_dialog_out_point = gui.export_dialog_in_point;
+                    if (gui.export_dialog_out_point > dur)
+                        gui.export_dialog_out_point = dur;
+                }
                 ImGui::SameLine();
-                ImGui::TextDisabled("(%d..%d)", 0, static_cast<int>(dur));
+                ImGui::TextDisabled("%s", timecode(gui.export_dialog_out_point, fps).c_str());
+                ImGui::Unindent();
             }
 
             ImGui::Separator();
@@ -1719,8 +1770,8 @@ int main(int, char**) {
                 // No active export: show settings form.
                 if (ImGui::Button("Export", ImVec2(120, 0))) {
                     nlohmann::json params;
-                    const char* exts[] = { "mp4", "mkv", "webm" };
-                    const char* vcodecs[] = { "libx264", "libx265", "libvpx-vp9", "libaom-av1" };
+                    const char* exts[] = { "mp4", "mkv" };
+                    const char* vcodecs[] = { "libx264", "libx265" };
                     params["acodec"] = "aac";
                     params["vcodec"] = vcodecs[gui.export_dialog_video_codec];
                     params["crf"] = gui.export_dialog_crf;
