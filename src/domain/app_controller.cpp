@@ -309,6 +309,34 @@ std::string AppController::track_filter_get_param(TrackId track_id,
         track_id, filter_name, param);
 }
 
+bool AppController::filter_set_param_keyframes(
+        ClipId clip_id, const std::string& filter_name,
+        const std::string& param, const nlohmann::json& keyframes) {
+    return project_->timeline().set_filter_param_keyframes(
+        clip_id, filter_name, param, keyframes);
+}
+
+nlohmann::json AppController::filter_get_param_keyframes(
+        ClipId clip_id, const std::string& filter_name,
+        const std::string& param) {
+    return project_->timeline().get_filter_param_keyframes(
+        clip_id, filter_name, param);
+}
+
+bool AppController::track_filter_set_param_keyframes(
+        TrackId track_id, const std::string& filter_name,
+        const std::string& param, const nlohmann::json& keyframes) {
+    return project_->timeline().track_set_filter_param_keyframes(
+        track_id, filter_name, param, keyframes);
+}
+
+nlohmann::json AppController::track_filter_get_param_keyframes(
+        TrackId track_id, const std::string& filter_name,
+        const std::string& param) {
+    return project_->timeline().track_get_filter_param_keyframes(
+        track_id, filter_name, param);
+}
+
 void AppController::profile_set(int width, int height, double fps) {
     project_->set_profile(width, height, fps);
 }

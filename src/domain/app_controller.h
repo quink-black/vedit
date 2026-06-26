@@ -88,6 +88,22 @@ public:
                                        const std::string& filter_name,
                                        const std::string& param);
 
+    // Keyframe-aware variants (M3 / P2).
+    bool filter_set_param_keyframes(ClipId clip_id,
+                                    const std::string& filter_name,
+                                    const std::string& param,
+                                    const nlohmann::json& keyframes);
+    nlohmann::json filter_get_param_keyframes(ClipId clip_id,
+                                              const std::string& filter_name,
+                                              const std::string& param);
+    bool track_filter_set_param_keyframes(TrackId track_id,
+                                          const std::string& filter_name,
+                                          const std::string& param,
+                                          const nlohmann::json& keyframes);
+    nlohmann::json track_filter_get_param_keyframes(TrackId track_id,
+                                                    const std::string& filter_name,
+                                                    const std::string& param);
+
     // --- profile (canvas) ---
     void profile_set(int width, int height, double fps);
 

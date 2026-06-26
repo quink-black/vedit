@@ -1306,6 +1306,59 @@ TEST_CASE("state.get reflects attached filters after add/remove", "[t18]") {
     }
 }
 
+TEST_CASE("filter.set_param with keyframes writes animated param", "[t18][keyframe]") {
+    std::string clip = vedit::test::make_test_clip("kf_set");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(app.filter_add(cid, "brightness"));
+
+    // Set keyframes via domain API.
+    nlohmann::json kfs = nlohmann::json::array({
+        {{"frame", 0}, {"value", 1.0}, {"type", "linear"}},
+        {{"frame", 50}, {"value", 2.0}, {"type", "linear"}}
+    });
+    REQUIRE(app.filter_set_param_keyframes(cid, "brightness", "level", kfs));
+
+    // Read back via domain API.
+    auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE_FALSE(result.empty());
+    REQUIRE(result.contains("value"));
+    std::string val = result["value"].get<std::string>();
+    REQUIRE(val.find("0=") != std::string::npos);
+    REQUIRE(val.find("50=") != std::string::npos);
+}
+
+TEST_CASE("filter.set_param with static value still works after keyframes", "[t18][keyframe]") {
+    std::string clip = vedit::test::make_test_clip("kf_static");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(app.filter_add(cid, "brightness"));
+
+    // Set keyframes first.
+    nlohmann::json kfs = nlohmann::json::array({
+        {{"frame", 0}, {"value", 1.0}},
+        {{"frame", 50}, {"value", 2.0}}
+    });
+    REQUIRE(app.filter_set_param_keyframes(cid, "brightness", "level", kfs));
+
+    // Overwrite with static value.
+    REQUIRE(app.filter_set_param(cid, "brightness", "level", "1.5"));
+
+    // Read back: should be static.
+    auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE(result.contains("value"));
+    REQUIRE(result["value"] == "1.5");
+    REQUIRE_FALSE(result.contains("keyframes"));
+}
+
 TEST_CASE("project.set_profile changes output resolution", "[t19]") {
     std::string clip = vedit::test::make_test_clip("profile_set");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

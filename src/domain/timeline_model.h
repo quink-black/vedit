@@ -9,6 +9,8 @@
 
 #include <Mlt.h>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include "ids.h"
 
 namespace vedit {
@@ -134,6 +136,21 @@ public:
                                  const std::string& filter_name,
                                  const std::string& param);
 
+    // Keyframe-aware variants (M3 / P2).
+    // set_filter_param_keyframes replaces any existing animation on the
+    // parameter with the given keyframes array. Each keyframe is
+    // {frame: int, value: scalar, type: "linear"|"discrete"|"smooth"}.
+    // Returns false if the clip or filter is not found.
+    bool set_filter_param_keyframes(ClipId clip_id,
+                                    const std::string& filter_name,
+                                    const std::string& param,
+                                    const nlohmann::json& keyframes);
+    // get_filter_param_keyframes returns either
+    // {"value": <scalar>} or {"keyframes": [{frame, value, type}, ...]}.
+    nlohmann::json get_filter_param_keyframes(ClipId clip_id,
+                                              const std::string& filter_name,
+                                              const std::string& param);
+
     // Per-track filters (planted on tractor field, apply to all clips
     // on the track). Same param API as per-clip, prefixed track_.
     bool track_attach_filter(TrackId track_id, const std::string& filter_name);
@@ -146,12 +163,23 @@ public:
                                        const std::string& filter_name,
                                        const std::string& param);
 
+    // Keyframe-aware per-track variants (M3 / P2).
+    bool track_set_filter_param_keyframes(TrackId track_id,
+                                          const std::string& filter_name,
+                                          const std::string& param,
+                                          const nlohmann::json& keyframes);
+    nlohmann::json track_get_filter_param_keyframes(TrackId track_id,
+                                                    const std::string& filter_name,
+                                                    const std::string& param);
+
     // Enumerate attached filters for state.get projection.
     struct AttachedFilterInfo {
         std::string target_type;  // "clip" or "track"
         int64_t target_id;
         std::string filter_name;
-        std::vector<std::pair<std::string, std::string>> params;
+        // Each entry is {param_name, param_value} where param_value is
+        // a JSON object: {"value": <scalar>} or {"keyframes": [...]}.
+        std::vector<std::pair<std::string, nlohmann::json>> params;
     };
     std::vector<AttachedFilterInfo> attached_filters() const;
 

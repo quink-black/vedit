@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include <nlohmann/json.hpp>
+
 namespace vedit {
 
 namespace {
@@ -599,6 +601,136 @@ std::string TimelineModel::get_filter_param(ClipId clip_id,
     return result;
 }
 
+// ---- Keyframe-aware param API (M3 / P2) ----
+
+static mlt_keyframe_type keyframe_type_from_string(const std::string& s) {
+    if (s == "smooth") return mlt_keyframe_smooth;
+    if (s == "discrete") return mlt_keyframe_discrete;
+    return mlt_keyframe_linear;  // default
+}
+
+static const char* keyframe_type_to_string(mlt_keyframe_type t) {
+    switch (t) {
+        case mlt_keyframe_discrete: return "discrete";
+        case mlt_keyframe_smooth:   return "smooth";
+        default:                    return "linear";
+    }
+}
+
+bool TimelineModel::set_filter_param_keyframes(
+        ClipId clip_id, const std::string& filter_name,
+        const std::string& param, const nlohmann::json& keyframes) {
+    Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
+    if (!cut) return false;
+
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, filter_name);
+    if (fidx < 0) {
+        delete cut;
+        return false;
+    }
+    Mlt::Filter* filter = parent.filter(fidx);
+    if (!filter) {
+        delete cut;
+        return false;
+    }
+
+    if (!keyframes.is_array() || keyframes.empty()) {
+        filter->set(param.c_str(), "");
+        delete filter;
+        delete cut;
+        return true;
+    }
+
+    // Build the MLT animation string: "frame=value;frame=value;..."
+    // mlt_properties_anim_set cannot be called twice on the same
+    // property (upstream MLT bug: second call segfaults). Instead
+    // set the serialized animation string directly via mlt_properties_set,
+    // which MLT auto-parses as an animation.
+    std::string anim_str;
+    for (const auto& kf : keyframes) {
+        if (!anim_str.empty()) anim_str += ';';
+        anim_str += std::to_string(kf.value("frame", 0));
+        anim_str += '=';
+        const auto& v = kf["value"];
+        if (v.is_string())
+            anim_str += v.get<std::string>();
+        else
+            anim_str += v.dump();
+    }
+    mlt_properties_set(filter->get_properties(),
+                       param.c_str(), anim_str.c_str());
+
+    delete filter;
+    delete cut;
+    return true;
+}
+
+nlohmann::json TimelineModel::get_filter_param_keyframes(
+        ClipId clip_id, const std::string& filter_name,
+        const std::string& param) {
+    Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
+    if (!cut) return nlohmann::json::object();
+
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, filter_name);
+    if (fidx < 0) {
+        delete cut;
+        return nlohmann::json::object();
+    }
+    Mlt::Filter* filter = parent.filter(fidx);
+    if (!filter) {
+        delete cut;
+        return nlohmann::json::object();
+    }
+
+    Mlt::Properties props(filter->get_properties());
+    if (props.is_anim(param.c_str())) {
+        // mlt_properties_get_animation may return NULL on some MLT
+        // versions (upstream bug). Fall back to reading the raw
+        // string value and wrapping it as keyframes.
+        mlt_animation anim = mlt_properties_get_animation(
+            props.get_properties(), param.c_str());
+        if (anim) {
+            nlohmann::json kfs = nlohmann::json::array();
+            int n = mlt_animation_key_count(anim);
+            mlt_animation_item_s item;
+            for (int i = 0; i < n; ++i) {
+                if (mlt_animation_key_get(anim, &item, i) == 0) {
+                    nlohmann::json kf;
+                    kf["frame"] = item.frame;
+                    const char* val = mlt_property_get_string(item.property);
+                    kf["value"] = val ? val : "";
+                    kf["type"] = keyframe_type_to_string(item.keyframe_type);
+                    kfs.push_back(std::move(kf));
+                }
+            }
+            mlt_animation_close(anim);
+            delete filter;
+            delete cut;
+            nlohmann::json result;
+            result["keyframes"] = std::move(kfs);
+            return result;
+        }
+        // Fallback: return the raw animation string.
+        const char* raw = filter->get(param.c_str());
+        delete filter;
+        delete cut;
+        nlohmann::json result;
+        result["value"] = raw ? raw : "";
+        return result;
+    }
+
+    // Static param.
+    const char* val = filter->get(param.c_str());
+    std::string s = val ? val : "";
+    delete filter;
+    delete cut;
+    nlohmann::json result;
+    result["value"] = s;
+    return result;
+}
+
 // ---- per-track filters ----
 //
 // Per-track filters are attached to the track's playlist producer,
@@ -680,6 +812,128 @@ std::string TimelineModel::track_get_filter_param(TrackId track_id,
     return result;
 }
 
+bool TimelineModel::track_set_filter_param_keyframes(
+        TrackId track_id, const std::string& filter_name,
+        const std::string& param, const nlohmann::json& keyframes) {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return false;
+
+    auto& pl = tracks_[tidx].playlist;
+    Mlt::Filter* found = find_playlist_filter(*pl, filter_name);
+    if (!found) return false;
+
+    if (!keyframes.is_array() || keyframes.empty()) {
+        found->set(param.c_str(), "");
+        delete found;
+        return true;
+    }
+
+    std::string anim_str;
+    for (const auto& kf : keyframes) {
+        if (!anim_str.empty()) anim_str += ';';
+        anim_str += std::to_string(kf.value("frame", 0));
+        anim_str += '=';
+        const auto& v = kf["value"];
+        if (v.is_string())
+            anim_str += v.get<std::string>();
+        else
+            anim_str += v.dump();
+    }
+    found->set(param.c_str(), anim_str.c_str());
+
+    for (size_t i = 0; i < keyframes.size(); ++i) {
+        const auto& kf = keyframes[i];
+        if (kf.contains("type") && kf["type"] != "linear") {
+            mlt_animation anim = mlt_properties_get_animation(
+                found->get_properties(), param.c_str());
+            if (anim) {
+                mlt_animation_key_set_type(anim, static_cast<int>(i),
+                    keyframe_type_from_string(kf["type"].get<std::string>()));
+                mlt_animation_close(anim);
+            }
+        }
+    }
+
+    delete found;
+    return true;
+}
+
+nlohmann::json TimelineModel::track_get_filter_param_keyframes(
+        TrackId track_id, const std::string& filter_name,
+        const std::string& param) {
+    int tidx = track_index(track_id);
+    if (tidx < 0) return nlohmann::json::object();
+
+    auto& pl = tracks_[tidx].playlist;
+    Mlt::Filter* found = find_playlist_filter(*pl, filter_name);
+    if (!found) return nlohmann::json::object();
+
+    Mlt::Properties props(found->get_properties());
+    if (props.is_anim(param.c_str())) {
+        nlohmann::json kfs = nlohmann::json::array();
+        mlt_animation anim = mlt_properties_get_animation(
+            props.get_properties(), param.c_str());
+        if (anim) {
+            int n = mlt_animation_key_count(anim);
+            mlt_animation_item_s item;
+            for (int i = 0; i < n; ++i) {
+                if (mlt_animation_key_get(anim, &item, i) == 0) {
+                    nlohmann::json kf;
+                    kf["frame"] = item.frame;
+                    const char* val = mlt_property_get_string(item.property);
+                    kf["value"] = val ? val : "";
+                    kf["type"] = keyframe_type_to_string(item.keyframe_type);
+                    kfs.push_back(std::move(kf));
+                }
+            }
+            mlt_animation_close(anim);
+        }
+        delete found;
+        nlohmann::json result;
+        result["keyframes"] = std::move(kfs);
+        return result;
+    }
+
+    const char* val = found->get(param.c_str());
+    std::string s = val ? val : "";
+    delete found;
+    nlohmann::json result;
+    result["value"] = s;
+    return result;
+}
+
+static nlohmann::json param_value_to_json(Mlt::Properties& props,
+                                          const char* key) {
+    if (props.is_anim(key)) {
+        nlohmann::json kfs = nlohmann::json::array();
+        mlt_animation anim = mlt_properties_get_animation(
+            props.get_properties(), key);
+        if (anim) {
+            int n = mlt_animation_key_count(anim);
+            mlt_animation_item_s item;
+            for (int i = 0; i < n; ++i) {
+                if (mlt_animation_key_get(anim, &item, i) == 0) {
+                    nlohmann::json kf;
+                    kf["frame"] = item.frame;
+                    const char* val = mlt_property_get_string(item.property);
+                    kf["value"] = val ? val : "";
+                    kf["type"] = keyframe_type_to_string(
+                        item.keyframe_type);
+                    kfs.push_back(std::move(kf));
+                }
+            }
+            mlt_animation_close(anim);
+        }
+        nlohmann::json result;
+        result["keyframes"] = std::move(kfs);
+        return result;
+    }
+    const char* val = props.get(key);
+    nlohmann::json result;
+    result["value"] = val ? val : "";
+    return result;
+}
+
 std::vector<TimelineModel::AttachedFilterInfo>
 TimelineModel::attached_filters() const {
     std::vector<AttachedFilterInfo> result;
@@ -726,8 +980,8 @@ TimelineModel::attached_filters() const {
                     if (std::strcmp(key, "mlt_service") == 0 ||
                         std::strcmp(key, "mlt_type") == 0 ||
                         std::strcmp(key, "mlt_filter") == 0) continue;
-                    const char* val = props.get(key);
-                    if (val) info.params.emplace_back(key, val);
+                    info.params.emplace_back(
+                        key, param_value_to_json(props, key));
                 }
                 result.push_back(std::move(info));
                 delete filter;
@@ -753,8 +1007,8 @@ TimelineModel::attached_filters() const {
                 if (std::strcmp(key, "mlt_service") == 0 ||
                     std::strcmp(key, "mlt_type") == 0 ||
                     std::strcmp(key, "mlt_filter") == 0) continue;
-                const char* val = props.get(key);
-                if (val) info.params.emplace_back(key, val);
+                info.params.emplace_back(
+                    key, param_value_to_json(props, key));
             }
             result.push_back(std::move(info));
             delete filter;

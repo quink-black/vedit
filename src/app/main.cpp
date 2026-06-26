@@ -878,8 +878,19 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
             ImGui::Separator();
             ImGui::TextUnformatted(af->filter_name.c_str());
             for (const auto& [k, v] : af->params) {
+                std::string display;
+                if (v.contains("value")) {
+                    const auto& sv = v["value"];
+                    display = sv.is_string() ? sv.get<std::string>()
+                                             : sv.dump();
+                } else if (v.contains("keyframes")) {
+                    display = "keyframes (" +
+                              std::to_string(v["keyframes"].size()) + ")";
+                } else {
+                    display = v.dump();
+                }
                 char buf[256];
-                std::snprintf(buf, sizeof(buf), "%s", v.c_str());
+                std::snprintf(buf, sizeof(buf), "%s", display.c_str());
                 ImGui::PushID(k.c_str());
                 ImGui::TextUnformatted(k.c_str());
                 ImGui::SameLine(120);

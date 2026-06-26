@@ -210,25 +210,46 @@ void register_methods(Dispatcher& d, AppController& app) {
     d.register_method("filter.set_param", [&](const nlohmann::json& params) {
         std::string filter_name = params.value("filter", "");
         std::string param = params.value("param", "");
-        std::string value;
-        if (params.contains("value")) {
-            const auto& v = params["value"];
-            value = v.is_string() ? v.get<std::string>() : v.dump();
-        } else {
-            throw RpcException(ErrorCode::InvalidParams, "missing value");
-        }
         if (filter_name.empty() || param.empty())
             throw RpcException(ErrorCode::InvalidParams, "missing filter or param");
 
-        if (params.contains("track_id")) {
-            TrackId tid{params.value("track_id", 0LL)};
-            if (!app.track_filter_set_param(tid, filter_name, param, value))
-                throw RpcException(ErrorCode::ApplicationError, "set_param on track failed");
+        bool is_track = params.contains("track_id");
+        bool ok = false;
+
+        // P2 shape: {keyframes: [{frame, value, type}, ...]}
+        if (params.contains("keyframes")) {
+            const auto& kfs = params["keyframes"];
+            if (is_track) {
+                TrackId tid{params.value("track_id", 0LL)};
+                ok = app.track_filter_set_param_keyframes(
+                    tid, filter_name, param, kfs);
+            } else {
+                ClipId id{params.value("clip_id", 0LL)};
+                ok = app.filter_set_param_keyframes(
+                    id, filter_name, param, kfs);
+            }
+        } else if (params.contains("value")) {
+            // P2 shape: {value: <scalar>}
+            std::string value;
+            const auto& v = params["value"];
+            value = v.is_string() ? v.get<std::string>() : v.dump();
+            if (is_track) {
+                TrackId tid{params.value("track_id", 0LL)};
+                ok = app.track_filter_set_param(
+                    tid, filter_name, param, value);
+            } else {
+                ClipId id{params.value("clip_id", 0LL)};
+                ok = app.filter_set_param(
+                    id, filter_name, param, value);
+            }
         } else {
-            ClipId id{params.value("clip_id", 0LL)};
-            if (!app.filter_set_param(id, filter_name, param, value))
-                throw RpcException(ErrorCode::ApplicationError, "set_param on clip failed");
+            throw RpcException(ErrorCode::InvalidParams,
+                               "missing value or keyframes");
         }
+
+        if (!ok)
+            throw RpcException(ErrorCode::ApplicationError,
+                               "set_param failed");
         return nlohmann::json{{"ok", true}};
     });
 
@@ -238,18 +259,21 @@ void register_methods(Dispatcher& d, AppController& app) {
         if (filter_name.empty() || param.empty())
             throw RpcException(ErrorCode::InvalidParams, "missing filter or param");
 
-        std::string val;
+        nlohmann::json result;
         if (params.contains("track_id")) {
             TrackId tid{params.value("track_id", 0LL)};
-            val = app.track_filter_get_param(tid, filter_name, param);
+            result = app.track_filter_get_param_keyframes(
+                tid, filter_name, param);
         } else {
             ClipId id{params.value("clip_id", 0LL)};
-            val = app.filter_get_param(id, filter_name, param);
+            result = app.filter_get_param_keyframes(
+                id, filter_name, param);
         }
-        if (val.empty())
+
+        if (result.empty())
             throw RpcException(ErrorCode::ApplicationError,
                                "param not found or filter not attached");
-        return nlohmann::json{{"value", val}};
+        return result;
     });
 
     // ---- state.get ----
