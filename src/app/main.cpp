@@ -842,6 +842,9 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
     } else {
         ImGui::TextUnformatted("Active:");
         static int selected_filter_idx = -1;
+        // Clamp after remove.
+        if (selected_filter_idx >= static_cast<int>(visible.size()))
+            selected_filter_idx = static_cast<int>(visible.size()) - 1;
         for (size_t i = 0; i < visible.size(); ++i) {
             const auto* af = visible[i];
             char label[128];
@@ -850,10 +853,10 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
             if (ImGui::Selectable(label, &sel)) {
                 selected_filter_idx = static_cast<int>(i);
             }
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
+            ImGui::SameLine();
             char xbtn[64];
             std::snprintf(xbtn, sizeof(xbtn), "X##rm_%zu", i);
-            if (ImGui::SmallButton(xbtn)) {
+            if (ImGui::Button(xbtn)) {
                 if (af->target_type == "clip") {
                     app.filter_remove(vedit::ClipId{af->target_id}, af->filter_name);
                 } else {
