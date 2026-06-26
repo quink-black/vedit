@@ -8,8 +8,10 @@
     "asio",
     "catch2",
     "nlohmann-json",
-    "ffmpeg",
-    "glib",
+    {
+      "name": "ffmpeg",
+      "features": ["x264"]
+    },
     "libxml2",
     "libiconv",
     "dirent",
