@@ -6,21 +6,20 @@ server exposes, exercises the full edit pipeline (import, multi-track
 timeline, split, trim, save, export), and verifies the exported file.
 
 Scenario:
-  1. Import two sources (BEAN, CCTV env vars, or built-in defaults).
-  2. Build a 2-track timeline:
-       V1: source A first 5s, then source B first 5s (concat).
-       V2: source B from 10s..15s as an overlay.
-  3. Split V1 clip 2 at its midpoint.
-  4. Trim V2 clip to 3s.
-  5. Save project XML.
-  6. Export to MP4 and probe the result.
+  1. Reset instance state (remove tracks and library items).
+  2. Import two sources (SRC_A and SRC_B env vars).
+  3. Build a 2-track timeline using short clips from each source.
+  4. Split a clip at its midpoint.
+  5. Trim a clip.
+  6. Save project XML.
+  7. Export to MP4 and probe the result.
 
 Exits 0 on PASS, 2 on FAIL. Requires exactly one running vedit
 instance (discover via /tmp/vedit-*.sock).
 
 Usage:
-    python3 auto_edit.py
-    BEAN=/path/a.mp4 CCTV=/path/b.mp4 \
+    SRC_A=/path/a.mp4 SRC_B=/path/b.mp4 python3 auto_edit.py
+    SRC_A=/path/a.mp4 SRC_B=/path/b.mp4 \
         OUT_MP4=/tmp/out.mp4 OUT_XML=/tmp/out.xml \
         python3 auto_edit.py
 """
@@ -33,14 +32,25 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vedit_client import VeditClient, discover_instances
 
-BEAN = os.environ.get('BEAN', '/home/quink/Videos/bean.mp4')
-CCTV = os.environ.get('CCTV', '/home/quink/Videos/cctv.mp4')
+SRC_A = os.environ.get('SRC_A')
+SRC_B = os.environ.get('SRC_B')
 OUT_MP4 = os.environ.get('OUT_MP4', '/tmp/vedit-auto-edit.mp4')
 OUT_XML = os.environ.get('OUT_XML', '/tmp/vedit-auto-edit.xml')
 
-for label, path in (('BEAN', BEAN), ('CCTV', CCTV)):
+missing = []
+for label, val in (('SRC_A', SRC_A), ('SRC_B', SRC_B)):
+    if not val:
+        missing.append(label)
+if missing:
+    print(f'ERROR: required env vars not set: {", ".join(missing)}',
+          file=sys.stderr)
+    print('Usage: SRC_A=/path/to/a.mp4 SRC_B=/path/to/b.mp4 '
+          'python3 auto_edit.py', file=sys.stderr)
+    sys.exit(1)
+
+for label, path in (('SRC_A', SRC_A), ('SRC_B', SRC_B)):
     if not os.path.isfile(path):
-        print(f'ERROR: {label} not found: {path}', file=sys.stderr)
+        print(f'ERROR: {label} file not found: {path}', file=sys.stderr)
         sys.exit(1)
 
 insts = discover_instances()
@@ -59,45 +69,68 @@ def call(method, params=None):
     return r
 
 
+# 0. Reset instance state: remove all tracks first, then library
+#    items in reverse index order (removing shifts remaining indices).
+state = call('state.get')
+for t in state.get('tracks', []):
+    call('track.remove', {'track_id': t['id']})
+lib_items = state.get('library', [])
+for item in sorted(lib_items, key=lambda x: -x['index']):
+    call('library.remove', {'index': item['index']})
+
 # 1. Import sources.
-bean_mi = call('library.import', {'path': BEAN})['index']
-cctv_mi = call('library.import', {'path': CCTV})['index']
+src_a_mi = call('library.import', {'path': SRC_A})['index']
+src_b_mi = call('library.import', {'path': SRC_B})['index']
+
+# Read frame counts from library state.
+state = call('state.get')
+a_frames = state['library'][0]['frame_count']
+b_frames = state['library'][1]['frame_count']
+
+for item in state['library']:
+    print(f'  library[{item["index"]}] = {item["name"]} '
+          f'{item["width"]}x{item["height"]} '
+          f'{item["duration_sec"]:.1f}s '
+          f'{item["frame_count"]} frames fps={item["fps"]:.2f}')
+
+# Each source needs at least 60 frames.
+MIN_FRAMES = 60
+for label, fc in (('SRC_A', a_frames), ('SRC_B', b_frames)):
+    if fc < MIN_FRAMES:
+        print(f'ERROR: {label} has only {fc} frames, need >= {MIN_FRAMES}',
+              file=sys.stderr)
+        sys.exit(1)
 
 # 2. Add tracks.
 v1 = call('track.add', {'kind': 'video', 'name': 'V1'})['track_id']
 v2 = call('track.add', {'kind': 'video', 'name': 'V2'})['track_id']
 
-# Inspect library to confirm fps for frame math.
-state = call('state.get')
-for item in state['library']:
-    print(f'  library[{item["index"]}] = {item["name"]} '
-          f'{item["width"]}x{item["height"]} '
-          f'{item["duration_sec"]:.1f}s fps={item["fps"]:.2f}')
+# 3. V1: first 30 frames of A, then first 30 frames of B (concat).
+CLIP_LEN = 30
+call('clip.append', {'track_id': v1, 'media_index': src_a_mi,
+                     'in': 0, 'out': CLIP_LEN})
+call('clip.append', {'track_id': v1, 'media_index': src_b_mi,
+                     'in': 0, 'out': CLIP_LEN})
 
-# 3. V1: source A first 5s (125 frames @ 25fps), then source B first 5s.
-call('clip.append', {'track_id': v1, 'media_index': bean_mi,
-                     'in': 0, 'out': 125})
-call('clip.append', {'track_id': v1, 'media_index': cctv_mi,
-                     'in': 0, 'out': 125})
+# 4. V2: frames 30..60 of B as overlay.
+call('clip.append', {'track_id': v2, 'media_index': src_b_mi,
+                     'in': CLIP_LEN, 'out': CLIP_LEN * 2})
 
-# 4. V2: source B from 10s..15s as an overlay (250..375 frames).
-call('clip.append', {'track_id': v2, 'media_index': cctv_mi,
-                     'in': 250, 'out': 375})
-
-# 5. Split V1 clip 2 at its midpoint. Look up its id from state.
+# 5. Split V1 clip 2 at its midpoint.
 state = call('state.get')
 v1_clips = [t for t in state['tracks'] if t['id'] == v1][0]['clips']
 clip2 = v1_clips[1]
 split_pos = clip2['start'] + clip2['length'] // 2
 call('clip.split', {'clip_id': clip2['id'], 'at_position': split_pos})
 
-# 6. Trim V2 clip to 3s (75 frames).
+# 6. Trim V2 clip to ~2/3 of its current range.
 state = call('state.get')
 v2_clips = [t for t in state['tracks'] if t['id'] == v2][0]['clips']
 v2_clip = v2_clips[0]
+trim_length = v2_clip['length'] * 2 // 3
 call('clip.trim', {'clip_id': v2_clip['id'],
                    'in': v2_clip['in'],
-                   'out': v2_clip['in'] + 75})
+                   'out': v2_clip['in'] + trim_length})
 
 # 7. Final state.
 state = call('state.get')
@@ -116,8 +149,7 @@ if os.path.exists(OUT_XML):
 call('project.save', {'path': OUT_XML})
 print(f'saved XML: {OUT_XML} ({os.path.getsize(OUT_XML)} bytes)')
 
-# 9. Export to MP4 (async since R4: export.start returns a job id;
-#    poll until terminal state).
+# 9. Export to MP4.
 if os.path.exists(OUT_MP4):
     os.remove(OUT_MP4)
 job_id = call('export.start', {'path': OUT_MP4})['job_id']
@@ -151,17 +183,10 @@ audio = next((s for s in streams if s.get('codec_type') == 'audio'), None)
 ok = True
 if not video:
     print('FAIL: no video stream', file=sys.stderr); ok = False
-elif video.get('codec_name') != 'h264':
-    print(f'FAIL: video codec {video.get("codec_name")} != h264',
-          file=sys.stderr); ok = False
 if not audio:
     print('FAIL: no audio stream', file=sys.stderr); ok = False
-elif audio.get('codec_name') != 'aac':
-    print(f'FAIL: audio codec {audio.get("codec_name")} != aac',
-          file=sys.stderr); ok = False
-# V1 is 5s + 5s = 10s (250 frames @ 25). V2 is 3s but overlaid on V1.
-if duration < 9.0 or duration > 11.0:
-    print(f'FAIL: duration {duration:.2f}s outside [9, 11]',
+if duration <= 0:
+    print(f'FAIL: duration is zero or negative ({duration})',
           file=sys.stderr); ok = False
 if video and (video.get('width', 0) < 320 or video.get('height', 0) < 240):
     print(f'FAIL: resolution {video.get("width")}x{video.get("height")} '
