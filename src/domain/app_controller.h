@@ -83,6 +83,13 @@ public:
     bool clip_set_audio_enabled(ClipId id, bool enabled);
     bool clip_set_video_enabled(ClipId id, bool enabled);
 
+    // Per-clip geometry via MLT affine filter (percentages 0-100).
+    bool clip_set_geometry(ClipId id, double x, double y,
+                           double w, double h);
+    bool clip_set_rotation(ClipId id, double degrees);
+    bool clip_get_geometry(ClipId id, double& x, double& y,
+                           double& w, double& h) const;
+
     // --- filters (M2) ---
     const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
     bool filter_add(ClipId clip_id, const std::string& name);

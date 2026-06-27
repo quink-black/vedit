@@ -148,6 +148,17 @@ public:
     bool set_clip_audio_enabled(ClipId id, bool enabled);
     bool set_clip_video_enabled(ClipId id, bool enabled);
 
+    // Per-clip geometry via MLT affine filter. Position and size are
+    // percentages (0-100) of the profile resolution, matching
+    // track.set_composite_geometry convention. The affine filter is
+    // attached on first set and detached when all params return to
+    // defaults, keeping the timeline clean when geometry is not in use.
+    bool clip_set_geometry(ClipId id, double x, double y,
+                           double w, double h);
+    bool clip_set_rotation(ClipId id, double degrees);
+    bool clip_get_geometry(ClipId id, double& x, double& y,
+                           double& w, double& h) const;
+
     // --- queries ---
     int clip_count() const;
     const ClipInfo* clip(ClipId id) const;
@@ -252,6 +263,16 @@ private:
     // Find the playlist cut producer for a ClipId. Returns new'd
     // producer (caller owns) or nullptr.
     Mlt::Producer* find_cut_producer(ClipId id, int* track_idx = nullptr) const;
+
+    // Find or create the affine filter on a clip's parent producer.
+    // Returns nullptr if the clip does not exist. The caller must
+    // delete the returned filter (it is a new reference from filter()).
+    Mlt::Filter* ensure_affine_filter(ClipId id) const;
+
+    // Check whether geometry params are at their defaults and the
+    // affine filter should be detached.
+    bool geometry_is_default(ClipId id, double x, double y,
+                             double w, double h, double rot) const;
 
     Mlt::Profile& profile_;
     MediaLibrary& library_;

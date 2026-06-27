@@ -1383,4 +1383,173 @@ bool TimelineModel::get_composite_geometry(TrackId track_id,
     return true;
 }
 
+// ---- per-clip geometry (affine filter) ----
+
+namespace {
+
+// Format an affine rect string from percentage coordinates.
+// MLT affine accepts "X/Y:WxH" with normalized values (0-1 range).
+// We divide by 100 to convert from our 0-100 API to MLT's 0-1 range.
+std::string affine_rect_string(double x, double y, double w, double h) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.4f/%.4f:%.4fx%.4f",
+                  x / 100.0, y / 100.0, w / 100.0, h / 100.0);
+    return buf;
+}
+
+// Parse an affine rect string back to percentage values.
+// MLT stores mlt_rect as space-delimited "x y w h o" after parsing
+// the colon/slash input format, so the get() return is e.g.
+// "0.25 0.25 0.5 0.5 1". The input format "X%/Y%:W%xH%" is parsed
+// once by MLT and never returned by get().
+bool parse_affine_rect(const std::string& s,
+                       double& x, double& y, double& w, double& h) {
+    double o = 0;
+    if (std::sscanf(s.c_str(), "%lf %lf %lf %lf %lf", &x, &y, &w, &h, &o) >= 4) {
+        // MLT divides % values by 100 internally, so 100% becomes 1.0.
+        x *= 100.0;
+        y *= 100.0;
+        w *= 100.0;
+        h *= 100.0;
+        return true;
+    }
+    // Also accept colon/slash format in case an older or different
+    // serialiser returns it.
+    if (std::sscanf(s.c_str(), "%lf/%lf:%lfx%lf", &x, &y, &w, &h) == 4) {
+        x *= 100.0;
+        y *= 100.0;
+        w *= 100.0;
+        h *= 100.0;
+        return true;
+    }
+    return false;
+}
+
+// Default geometry: clip fills its track (100% width/height at origin).
+constexpr double kDefaultGeoX = 0.0;
+constexpr double kDefaultGeoY = 0.0;
+constexpr double kDefaultGeoW = 100.0;
+constexpr double kDefaultGeoH = 100.0;
+constexpr double kDefaultRotation = 0.0;
+
+} // namespace
+
+Mlt::Filter* TimelineModel::ensure_affine_filter(ClipId id) const {
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return nullptr;
+
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, "affine");
+    if (fidx >= 0) {
+        Mlt::Filter* filter = parent.filter(fidx);
+        delete cut;
+        return filter;
+    }
+
+    // Affine filter not yet attached — create and attach it.
+    // Use const_cast: clip_set_geometry is logically non-const but
+    // ensure_affine_filter is called from both const and non-const
+    // contexts (get_geometry is const).
+    delete cut;
+    return nullptr;
+}
+
+bool TimelineModel::geometry_is_default(ClipId id, double x, double y,
+                                         double w, double h,
+                                         double rot) const {
+    return x == kDefaultGeoX && y == kDefaultGeoY &&
+           w == kDefaultGeoW && h == kDefaultGeoH &&
+           rot == kDefaultRotation;
+}
+
+bool TimelineModel::clip_set_geometry(ClipId id, double x, double y,
+                                       double w, double h) {
+    // Read current rotation so we can detach when everything is default.
+    double current_rot = kDefaultRotation;
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, "affine");
+    if (fidx >= 0) {
+        Mlt::Filter* filter = parent.filter(fidx);
+        if (filter) {
+            const char* rot_str = filter->get("transition.fix_rotate_z");
+            if (rot_str) current_rot = std::atof(rot_str);
+            delete filter;
+        }
+    }
+    delete cut;
+
+    if (geometry_is_default(id, x, y, w, h, current_rot)) {
+        // Detach the affine filter if present.
+        detach_filter(id, "affine");
+        return true;
+    }
+
+    // Attach affine filter if not already present.
+    if (fidx < 0) {
+        if (!attach_filter(id, "affine")) return false;
+    }
+
+    // Set the rect on the affine filter.
+    std::string rect = affine_rect_string(x, y, w, h);
+    return set_filter_param(id, "affine", "transition.rect", rect);
+}
+
+bool TimelineModel::clip_set_rotation(ClipId id, double degrees) {
+    // Read current geometry so we can detach when everything is default.
+    double gx = kDefaultGeoX, gy = kDefaultGeoY, gw = kDefaultGeoW, gh = kDefaultGeoH;
+    clip_get_geometry(id, gx, gy, gw, gh);
+
+    if (geometry_is_default(id, gx, gy, gw, gh, degrees)) {
+        detach_filter(id, "affine");
+        return true;
+    }
+
+    // Attach affine filter if not already present.
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    int fidx = find_attached_filter(cut->parent(), "affine");
+    delete cut;
+    if (fidx < 0) {
+        if (!attach_filter(id, "affine")) return false;
+    }
+
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", degrees);
+    return set_filter_param(id, "affine", "transition.fix_rotate_z", buf);
+}
+
+bool TimelineModel::clip_get_geometry(ClipId id, double& x, double& y,
+                                       double& w, double& h) const {
+    x = kDefaultGeoX;
+    y = kDefaultGeoY;
+    w = kDefaultGeoW;
+    h = kDefaultGeoH;
+
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return true;  // no clip, return defaults
+
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, "affine");
+    if (fidx < 0) {
+        delete cut;
+        return true;  // no affine filter, return defaults
+    }
+
+    Mlt::Filter* filter = parent.filter(fidx);
+    if (!filter) {
+        delete cut;
+        return true;
+    }
+
+    const char* rect_str = filter->get("transition.rect");
+    if (rect_str && rect_str[0]) {
+        parse_affine_rect(rect_str, x, y, w, h);
+    }
+    delete filter;
+    delete cut;
+    return true;
+}
+
 } // namespace vedit

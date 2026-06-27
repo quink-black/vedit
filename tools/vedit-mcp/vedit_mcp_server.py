@@ -701,6 +701,59 @@ async def list_tools() -> list[Tool]:
                 "required": ["track_id"],
             },
         ),
+        Tool(
+            name="set_geometry",
+            description=(
+                "Set per-clip position and size on the canvas. x, y, w, "
+                "h are percentages (0-100) of the profile resolution. "
+                "Omitted params keep their current value. Use this for "
+                "picture-in-picture, split-screen, or zoom/pan."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "x": {"type": "number", "description": "X position % (default: current)"},
+                    "y": {"type": "number", "description": "Y position % (default: current)"},
+                    "w": {"type": "number", "description": "Width % (default: current)"},
+                    "h": {"type": "number", "description": "Height % (default: current)"},
+                },
+                "required": ["clip_id"],
+            },
+        ),
+        Tool(
+            name="get_geometry",
+            description=(
+                "Get the current per-clip geometry: position and size "
+                "as percentages (0-100). Returns defaults (0/0/100/100) "
+                "when no geometry has been set on the clip."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                },
+                "required": ["clip_id"],
+            },
+        ),
+        Tool(
+            name="set_rotation",
+            description=(
+                "Set per-clip rotation in degrees (clockwise). The clip "
+                "rotates around its center. Set to 0 to remove rotation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "degrees": {
+                        "type": "number",
+                        "description": "Rotation in degrees (e.g. 90, -45, 0)",
+                    },
+                },
+                "required": ["clip_id", "degrees"],
+            },
+        ),
         # ---- Advanced clip operations ----
         Tool(
             name="overwrite_clip",
@@ -1195,6 +1248,24 @@ async def call_tool(
         if name == "get_composite_geometry":
             return _ok(_call(instance, "track.get_composite_geometry",
                              {"track_id": int(arguments["track_id"])}))
+
+        # ---- Per-clip geometry ----
+        if name == "set_geometry":
+            params = {"clip_id": int(arguments["clip_id"])}
+            for k in ("x", "y", "w", "h"):
+                if k in arguments:
+                    params[k] = float(arguments[k])
+            return _ok(_call(instance, "clip.set_geometry", params))
+
+        if name == "get_geometry":
+            return _ok(_call(instance, "clip.get_geometry",
+                             {"clip_id": int(arguments["clip_id"])}))
+
+        if name == "set_rotation":
+            return _ok(_call(instance, "clip.set_rotation", {
+                "clip_id": int(arguments["clip_id"]),
+                "degrees": float(arguments["degrees"]),
+            }))
 
         # ---- Advanced clip operations ----
         if name == "overwrite_clip":

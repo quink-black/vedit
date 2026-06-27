@@ -202,6 +202,24 @@ bool AppController::clip_set_video_enabled(ClipId id, bool enabled) {
     return ok;
 }
 
+bool AppController::clip_set_geometry(ClipId id, double x, double y,
+                                       double w, double h) {
+    bool ok = project_->timeline().clip_set_geometry(id, x, y, w, h);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::clip_set_rotation(ClipId id, double degrees) {
+    bool ok = project_->timeline().clip_set_rotation(id, degrees);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::clip_get_geometry(ClipId id, double& x, double& y,
+                                       double& w, double& h) const {
+    return project_->timeline().clip_get_geometry(id, x, y, w, h);
+}
+
 // --- transport ---
 
 bool AppController::play() {

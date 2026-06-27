@@ -1784,3 +1784,186 @@ TEST_CASE("track.set_muted and track.set_hidden over RPC", "[t20]") {
     REQUIRE(doc["tracks"][0]["muted"] == false);
     REQUIRE(doc["tracks"][0]["hidden"] == false);
 }
+
+// Stage 1: per-clip geometry via MLT affine filter.
+
+TEST_CASE("clip.set_geometry domain round-trip", "[t21]") {
+    std::string clip = vedit::test::make_test_clip("geo_domain");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Set geometry: 25% from left, 25% from top, 50% width, 50% height.
+    REQUIRE(app.clip_set_geometry(cid, 25, 25, 50, 50));
+
+    // Read back.
+    double x = 0, y = 0, w = 100, h = 100;
+    REQUIRE(app.clip_get_geometry(cid, x, y, w, h));
+    REQUIRE(x == 25);
+    REQUIRE(y == 25);
+    REQUIRE(w == 50);
+    REQUIRE(h == 50);
+
+    // Reset to defaults should detach the affine filter.
+    REQUIRE(app.clip_set_geometry(cid, 0, 0, 100, 100));
+    REQUIRE(app.clip_get_geometry(cid, x, y, w, h));
+    REQUIRE(x == 0);
+    REQUIRE(y == 0);
+    REQUIRE(w == 100);
+    REQUIRE(h == 100);
+}
+
+TEST_CASE("clip.get_geometry returns defaults with no filter", "[t21]") {
+    std::string clip = vedit::test::make_test_clip("geo_default");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    double x = -1, y = -1, w = -1, h = -1;
+    REQUIRE(app.clip_get_geometry(cid, x, y, w, h));
+    REQUIRE(x == 0);
+    REQUIRE(y == 0);
+    REQUIRE(w == 100);
+    REQUIRE(h == 100);
+}
+
+TEST_CASE("clip.set_geometry RPC round-trip", "[t21]") {
+    std::string clip = vedit::test::make_test_clip("geo_rpc");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Set geometry via RPC.
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","clip.set_geometry"},
+                          {"id",1},
+                          {"params", {{"clip_id", cid.value},
+                                       {"x",10},{"y",20},{"w",80},{"h",60}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Read back via RPC.
+    req = {{"jsonrpc","2.0"},{"method","clip.get_geometry"},
+           {"id",2},{"params", {{"clip_id", cid.value}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"]["x"] == 10);
+    REQUIRE(resp["result"]["y"] == 20);
+    REQUIRE(resp["result"]["w"] == 80);
+    REQUIRE(resp["result"]["h"] == 60);
+}
+
+TEST_CASE("clip.set_geometry partial update", "[t21]") {
+    std::string clip = vedit::test::make_test_clip("geo_partial");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Set full geometry first.
+    auto req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_geometry"},
+                              {"id",1},
+                              {"params", {{"clip_id", cid.value},
+                                           {"x",30},{"y",30},{"w",40},{"h",40}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Partial update: change only X and W.
+    req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_geometry"},
+                         {"id",2},
+                         {"params", {{"clip_id", cid.value},
+                                      {"x",50},{"w",20}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Read back: X and W changed, Y and H unchanged.
+    req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.get_geometry"},
+                         {"id",3},{"params", {{"clip_id", cid.value}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp["result"]["x"] == 50);
+    REQUIRE(resp["result"]["y"] == 30);
+    REQUIRE(resp["result"]["w"] == 20);
+    REQUIRE(resp["result"]["h"] == 40);
+}
+
+TEST_CASE("clip.set_rotation round-trip", "[t21]") {
+    std::string clip = vedit::test::make_test_clip("geo_rot");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Set rotation.
+    REQUIRE(app.clip_set_rotation(cid, 45.0));
+
+    // Rotation alone attaches affine filter; verify geometry is still default.
+    double x, y, w, h;
+    REQUIRE(app.clip_get_geometry(cid, x, y, w, h));
+    REQUIRE(x == 0);
+    REQUIRE(y == 0);
+    REQUIRE(w == 100);
+    REQUIRE(h == 100);
+
+    // Reset rotation to 0 detaches the filter.
+    REQUIRE(app.clip_set_rotation(cid, 0.0));
+    REQUIRE(app.clip_get_geometry(cid, x, y, w, h));
+    REQUIRE(x == 0);
+    REQUIRE(y == 0);
+    REQUIRE(w == 100);
+    REQUIRE(h == 100);
+}
+
+TEST_CASE("geometry appears in state.get attached filters", "[t21]") {
+    std::string clip = vedit::test::make_test_clip("geo_state");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.clip_set_geometry(cid, 10, 10, 80, 80));
+
+    std::string js = vedit::ProjectSaveLoad::state_json(app.project());
+    auto doc = nlohmann::json::parse(js);
+
+    bool found = false;
+    for (const auto& af : doc["filters"]["attached"]) {
+        if (af["target_type"] == "clip" &&
+            af["target_id"] == cid.value &&
+            af["filter"] == "affine") {
+            found = true;
+        }
+    }
+    REQUIRE(found);
+}

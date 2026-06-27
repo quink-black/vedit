@@ -473,6 +473,43 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
+    // ---- clip.set_geometry / clip.get_geometry / clip.set_rotation ----
+    //
+    // Per-clip position, size, and rotation via the MLT affine filter.
+    // x, y, w, h are percentages (0-100) of the profile resolution.
+    // All params are optional on set (partial update); defaults fill in
+    // from the current geometry. Rotation is in degrees, clockwise.
+    d.register_method("clip.set_geometry", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        double cx, cy, cw, ch;
+        app.clip_get_geometry(id, cx, cy, cw, ch);
+        double x = params.contains("x") ? params["x"].get<double>() : cx;
+        double y = params.contains("y") ? params["y"].get<double>() : cy;
+        double w = params.contains("w") ? params["w"].get<double>() : cw;
+        double h = params.contains("h") ? params["h"].get<double>() : ch;
+        if (!app.clip_set_geometry(id, x, y, w, h))
+            throw RpcException(ErrorCode::ApplicationError, "set_geometry failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("clip.get_geometry", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        double x, y, w, h;
+        app.clip_get_geometry(id, x, y, w, h);
+        return nlohmann::json{{"x", x}, {"y", y}, {"w", w}, {"h", h}};
+    });
+
+    d.register_method("clip.set_rotation", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        double degrees = params.value("degrees", 0.0);
+        if (!app.clip_set_rotation(id, degrees))
+            throw RpcException(ErrorCode::ApplicationError, "set_rotation failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
     d.register_method("transition.add", [&](const nlohmann::json& params) {
         TrackId tid{params.value("track_id", 0LL)};
         int clip_idx = params.value("clip_index", 0);
