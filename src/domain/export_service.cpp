@@ -16,18 +16,23 @@ namespace vedit {
 
 namespace {
 
+struct ExportProgressData {
+    int total;
+    int start_frame;
+    ExportService::ProgressFn* fn;
+};
+
 // Static callback for the consumer-frame-show event during export.
-// The userdata pointer is a pointer-to-pair of (total_frames, ProgressFn).
 void on_export_frame(mlt_consumer, void* ud, mlt_event_data data) {
     if (!ud) return;
-    auto* pair = static_cast<std::pair<int, ExportService::ProgressFn*>*>(ud);
-    if (!pair->second || !*pair->second) return;
+    auto* pd = static_cast<ExportProgressData*>(ud);
+    if (!pd->fn || !*pd->fn) return;
     Mlt::Frame frame = Mlt::EventData(data).to_frame();
     if (!frame.is_valid() || !frame.get_int("rendered")) return;
-    int pos = frame.get_position();
-    int total = pair->first;
+    int pos = frame.get_position() - pd->start_frame;
+    int total = pd->total;
     if (total > 0) {
-        (*pair->second)(static_cast<double>(pos) / total);
+        (*pd->fn)(static_cast<double>(pos) / total);
     }
 }
 
@@ -79,7 +84,6 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     // playback and rewind to the start so export always renders the
     // whole timeline regardless of where preview left the playhead.
     producer.set_speed(1.0);
-    producer.seek(0);
 
     // Compute the effective export length. The tractor's get_length()
     // returns the maximum across all tracks. When tracks have different
@@ -108,14 +112,26 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
             delete mt;
         }
     }
-    producer.set("out", total - 1);
+
+    // Range export: if caller supplied an in-point, seek there instead
+    // of frame 0. If out_point is supplied, clamp the export length.
+    int64_t start_frame = 0;
+    if (in_point >= 0 && in_point < total) {
+        start_frame = in_point;
+    }
+    producer.seek(static_cast<int>(start_frame));
+
+    if (out_point >= 0 && out_point < total && out_point > start_frame) {
+        total = static_cast<int>(out_point - start_frame);
+    }
+    producer.set("out", start_frame + total - 1);
 
     consumer.connect(producer);
 
     // Progress reporting via consumer-frame-show.
     // Re-read total in case producer.set("out", ...) changed it.
     int total2 = producer.get_length();
-    std::pair<int, ProgressFn*> progress_data(total2, &on_progress);
+    ExportProgressData progress_data{total2, static_cast<int>(start_frame), &on_progress};
     if (on_progress) {
         consumer.listen("consumer-frame-show", &progress_data,
                         reinterpret_cast<mlt_listener>(on_export_frame));

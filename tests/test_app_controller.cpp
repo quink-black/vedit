@@ -232,6 +232,41 @@ TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9][export]"
     REQUIRE(progress >= 0.0);  // progress callback fired
 }
 
+TEST_CASE("ExportService range export renders only requested frames", "[t9][export]") {
+    std::string clip = make_test_clip("range_export");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    // Export frames 10-20 (should produce ~10 frames, ~0.4s at 25fps).
+    std::string out_full = unique_temp_path("vedit-test", "range_full", ".mp4");
+    std::string out_range = unique_temp_path("vedit-test", "range_part", ".mp4");
+    vedit::ExportService svc;
+    REQUIRE(svc.render(*app.project().producer(), app.profile(), out_full));
+    REQUIRE(svc.render(*app.project().producer(), app.profile(), out_range,
+                       nullptr, nullptr, 10, 20));
+
+    // Probe durations. The range export should be shorter.
+    auto probe_dur = [](const std::string& path) -> double {
+        std::string cmd = "ffprobe -v error -show_entries format=duration "
+                          "-of csv=p=0 " + path + " 2>&1";
+        FILE* f = VEDIT_POPEN(cmd.c_str(), "r");
+        if (!f) return -1;
+        char buf[64] = {0};
+        fgets(buf, sizeof(buf), f);
+        VEDIT_PCLOSE(f);
+        return std::atof(buf);
+    };
+    double dur_full = probe_dur(out_full);
+    double dur_range = probe_dur(out_range);
+    REQUIRE(dur_full > 0.0);
+    REQUIRE(dur_range > 0.0);
+    REQUIRE(dur_range < dur_full);
+}
+
 TEST_CASE("ExportService get_frame saves a single PNG", "[t9][export]") {
     std::string clip = make_test_clip("frame");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
