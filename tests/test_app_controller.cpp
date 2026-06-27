@@ -915,7 +915,7 @@ TEST_CASE("library.set_stream switches audio", "[t15]") {
     REQUIRE(item->audio_index == other);
 }
 
-TEST_CASE("library.set_stream refuses when in use", "[t15]") {
+TEST_CASE("library.set_stream switches audio when in use", "[t15]") {
     std::string clip = vedit::test::make_test_clip_multistream("set_stream_inuse");
     if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
 
@@ -924,11 +924,18 @@ TEST_CASE("library.set_stream refuses when in use", "[t15]") {
     auto v1 = app.track_add(vedit::TrackKind::Video);
     REQUIRE(app.clip_append(v1, mi).valid());
 
-    // Source is referenced: set_stream must refuse, leaving the
-    // selection unchanged.
+    // Source is referenced: set_stream must succeed and re-cut the
+    // timeline clip from the new producer.
     int orig_audio = app.project().library().item(mi)->audio_index;
-    REQUIRE_FALSE(app.library_set_stream(mi, -1, orig_audio + 1));
-    REQUIRE(app.project().library().item(mi)->audio_index == orig_audio);
+    int other = -1;
+    for (const auto& s : app.project().library().item(mi)->streams) {
+        if (s.type == "audio" && s.index != orig_audio) { other = s.index; break; }
+    }
+    REQUIRE(other >= 0);
+    REQUIRE(app.library_set_stream(mi, -1, other));
+    REQUIRE(app.project().library().item(mi)->audio_index == other);
+    // The timeline clip should still be intact with the same id.
+    REQUIRE(app.project().timeline().count_clips_for_media(mi) == 1);
 }
 
 TEST_CASE("state.get exposes streams list with stable schema", "[t15]") {

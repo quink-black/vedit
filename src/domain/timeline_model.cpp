@@ -657,6 +657,40 @@ void TimelineModel::on_media_removed(int removed_index) {
     rebuild_clip_view();
 }
 
+void TimelineModel::reconnect_clips(int media_index) {
+    // Snapshot affected clips before rebuild_clip_view clears clips_.
+    std::vector<ClipInfo> affected;
+    for (const auto& [cid, info] : clips_) {
+        if (info.media_index == media_index) {
+            affected.push_back(info);
+        }
+    }
+
+    for (const auto& ci : affected) {
+        int tidx = track_index(ci.track_id);
+        if (tidx < 0) continue;
+        auto& pl = tracks_[tidx].playlist;
+        for (int i = 0; i < pl->count(); ++i) {
+            Mlt::Producer* cut = pl->get_clip(i);
+            if (!cut) continue;
+            int64_t cid = read_clip_id(*cut);
+            delete cut;
+            if (cid != ci.id.value) continue;
+
+            pl->remove(i);
+            Mlt::Producer* new_cut = make_stamped_cut(
+                library_, media_index,
+                ci.in_point, ci.out_point, ci.id.value);
+            if (!new_cut) return;
+            pl->insert(*new_cut, i, -1, -1);
+            delete new_cut;
+            break;
+        }
+    }
+
+    rebuild_clip_view();
+}
+
 std::vector<ClipInfo> TimelineModel::clips_on_track(TrackId track) const {
     std::vector<ClipInfo> result;
     for (const auto& [_, info] : clips_) {

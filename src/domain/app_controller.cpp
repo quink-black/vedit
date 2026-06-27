@@ -61,20 +61,15 @@ bool AppController::library_remove(int index) {
 }
 
 bool AppController::library_set_stream(int index, int video_index, int audio_index) {
-    // Same refuse-in-use guard as library_remove: changing streams on
-    // a producer whose cuts are already on the timeline would silently
-    // mutate already-placed clips (per-media design — the contract is
-    // that all clips from one library item share the chosen streams).
-    // Caller must drop the clips first if they want to switch streams.
-    if (project_->timeline().count_clips_for_media(index) > 0) {
-        return false;
-    }
+    // MediaLibrary::set_stream re-opens the source with a fresh
+    // producer using the new stream selection, then reconnect_clips
+    // re-cuts every referencing timeline clip from the new producer.
+    // ClipId, playlist index, and ClipInfo are preserved.
     if (!project_->library().set_stream(index, video_index, audio_index)) {
         return false;
     }
-    // The library item's stream metadata is now updated; preview of any
-    // (now-removed) clip would refresh, but since we refused in-use,
-    // there are none to refresh.
+    project_->timeline().reconnect_clips(index);
+    player_->refresh();
     return true;
 }
 

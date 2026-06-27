@@ -116,6 +116,13 @@ public:
     // must not exist (caller guarantees count_clips_for_media == 0).
     void on_media_removed(int removed_index);
 
+    // Re-cut all clips referencing `media_index` from the current
+    // library producer. Used after MediaLibrary::set_stream swaps the
+    // producer so timeline cuts point to the new producer with the
+    // updated stream selection. ClipId, playlist index, and ClipInfo
+    // are preserved.
+    void reconnect_clips(int media_index);
+
     bool remove_clip(ClipId id);
     bool move_clip(ClipId id, TrackId dest_track, int64_t dest_position);
     bool trim_clip(ClipId id, int64_t new_in, int64_t new_out);
