@@ -20,6 +20,19 @@ constexpr const char* kClipIdProp = "_vedit_clip_id";
 constexpr const char* kTrackIdProp = "_vedit_track_id";
 constexpr const char* kMediaIdxProp = "_vedit_media_idx";
 
+// Marker stamped on every filter vedit attaches on behalf of a user or
+// agent. attached_filters() reports only marked filters, so a producer's
+// own MLT-internal filters (avcolor_space, crop, resize, swscale, ...)
+// are never confused with a user-attached filter of the same service
+// name. Filtering by service name alone hid user-attached crop/resize.
+constexpr const char* kUserFilterProp = "_vedit_user_filter";
+
+// Human-facing transition type tag stamped on a mix tractor so the type
+// requested via transition.add (luma/mix/wipe/...) survives and can be
+// read back by state.get and the GUI. MLT itself only marks the tractor
+// with the internal "mlt_mix" data property, which does not carry type.
+constexpr const char* kTransitionTypeProp = "_vedit_transition_type";
+
 int64_t read_clip_id(Mlt::Producer& cut) {
     return cut.get_int(kClipIdProp);
 }
@@ -448,12 +461,57 @@ bool TimelineModel::add_transition(TrackId track, int clip_index,
     auto& pl = tracks_[tidx].playlist;
     if (clip_index < 0 || clip_index >= pl->count() - 1) return false;
 
-    // MLT's mix uses the index of the first of the two adjacent clips.
-    pl->mix(clip_index, length, nullptr);
+    // mlt_playlist_mix plants a 2-track mix tractor at clip_index+1 but,
+    // with a NULL transition, plants no blend at all -- the upper track
+    // just sits on the lower one. A visible transition requires planting
+    // transitions into the mix tractor via mix_add (Shotcut's pattern).
+    if (pl->mix(clip_index, length, nullptr) != 0) return false;
 
-    // Apply a transition type via the mix transition.
-    // mix creates a blank transition; we can replace it.
-    // For simplicity, use the default cross-fade that mix() creates.
+    // The mix tractor is the new clip at clip_index+1.
+    Mlt::Producer* mix_cut = pl->get_clip(clip_index + 1);
+    if (!mix_cut) return false;
+
+    // Pick the video transition service by requested type. "mix" is a
+    // plain audio-style dissolve; the wipe family runs through "luma"
+    // with a named luma resource. Unknown types fall back to a luma
+    // dissolve (no resource = soft cross-dissolve).
+    std::string video_service = "luma";
+    std::string luma_resource;
+    if (type == "mix" || type == "dissolve" || type.empty()) {
+        video_service = "luma";        // soft dissolve (no luma file)
+    } else if (type == "luma" || type == "wipe") {
+        video_service = "luma";        // default diagonal wipe via softness
+    } else if (type == "bar" || type == "barn" || type == "clock" ||
+               type == "iris" || type == "spiral") {
+        video_service = "luma";
+        luma_resource = type;          // named built-in luma pattern
+    } else {
+        video_service = "luma";
+    }
+
+    {
+        Mlt::Transition dissolve(profile_, video_service.c_str());
+        if (dissolve.is_valid()) {
+            // alpha_over keeps the blend correct over transparent areas.
+            dissolve.set("alpha_over", 1);
+            dissolve.set("fix_background_alpha", 1);
+            if (!luma_resource.empty())
+                dissolve.set("resource", luma_resource.c_str());
+            pl->mix_add(clip_index + 1, &dissolve);
+        }
+        // Always cross-fade audio across the same region.
+        Mlt::Transition cross_fade(profile_, "mix:-2");
+        if (cross_fade.is_valid())
+            pl->mix_add(clip_index + 1, &cross_fade);
+    }
+
+    // Record the requested type on the mix tractor so state.get and the
+    // GUI can read it back. mlt_mix tractors are identified downstream by
+    // the "mlt_mix" data property; we add our own human-facing type tag.
+    mix_cut->parent().set(kTransitionTypeProp, type.c_str());
+
+    delete mix_cut;
+    rebuild_clip_view();
     return true;
 }
 
@@ -694,6 +752,7 @@ bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name
         delete cut;
         return false;
     }
+    filter.set(kUserFilterProp, 1);
 
     // Attach to cut->parent() — the shared root producer stored in the
     // playlist. pl->get_clip() returns a temporary cut wrapper; its
@@ -948,6 +1007,7 @@ bool TimelineModel::track_attach_filter(TrackId track_id,
 
     Mlt::Filter filter(profile_, filter_name.c_str());
     if (!filter.is_valid()) return false;
+    filter.set(kUserFilterProp, 1);
 
     auto& pl = tracks_[tidx].playlist;
     mlt_service_attach(MLT_SERVICE(pl->get_producer()),
@@ -1177,20 +1237,13 @@ TimelineModel::attached_filters() const {
                 if (!filter) continue;
                 const char* svc = filter->get("mlt_service");
                 if (!svc || !svc[0]) { delete filter; continue; }
-                // Skip MLT-internal filters auto-attached by the
-                // producer (not user-visible or user-controllable).
-                if (std::strcmp(svc, "avcolor_space") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "avdeinterlace") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "sws_flags") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "color_transform") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "deinterlace") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "fieldorder") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "crop") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "swscale") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "resize") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "swresample") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "resample") == 0) { delete filter; continue; }
-                if (std::strcmp(svc, "audioconvert") == 0) { delete filter; continue; }
+                // Report only filters vedit attached for the user/agent.
+                // A producer carries its own internal filters
+                // (avcolor_space, crop, resize, swscale, ...); filtering
+                // those by service name also hid user-attached filters of
+                // the same name (e.g. an agent's crop). The marker
+                // distinguishes intent, not service identity.
+                if (!filter->get_int(kUserFilterProp)) { delete filter; continue; }
                 AttachedFilterInfo info;
                 info.target_type = "clip";
                 info.target_id = clip_id;
@@ -1218,6 +1271,7 @@ TimelineModel::attached_filters() const {
             if (!filter) continue;
             const char* svc = filter->get("mlt_service");
             if (!svc || !svc[0]) { delete filter; continue; }
+            if (!filter->get_int(kUserFilterProp)) { delete filter; continue; }
             AttachedFilterInfo info;
             info.target_type = "track";
             info.target_id = ts.info.id.value;

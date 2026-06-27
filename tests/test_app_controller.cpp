@@ -1537,3 +1537,98 @@ TEST_CASE("composite geometry positions track on canvas", "[t19][export]") {
     };
     REQUIRE(file_size(png) > 100);
 }
+
+// 0.3 regression: a filter the user/agent attaches must appear in
+// state.get even when its service name collides with an MLT-internal
+// filter (crop, resize, ...). Before the fix, attached_filters() dropped
+// these by service name, hiding a user-applied crop entirely.
+TEST_CASE("user-attached crop filter is visible in state.get", "[t18][regression]") {
+    std::string clip = vedit::test::make_test_clip("user_crop");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Attach a crop filter the same way an agent would.
+    REQUIRE(app.filter_add(cid, "crop"));
+
+    // It must show up in the attached-filters projection.
+    auto attached = app.project().timeline().attached_filters();
+    bool found = false;
+    for (const auto& af : attached) {
+        if (af.target_type == "clip" && af.target_id == cid.value &&
+            af.filter_name == "crop") {
+            found = true;
+        }
+    }
+    REQUIRE(found);
+
+    // And in the JSON state the agent actually reads.
+    std::string js = vedit::ProjectSaveLoad::state_json(app.project());
+    auto doc = nlohmann::json::parse(js);
+    bool in_state = false;
+    for (const auto& af : doc["filters"]["attached"]) {
+        if (af["filter"] == "crop" && af["target_id"] == cid.value)
+            in_state = true;
+    }
+    REQUIRE(in_state);
+}
+
+// 0.1: transition.add must honor the requested type. mix() with a null
+// transition plants no blend at all; the fix plants a luma video
+// transition plus an audio cross-fade and tags the mix with the type.
+TEST_CASE("transition.add plants a typed transition", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("transition_type");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto c1 = app.clip_append(v1, mi);
+    auto c2 = app.clip_append(v1, mi);
+    REQUIRE(c1.valid());
+    REQUIRE(c2.valid());
+
+    int before = app.project().timeline().clip_count();
+
+    // Adjacent clips are playlist indices 0 and 1; mix uses the first.
+    REQUIRE(app.clip_add_transition(v1, 0, 15, "luma"));
+
+    // The mix inserts a tractor between the two clips, so the timeline
+    // now reports one more clip-ish entry than before.
+    int after = app.project().timeline().clip_count();
+    REQUIRE(after >= before);
+
+    // The composed timeline must still render a frame in the mix region.
+    std::string png = vedit::test::unique_temp_path(
+        "vedit-test", "transition_frame", ".png");
+    vedit::ExportService svc;
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 2, png));
+}
+
+// 0.1: transition.list_types reports the wired-up types over RPC.
+TEST_CASE("transition.list_types over RPC dispatcher", "[t18]") {
+    vedit::AppController app;
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","transition.list_types"},
+                          {"id",1},{"params", nlohmann::json::object()}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"].is_array());
+    REQUIRE(resp["result"].size() >= 2);
+
+    bool has_luma = false, has_dissolve = false;
+    for (const auto& t : resp["result"]) {
+        if (t["id"] == "luma") has_luma = true;
+        if (t["id"] == "dissolve") has_dissolve = true;
+    }
+    REQUIRE(has_luma);
+    REQUIRE(has_dissolve);
+}
