@@ -90,6 +90,12 @@ public:
     bool clip_get_geometry(ClipId id, double& x, double& y,
                            double& w, double& h) const;
 
+    // Per-clip crop margins in pixels.
+    bool clip_set_crop(ClipId id, int left, int right,
+                       int top, int bottom);
+    bool clip_get_crop(ClipId id, int& left, int& right,
+                       int& top, int& bottom) const;
+
     // --- filters (M2) ---
     const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
     bool filter_add(ClipId clip_id, const std::string& name);

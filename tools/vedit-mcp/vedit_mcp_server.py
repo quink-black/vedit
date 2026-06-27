@@ -754,6 +754,39 @@ async def list_tools() -> list[Tool]:
                 "required": ["clip_id", "degrees"],
             },
         ),
+        Tool(
+            name="set_crop",
+            description=(
+                "Set per-clip crop margins in pixels. Omitted params "
+                "keep their current value. Set all to 0 to remove the "
+                "crop filter entirely."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "left":   {"type": "integer", "description": "Pixels to crop from left (default: current)"},
+                    "right":  {"type": "integer", "description": "Pixels to crop from right (default: current)"},
+                    "top":    {"type": "integer", "description": "Pixels to crop from top (default: current)"},
+                    "bottom": {"type": "integer", "description": "Pixels to crop from bottom (default: current)"},
+                },
+                "required": ["clip_id"],
+            },
+        ),
+        Tool(
+            name="get_crop",
+            description=(
+                "Get the current per-clip crop margins in pixels. "
+                "Returns (0,0,0,0) when no crop has been set."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                },
+                "required": ["clip_id"],
+            },
+        ),
         # ---- Advanced clip operations ----
         Tool(
             name="overwrite_clip",
@@ -1266,6 +1299,18 @@ async def call_tool(
                 "clip_id": int(arguments["clip_id"]),
                 "degrees": float(arguments["degrees"]),
             }))
+
+        # ---- Per-clip crop ----
+        if name == "set_crop":
+            params = {"clip_id": int(arguments["clip_id"])}
+            for k in ("left", "right", "top", "bottom"):
+                if k in arguments:
+                    params[k] = int(arguments[k])
+            return _ok(_call(instance, "clip.set_crop", params))
+
+        if name == "get_crop":
+            return _ok(_call(instance, "clip.get_crop",
+                             {"clip_id": int(arguments["clip_id"])}))
 
         # ---- Advanced clip operations ----
         if name == "overwrite_clip":

@@ -510,6 +510,33 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
+    // ---- clip.set_crop / clip.get_crop ----
+    //
+    // Per-clip crop margins in pixels. All params are optional on set
+    // (partial update); defaults fill in from the current crop values.
+    d.register_method("clip.set_crop", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        int cl, cr, ct, cb;
+        app.clip_get_crop(id, cl, cr, ct, cb);
+        int left   = params.value("left",   cl);
+        int right  = params.value("right",  cr);
+        int top    = params.value("top",    ct);
+        int bottom = params.value("bottom", cb);
+        if (!app.clip_set_crop(id, left, right, top, bottom))
+            throw RpcException(ErrorCode::ApplicationError, "set_crop failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("clip.get_crop", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        int left, right, top, bottom;
+        app.clip_get_crop(id, left, right, top, bottom);
+        return nlohmann::json{{"left", left}, {"right", right},
+                              {"top", top},   {"bottom", bottom}};
+    });
+
     d.register_method("transition.add", [&](const nlohmann::json& params) {
         TrackId tid{params.value("track_id", 0LL)};
         int clip_idx = params.value("clip_index", 0);

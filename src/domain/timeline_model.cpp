@@ -1552,4 +1552,76 @@ bool TimelineModel::clip_get_geometry(ClipId id, double& x, double& y,
     return true;
 }
 
+// ---- per-clip crop ----
+
+bool TimelineModel::clip_set_crop(ClipId id, int left, int right,
+                                   int top, int bottom) {
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, "crop");
+    delete cut;
+
+    if (left == 0 && right == 0 && top == 0 && bottom == 0) {
+        if (fidx >= 0) detach_filter(id, "crop");
+        return true;
+    }
+
+    if (fidx < 0) {
+        if (!attach_filter(id, "crop")) return false;
+    } else {
+        // The producer may already carry a crop filter (MLT
+        // auto-attaches one for normalization). Stamp our marker
+        // so attached_filters() reports it.
+        cut = find_cut_producer(id, nullptr);
+        if (cut) {
+            Mlt::Filter* f = cut->parent().filter(fidx);
+            if (f) {
+                f->set(kUserFilterProp, 1);
+                delete f;
+            }
+            delete cut;
+        }
+    }
+
+    auto set_int = [&](const char* param, int value) {
+        set_filter_param(id, "crop", param, std::to_string(value));
+    };
+    set_int("left", left);
+    set_int("right", right);
+    set_int("top", top);
+    set_int("bottom", bottom);
+    return true;
+}
+
+bool TimelineModel::clip_get_crop(ClipId id, int& left, int& right,
+                                   int& top, int& bottom) const {
+    left = 0;
+    right = 0;
+    top = 0;
+    bottom = 0;
+
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return true;
+
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, "crop");
+    if (fidx < 0) {
+        delete cut;
+        return true;
+    }
+
+    Mlt::Filter* filter = parent.filter(fidx);
+    if (filter) {
+        left   = filter->get_int("left");
+        right  = filter->get_int("right");
+        top    = filter->get_int("top");
+        bottom = filter->get_int("bottom");
+        delete filter;
+    }
+    delete cut;
+    return true;
+}
+
 } // namespace vedit

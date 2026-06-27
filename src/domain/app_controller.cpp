@@ -220,6 +220,18 @@ bool AppController::clip_get_geometry(ClipId id, double& x, double& y,
     return project_->timeline().clip_get_geometry(id, x, y, w, h);
 }
 
+bool AppController::clip_set_crop(ClipId id, int left, int right,
+                                   int top, int bottom) {
+    bool ok = project_->timeline().clip_set_crop(id, left, right, top, bottom);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::clip_get_crop(ClipId id, int& left, int& right,
+                                   int& top, int& bottom) const {
+    return project_->timeline().clip_get_crop(id, left, right, top, bottom);
+}
+
 // --- transport ---
 
 bool AppController::play() {

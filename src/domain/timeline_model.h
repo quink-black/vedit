@@ -159,6 +159,14 @@ public:
     bool clip_get_geometry(ClipId id, double& x, double& y,
                            double& w, double& h) const;
 
+    // Per-clip crop via MLT crop filter. Margins are in pixels.
+    // The filter is attached on first non-zero margin and detached when
+    // all four margins return to zero.
+    bool clip_set_crop(ClipId id, int left, int right,
+                       int top, int bottom);
+    bool clip_get_crop(ClipId id, int& left, int& right,
+                       int& top, int& bottom) const;
+
     // --- queries ---
     int clip_count() const;
     const ClipInfo* clip(ClipId id) const;

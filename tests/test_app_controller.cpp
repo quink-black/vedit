@@ -1967,3 +1967,151 @@ TEST_CASE("geometry appears in state.get attached filters", "[t21]") {
     }
     REQUIRE(found);
 }
+
+// Stage 2: per-clip crop via MLT crop filter.
+
+TEST_CASE("clip.set_crop domain round-trip", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("crop_domain");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.clip_set_crop(cid, 10, 20, 30, 40));
+
+    int left, right, top, bottom;
+    REQUIRE(app.clip_get_crop(cid, left, right, top, bottom));
+    REQUIRE(left == 10);
+    REQUIRE(right == 20);
+    REQUIRE(top == 30);
+    REQUIRE(bottom == 40);
+
+    // Reset to zeros detaches the crop filter.
+    REQUIRE(app.clip_set_crop(cid, 0, 0, 0, 0));
+    REQUIRE(app.clip_get_crop(cid, left, right, top, bottom));
+    REQUIRE(left == 0);
+    REQUIRE(right == 0);
+    REQUIRE(top == 0);
+    REQUIRE(bottom == 0);
+}
+
+TEST_CASE("clip.get_crop returns zeros with no filter", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("crop_default");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    int left = -1, right = -1, top = -1, bottom = -1;
+    REQUIRE(app.clip_get_crop(cid, left, right, top, bottom));
+    REQUIRE(left == 0);
+    REQUIRE(right == 0);
+    REQUIRE(top == 0);
+    REQUIRE(bottom == 0);
+}
+
+TEST_CASE("clip.set_crop RPC round-trip", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("crop_rpc");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    auto req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_crop"},
+                              {"id",1},
+                              {"params", {{"clip_id", cid.value},
+                                           {"left",5},{"right",15},
+                                           {"top",25},{"bottom",35}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.get_crop"},
+                         {"id",2},{"params", {{"clip_id", cid.value}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp["result"]["left"] == 5);
+    REQUIRE(resp["result"]["right"] == 15);
+    REQUIRE(resp["result"]["top"] == 25);
+    REQUIRE(resp["result"]["bottom"] == 35);
+}
+
+TEST_CASE("clip.set_crop partial update", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("crop_partial");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Set full crop first.
+    auto req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_crop"},
+                              {"id",1},
+                              {"params", {{"clip_id", cid.value},
+                                           {"left",10},{"right",10},
+                                           {"top",10},{"bottom",10}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Partial: change only left and top.
+    req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_crop"},
+                         {"id",2},
+                         {"params", {{"clip_id", cid.value},
+                                      {"left",50},{"top",60}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.get_crop"},
+                         {"id",3},{"params", {{"clip_id", cid.value}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp["result"]["left"] == 50);
+    REQUIRE(resp["result"]["right"] == 10);
+    REQUIRE(resp["result"]["top"] == 60);
+    REQUIRE(resp["result"]["bottom"] == 10);
+}
+
+TEST_CASE("crop appears in state.get attached filters", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("crop_state");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.clip_set_crop(cid, 5, 10, 15, 20));
+
+    std::string js = vedit::ProjectSaveLoad::state_json(app.project());
+    auto doc = nlohmann::json::parse(js);
+
+    bool found = false;
+    for (const auto& af : doc["filters"]["attached"]) {
+        if (af["target_type"] == "clip" &&
+            af["target_id"] == cid.value &&
+            af["filter"] == "crop") {
+            found = true;
+        }
+    }
+    REQUIRE(found);
+}
