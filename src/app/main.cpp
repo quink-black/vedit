@@ -184,6 +184,12 @@ struct GuiState {
     int profile_dialog_w = 1920;
     int profile_dialog_h = 1080;
     float profile_dialog_fps = 25.0f;
+
+    // Annotation (bounding-box drag on preview for analysis.track).
+    bool annotating = false;
+    float anno_x0 = 0, anno_y0 = 0;   // drag start (preview-local)
+    float anno_x1 = 0, anno_y1 = 0;   // drag end
+    vedit::ClipId anno_clip{0};       // clip to run analysis.track on
 };
 
 // ============================================================================
@@ -419,8 +425,64 @@ static void draw_preview_panel(vedit::AppController& app, GuiState& gui,
         if (draw_h > avail.y) { draw_h = avail.y; draw_w = draw_h * aspect; }
         if (draw_w < 1) draw_w = 1;
         if (draw_h < 1) draw_h = 1;
+
+        ImVec2 img_pos = ImGui::GetCursorScreenPos();
         ImGui::Image(reinterpret_cast<ImTextureID>(tex),
                      ImVec2(draw_w, draw_h));
+
+        // Annotation: drag a bounding box on the preview image.
+        // Right-click+drag draws a rect; releasing stores it as the
+        // initial tracking region for analysis.track on the selected clip.
+        if (ImGui::IsItemHovered() &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            gui.annotating = true;
+            ImVec2 m = ImGui::GetMousePos();
+            gui.anno_x0 = m.x - img_pos.x;
+            gui.anno_y0 = m.y - img_pos.y;
+            gui.anno_x1 = gui.anno_x0;
+            gui.anno_y1 = gui.anno_y0;
+        }
+        if (gui.annotating) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                ImVec2 m = ImGui::GetMousePos();
+                gui.anno_x1 = m.x - img_pos.x;
+                gui.anno_y1 = m.y - img_pos.y;
+            } else {
+                gui.annotating = false;
+                // Scale from preview pixels to clip resolution.
+                float sx = static_cast<float>(tex_w) / draw_w;
+                float sy = static_cast<float>(tex_h) / draw_h;
+                float rx = std::min(gui.anno_x0, gui.anno_x1) * sx;
+                float ry = std::min(gui.anno_y0, gui.anno_y1) * sy;
+                float rw = std::abs(gui.anno_x1 - gui.anno_x0) * sx;
+                float rh = std::abs(gui.anno_y1 - gui.anno_y0) * sy;
+                if (rw >= 4 && rh >= 4 && gui.selected_clip.valid()) {
+                    gui.anno_clip = gui.selected_clip;
+                    char buf[128];
+                    std::snprintf(buf, sizeof(buf), "%d %d %d %d",
+                                  static_cast<int>(rx),
+                                  static_cast<int>(ry),
+                                  static_cast<int>(rw),
+                                  static_cast<int>(rh));
+                    auto kfs = app.clip_analyze_track(
+                        gui.anno_clip, buf, "KCF", 5);
+                    if (!kfs.is_null())
+                        gui.status = "Tracking complete.";
+                    else
+                        gui.status = "Tracking failed.";
+                }
+            }
+        }
+        // Draw annotation rect overlay while dragging.
+        if (gui.annotating) {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            float x0 = img_pos.x + std::min(gui.anno_x0, gui.anno_x1);
+            float y0 = img_pos.y + std::min(gui.anno_y0, gui.anno_y1);
+            float x1 = img_pos.x + std::max(gui.anno_x0, gui.anno_x1);
+            float y1 = img_pos.y + std::max(gui.anno_y0, gui.anno_y1);
+            dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1),
+                        IM_COL32(0, 255, 0, 200), 0.0f, 0, 2.0f);
+        }
     } else {
         ImGui::TextDisabled("No preview yet.\nAdd a clip to the timeline.");
     }
