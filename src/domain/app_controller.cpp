@@ -232,6 +232,18 @@ bool AppController::clip_get_crop(ClipId id, int& left, int& right,
     return project_->timeline().clip_get_crop(id, left, right, top, bottom);
 }
 
+bool AppController::clip_set_fade_in(ClipId id, int duration_frames) {
+    bool ok = project_->timeline().clip_set_fade_in(id, duration_frames);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::clip_set_fade_out(ClipId id, int duration_frames) {
+    bool ok = project_->timeline().clip_set_fade_out(id, duration_frames);
+    player_->refresh();
+    return ok;
+}
+
 // --- transport ---
 
 bool AppController::play() {

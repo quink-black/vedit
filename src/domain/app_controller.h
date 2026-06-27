@@ -96,6 +96,10 @@ public:
     bool clip_get_crop(ClipId id, int& left, int& right,
                        int& top, int& bottom) const;
 
+    // Per-clip fade-in/fade-out. duration_frames=0 removes the fade.
+    bool clip_set_fade_in(ClipId id, int duration_frames);
+    bool clip_set_fade_out(ClipId id, int duration_frames);
+
     // --- filters (M2) ---
     const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
     bool filter_add(ClipId clip_id, const std::string& name);

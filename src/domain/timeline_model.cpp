@@ -1624,4 +1624,96 @@ bool TimelineModel::clip_get_crop(ClipId id, int& left, int& right,
     return true;
 }
 
+// ---- per-clip fade ----
+
+namespace {
+
+nlohmann::json fade_keyframes(int64_t start_frame, int64_t end_frame,
+                              double start_val, double end_val) {
+    return nlohmann::json::array({
+        {{"frame", start_frame}, {"value", start_val}, {"type", "linear"}},
+        {{"frame", end_frame},   {"value", end_val},   {"type", "linear"}}
+    });
+}
+
+} // namespace
+
+bool TimelineModel::clip_set_fade_in(ClipId id, int duration_frames) {
+    const ClipInfo* ci = clip(id);
+    if (!ci) return false;
+    int64_t clip_len = ci->length;
+    if (clip_len <= 0) return false;
+
+    if (duration_frames <= 0) {
+        detach_filter(id, "brightness");
+        detach_filter(id, "volume");
+        return true;
+    }
+    if (duration_frames > clip_len) duration_frames = static_cast<int>(clip_len);
+
+    // Ensure brightness filter for video fade.
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    int bfidx = find_attached_filter(cut->parent(), "brightness");
+    delete cut;
+    if (bfidx < 0) {
+        if (!attach_filter(id, "brightness")) return false;
+    }
+
+    // Ensure volume filter for audio fade.
+    cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    int vfidx = find_attached_filter(cut->parent(), "volume");
+    delete cut;
+    if (vfidx < 0) {
+        if (!attach_filter(id, "volume")) return false;
+    }
+
+    nlohmann::json kfs = fade_keyframes(0, duration_frames - 1, 0.0, 1.0);
+    bool video_ok = set_filter_param_keyframes(id, "brightness", "level", kfs);
+    // Audio fade: volume.level in dB: -60=off, 0=normal.
+    nlohmann::json audio_kfs = fade_keyframes(0, duration_frames - 1, -60.0, 0.0);
+    bool audio_ok = set_filter_param_keyframes(id, "volume", "level", audio_kfs);
+    return video_ok && audio_ok;
+}
+
+bool TimelineModel::clip_set_fade_out(ClipId id, int duration_frames) {
+    const ClipInfo* ci = clip(id);
+    if (!ci) return false;
+    int64_t clip_len = ci->length;
+    if (clip_len <= 0) return false;
+
+    if (duration_frames <= 0) {
+        detach_filter(id, "brightness");
+        detach_filter(id, "volume");
+        return true;
+    }
+    if (duration_frames > clip_len) duration_frames = static_cast<int>(clip_len);
+
+    // Ensure brightness filter.
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    int bfidx = find_attached_filter(cut->parent(), "brightness");
+    delete cut;
+    if (bfidx < 0) {
+        if (!attach_filter(id, "brightness")) return false;
+    }
+
+    // Ensure volume filter.
+    cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    int vfidx = find_attached_filter(cut->parent(), "volume");
+    delete cut;
+    if (vfidx < 0) {
+        if (!attach_filter(id, "volume")) return false;
+    }
+
+    int64_t start = clip_len - duration_frames;
+    nlohmann::json kfs = fade_keyframes(start, clip_len - 1, 1.0, 0.0);
+    bool video_ok = set_filter_param_keyframes(id, "brightness", "level", kfs);
+    nlohmann::json audio_kfs = fade_keyframes(start, clip_len - 1, 0.0, -60.0);
+    bool audio_ok = set_filter_param_keyframes(id, "volume", "level", audio_kfs);
+    return video_ok && audio_ok;
+}
+
 } // namespace vedit

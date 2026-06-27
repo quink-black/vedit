@@ -787,6 +787,46 @@ async def list_tools() -> list[Tool]:
                 "required": ["clip_id"],
             },
         ),
+        Tool(
+            name="set_fade_in",
+            description=(
+                "Add or remove a fade-in on a clip. Duration is in "
+                "frames. The fade animates brightness (video) and "
+                "volume (audio) from 0 to normal over the given "
+                "duration. Set duration=0 to remove the fade."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "duration": {
+                        "type": "integer",
+                        "description": "Fade duration in frames (0 to remove)",
+                    },
+                },
+                "required": ["clip_id", "duration"],
+            },
+        ),
+        Tool(
+            name="set_fade_out",
+            description=(
+                "Add or remove a fade-out on a clip. Duration is in "
+                "frames. The fade animates brightness (video) and "
+                "volume (audio) from normal to 0 at the clip end. "
+                "Set duration=0 to remove the fade."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "duration": {
+                        "type": "integer",
+                        "description": "Fade duration in frames (0 to remove)",
+                    },
+                },
+                "required": ["clip_id", "duration"],
+            },
+        ),
         # ---- Advanced clip operations ----
         Tool(
             name="overwrite_clip",
@@ -1311,6 +1351,19 @@ async def call_tool(
         if name == "get_crop":
             return _ok(_call(instance, "clip.get_crop",
                              {"clip_id": int(arguments["clip_id"])}))
+
+        # ---- Fade ----
+        if name == "set_fade_in":
+            return _ok(_call(instance, "clip.set_fade_in", {
+                "clip_id": int(arguments["clip_id"]),
+                "duration": int(arguments["duration"]),
+            }))
+
+        if name == "set_fade_out":
+            return _ok(_call(instance, "clip.set_fade_out", {
+                "clip_id": int(arguments["clip_id"]),
+                "duration": int(arguments["duration"]),
+            }))
 
         # ---- Advanced clip operations ----
         if name == "overwrite_clip":

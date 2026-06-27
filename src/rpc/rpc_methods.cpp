@@ -537,6 +537,29 @@ void register_methods(Dispatcher& d, AppController& app) {
                               {"top", top},   {"bottom", bottom}};
     });
 
+    // ---- clip.set_fade_in / clip.set_fade_out ----
+    //
+    // Per-clip fade-in/fade-out via brightness + volume keyframes.
+    // duration_frames=0 removes the fade. Fade-in animates from 0 to 1
+    // at the clip start; fade-out animates from 1 to 0 at the clip end.
+    d.register_method("clip.set_fade_in", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        int duration = params.value("duration", 0);
+        if (!app.clip_set_fade_in(id, duration))
+            throw RpcException(ErrorCode::ApplicationError, "set_fade_in failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("clip.set_fade_out", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        int duration = params.value("duration", 0);
+        if (!app.clip_set_fade_out(id, duration))
+            throw RpcException(ErrorCode::ApplicationError, "set_fade_out failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
     d.register_method("transition.add", [&](const nlohmann::json& params) {
         TrackId tid{params.value("track_id", 0LL)};
         int clip_idx = params.value("clip_index", 0);

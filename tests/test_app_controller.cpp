@@ -2115,3 +2115,126 @@ TEST_CASE("crop appears in state.get attached filters", "[t22]") {
     }
     REQUIRE(found);
 }
+
+// Stage 3: per-clip fade-in/fade-out via brightness + volume keyframes.
+
+TEST_CASE("clip.set_fade_in sets brightness keyframes", "[t23]") {
+    std::string clip = vedit::test::make_test_clip("fade_in");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Set a 15-frame fade-in.
+    REQUIRE(app.clip_set_fade_in(cid, 15));
+
+    // Brightness filter should be attached with keyframes.
+    auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE_FALSE(result.empty());
+    REQUIRE(result.contains("keyframes"));
+    REQUIRE(result["keyframes"].size() >= 2);
+}
+
+TEST_CASE("clip.set_fade_out sets brightness keyframes", "[t23]") {
+    std::string clip = vedit::test::make_test_clip("fade_out");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.clip_set_fade_out(cid, 10));
+
+    auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE_FALSE(result.empty());
+    REQUIRE(result.contains("keyframes"));
+    REQUIRE(result["keyframes"].size() >= 2);
+}
+
+TEST_CASE("clip.set_fade_in duration=0 removes filter", "[t23]") {
+    std::string clip = vedit::test::make_test_clip("fade_remove");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.clip_set_fade_in(cid, 15));
+    REQUIRE(app.clip_set_fade_in(cid, 0));
+
+    // Brightness filter should be gone (no keyframes, only scalar or empty).
+    auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE_FALSE(result.contains("keyframes"));
+}
+
+TEST_CASE("clip.set_fade_in and fade_out over RPC", "[t23]") {
+    std::string clip = vedit::test::make_test_clip("fade_rpc");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Fade in via RPC.
+    auto req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_fade_in"},
+                              {"id",1},
+                              {"params", {{"clip_id", cid.value},
+                                           {"duration", 12}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Verify keyframes exist.
+    auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE(result.contains("keyframes"));
+
+    // Fade out via RPC.
+    req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_fade_out"},
+                         {"id",2},
+                         {"params", {{"clip_id", cid.value},
+                                      {"duration", 8}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+}
+
+TEST_CASE("fade filters appear in state.get attached filters", "[t23]") {
+    std::string clip = vedit::test::make_test_clip("fade_state");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.clip_set_fade_in(cid, 10));
+
+    std::string js = vedit::ProjectSaveLoad::state_json(app.project());
+    auto doc = nlohmann::json::parse(js);
+
+    bool found_brightness = false;
+    for (const auto& af : doc["filters"]["attached"]) {
+        if (af["target_type"] == "clip" &&
+            af["target_id"] == cid.value &&
+            af["filter"] == "brightness") {
+            found_brightness = true;
+        }
+    }
+    REQUIRE(found_brightness);
+}

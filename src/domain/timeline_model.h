@@ -167,6 +167,14 @@ public:
     bool clip_get_crop(ClipId id, int& left, int& right,
                        int& top, int& bottom) const;
 
+    // Per-clip fade-in/fade-out via brightness and volume filters.
+    // duration_frames=0 removes the fade. Video fade animates
+    // brightness.level; audio fade animates volume.level (dB).
+    // Fade-in keyframes go 0 -> 1 from the clip start.
+    // Fade-out keyframes go 1 -> 0 at the clip end.
+    bool clip_set_fade_in(ClipId id, int duration_frames);
+    bool clip_set_fade_out(ClipId id, int duration_frames);
+
     // --- queries ---
     int clip_count() const;
     const ClipInfo* clip(ClipId id) const;
