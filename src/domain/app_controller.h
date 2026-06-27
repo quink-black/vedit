@@ -110,8 +110,11 @@ public:
 
     // --- filters (M2) ---
     const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
-    bool filter_add(ClipId clip_id, const std::string& name);
+    bool filter_add(ClipId clip_id, const std::string& name,
+                    int in = -1, int out = -1);
     bool filter_remove(ClipId clip_id, const std::string& name);
+    bool filter_set_in_out(ClipId clip_id, const std::string& filter_name,
+                           int in, int out);
     bool filter_set_param(ClipId clip_id, const std::string& filter_name,
                           const std::string& param, const std::string& value);
     std::string filter_get_param(ClipId clip_id,

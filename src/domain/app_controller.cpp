@@ -361,8 +361,16 @@ bool AppController::export_cancel(int64_t job_id) {
 
 // --- filters (M2) ---
 
-bool AppController::filter_add(ClipId clip_id, const std::string& name) {
-    return project_->timeline().attach_filter(clip_id, name);
+bool AppController::filter_add(ClipId clip_id, const std::string& name,
+                                 int in, int out) {
+    return project_->timeline().attach_filter(clip_id, name, in, out);
+}
+
+bool AppController::filter_set_in_out(ClipId clip_id,
+                                       const std::string& filter_name,
+                                       int in, int out) {
+    return project_->timeline().set_filter_in_out(
+        clip_id, filter_name, in, out);
 }
 
 bool AppController::filter_remove(ClipId clip_id, const std::string& name) {

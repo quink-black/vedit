@@ -207,11 +207,17 @@ public:
 
     // --- filters (M2) ---
     // Attach/detach an MLT filter (by service name) to/from a clip.
+    // Optional in/out (frame numbers, clip-relative) set the filter's
+    // active range via MLT's set_in_and_out — the filter is only
+    // applied within [in, out]. -1 means the full clip duration.
     // Returns false if the clip or filter is not found, or the MLT
-    // filter cannot be created. The filter's parameters can then be
-    // read/written via set_filter_param / get_filter_param.
-    bool attach_filter(ClipId clip_id, const std::string& filter_name);
+    // filter cannot be created.
+    bool attach_filter(ClipId clip_id, const std::string& filter_name,
+                       int in = -1, int out = -1);
     bool detach_filter(ClipId clip_id, const std::string& filter_name);
+    // Change the active range on an already-attached filter.
+    bool set_filter_in_out(ClipId clip_id, const std::string& filter_name,
+                           int in, int out);
     // Set/get a named parameter on an attached filter. The filter must
     // already be attached. `value` is the scalar (P2 {value} shape).
     bool set_filter_param(ClipId clip_id, const std::string& filter_name,

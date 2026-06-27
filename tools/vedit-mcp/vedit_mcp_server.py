@@ -542,7 +542,8 @@ async def list_tools() -> list[Tool]:
                 "Add a filter to a clip or track. Specify either "
                 "clip_id (from get_state.tracks[].clips[].id) or "
                 "track_id (from get_state.tracks[].id). filter_name "
-                "comes from list_filters."
+                "comes from list_filters. Optional in/out (frame "
+                "numbers, clip-relative) set the filter's active range."
             ),
             inputSchema={
                 "type": "object",
@@ -559,6 +560,14 @@ async def list_tools() -> list[Tool]:
                     "filter_name": {
                         "type": "string",
                         "description": "Filter identifier from list_filters (e.g. 'avfilter.hflip')",
+                    },
+                    "in": {
+                        "type": "integer",
+                        "description": "Optional start frame (clip-relative) for filter active range",
+                    },
+                    "out": {
+                        "type": "integer",
+                        "description": "Optional end frame (clip-relative) for filter active range",
                     },
                 },
                 "required": ["target_type", "target_id", "filter_name"],
@@ -1287,12 +1296,16 @@ async def call_tool(
             target_type = str(arguments["target_type"])
             filter_name = str(arguments["filter_name"])
             target_id = int(arguments["target_id"])
+            params = {"filter": filter_name}
             if target_type == "track":
-                return _ok(_call(instance, "filter.add",
-                                 {"track_id": target_id, "filter": filter_name}))
+                params["track_id"] = target_id
             else:
-                return _ok(_call(instance, "filter.add",
-                                 {"clip_id": target_id, "filter": filter_name}))
+                params["clip_id"] = target_id
+            if "in" in arguments:
+                params["in"] = int(arguments["in"])
+            if "out" in arguments:
+                params["out"] = int(arguments["out"])
+            return _ok(_call(instance, "filter.add", params))
 
         if name == "remove_filter":
             target_type = str(arguments["target_type"])

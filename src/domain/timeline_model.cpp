@@ -806,7 +806,8 @@ int find_attached_filter(Mlt::Producer& cut, const std::string& name) {
 
 } // namespace
 
-bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name) {
+bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name,
+                                    int in, int out) {
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
@@ -820,10 +821,50 @@ bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name
     // Attach to cut->parent() — the shared root producer stored in the
     // playlist. pl->get_clip() returns a temporary cut wrapper; its
     // parent() is the actual producer that plays back.
-    int rc = mlt_service_attach(MLT_SERVICE(cut->parent().get_producer()),
+    Mlt::Producer& parent = cut->parent();
+    int rc = mlt_service_attach(MLT_SERVICE(parent.get_producer()),
                                 MLT_FILTER(filter.get_filter()));
+
+    // set_in_and_out must be called AFTER attach because
+    // mlt_service_attach resets out to 0 (mlt_service_clone_filter).
+    if (rc == 0 && (in >= 0 || out >= 0)) {
+        int fidx = find_attached_filter(parent, filter_name);
+        if (fidx >= 0) {
+            Mlt::Filter* attached = parent.filter(fidx);
+            if (attached) {
+                int fin = (in >= 0) ? in : 0;
+                int fout = (out >= 0) ? out : 0;
+                attached->set_in_and_out(fin, fout);
+                delete attached;
+            }
+        }
+    }
+
     delete cut;
     return rc == 0;
+}
+
+bool TimelineModel::set_filter_in_out(ClipId clip_id,
+                                       const std::string& filter_name,
+                                       int in, int out) {
+    Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
+    if (!cut) return false;
+
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, filter_name);
+    if (fidx < 0) {
+        delete cut;
+        return false;
+    }
+    Mlt::Filter* filter = parent.filter(fidx);
+    if (!filter) {
+        delete cut;
+        return false;
+    }
+    filter->set_in_and_out(in, out);
+    delete filter;
+    delete cut;
+    return true;
 }
 
 bool TimelineModel::detach_filter(ClipId clip_id, const std::string& filter_name) {

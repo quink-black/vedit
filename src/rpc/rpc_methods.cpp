@@ -175,9 +175,13 @@ void register_methods(Dispatcher& d, AppController& app) {
     // Target: clip_id (per-clip) or track_id (per-track). Per-clip
     // attaches to the cut producer; per-track plants on the tractor
     // field and applies to all clips on that track.
+    // Optional in/out (frame numbers, clip-relative) set the filter's
+    // active range via MLT's set_in_and_out.
     d.register_method("filter.add", [&](const nlohmann::json& params) {
         std::string name = params.value("filter", "");
         if (name.empty()) throw RpcException(ErrorCode::InvalidParams, "missing filter name");
+        int in = params.value("in", -1);
+        int out = params.value("out", -1);
 
         if (params.contains("track_id")) {
             TrackId tid{params.value("track_id", 0LL)};
@@ -185,9 +189,28 @@ void register_methods(Dispatcher& d, AppController& app) {
                 throw RpcException(ErrorCode::ApplicationError, "add to track failed");
         } else {
             ClipId id{params.value("clip_id", 0LL)};
-            if (!app.filter_add(id, name))
+            if (!app.filter_add(id, name, in, out))
                 throw RpcException(ErrorCode::ApplicationError, "add to clip failed");
         }
+        return nlohmann::json{{"ok", true}};
+    });
+
+    // ---- filter.set_range ----
+    //
+    // Set the active frame range on an already-attached filter.
+    // in/out are clip-relative frame numbers.
+    d.register_method("filter.set_range", [&](const nlohmann::json& params) {
+        std::string filter_name = params.value("filter", "");
+        if (filter_name.empty())
+            throw RpcException(ErrorCode::InvalidParams, "missing filter name");
+        if (!params.contains("in") || !params.contains("out"))
+            throw RpcException(ErrorCode::InvalidParams, "missing in/out");
+        int in = params.value("in", 0);
+        int out = params.value("out", 0);
+
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!app.filter_set_in_out(id, filter_name, in, out))
+            throw RpcException(ErrorCode::ApplicationError, "set_range failed");
         return nlohmann::json{{"ok", true}};
     });
 
