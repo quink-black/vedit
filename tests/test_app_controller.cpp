@@ -2286,3 +2286,48 @@ TEST_CASE("analysis.track over RPC dispatcher", "[t24]") {
     REQUIRE(resp["result"].contains("keyframes"));
     REQUIRE_FALSE(resp["result"]["keyframes"].is_null());
 }
+
+// 2.2: Scenario B binding — copy tracker keyframes to a filter param.
+// The existing filter.get_param_keyframes + filter.set_param_keyframes
+// already form the binding data path. This test proves the full chain:
+// analysis.track -> read keyframes -> write to target filter param.
+
+TEST_CASE("analysis.track results can be bound to filter param", "[t25]") {
+    std::string clip = vedit::test::make_test_clip("bind_track");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Step 1: run analysis.track to get per-frame rects.
+    auto track_result = app.clip_analyze_track(cid, "50 50 80 80", "KCF", 10);
+    REQUIRE_FALSE(track_result.is_null());
+
+    // Step 2: attach a filter to receive the keyframes.
+    REQUIRE(app.filter_add(cid, "brightness"));
+
+    // Step 3: copy tracker keyframes into the filter param.
+    // If track_result is {keyframes: [...]}, use that directly.
+    // If it's {value: "..."}, it's a serialized animation string
+    // which set_filter_param_keyframes can also accept.
+    if (track_result.contains("keyframes")) {
+        REQUIRE(app.filter_set_param_keyframes(
+            cid, "brightness", "level", track_result["keyframes"]));
+    } else if (track_result.contains("value")) {
+        // MLT returns serialized animation as a value string.
+        // Set it directly — MLT auto-parses animation strings.
+        REQUIRE(app.filter_set_param(
+            cid, "brightness", "level",
+            track_result["value"].get<std::string>()));
+    }
+
+    // Step 4: verify the keyframes were written.
+    auto readback = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE_FALSE(readback.is_null());
+    // Either keyframes or value (both mean data was written).
+    REQUIRE((readback.contains("keyframes") || readback.contains("value")));
+}
