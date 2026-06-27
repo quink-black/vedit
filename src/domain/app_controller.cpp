@@ -92,6 +92,18 @@ bool AppController::track_remove(TrackId id) {
     return ok;
 }
 
+bool AppController::track_set_muted(TrackId id, bool muted) {
+    bool ok = project_->timeline().set_track_muted(id, muted);
+    player_->refresh();
+    return ok;
+}
+
+bool AppController::track_set_hidden(TrackId id, bool hidden) {
+    bool ok = project_->timeline().set_track_hidden(id, hidden);
+    player_->refresh();
+    return ok;
+}
+
 int AppController::track_count() const {
     return project_->timeline().track_count();
 }

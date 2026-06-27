@@ -345,6 +345,24 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
+    d.register_method("track.set_muted", [&](const nlohmann::json& params) {
+        TrackId id{params.value("track_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing track_id");
+        bool muted = params.value("muted", true);
+        if (!app.track_set_muted(id, muted))
+            throw RpcException(ErrorCode::ApplicationError, "set_muted failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("track.set_hidden", [&](const nlohmann::json& params) {
+        TrackId id{params.value("track_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing track_id");
+        bool hidden = params.value("hidden", true);
+        if (!app.track_set_hidden(id, hidden))
+            throw RpcException(ErrorCode::ApplicationError, "set_hidden failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
     // ---- clip.append / clip.remove / clip.move / clip.trim / clip.split ----
     d.register_method("clip.append", [&](const nlohmann::json& params) {
         TrackId tid{params.value("track_id", 0LL)};

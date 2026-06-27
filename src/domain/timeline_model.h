@@ -70,6 +70,13 @@ public:
     // --- tracks ---
     TrackId add_track(TrackKind kind, const std::string& name = "");
     bool remove_track(TrackId id);
+
+    // Mute silences audio on the track (MLT hide bit 2). Hidden hides
+    // video on the track (MLT hide bit 1). Both can be set together.
+    // The TrackInfo flags are updated and the MLT playlist producer
+    // property is set so the effect is visible in preview and export.
+    bool set_track_muted(TrackId id, bool muted);
+    bool set_track_hidden(TrackId id, bool hidden);
     int track_count() const;
     const TrackInfo* track(TrackId id) const;
     std::vector<TrackInfo> tracks() const;

@@ -671,6 +671,30 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                                     ? "video" : "audio";
         dl->AddText(ImVec2(origin.x + 6, y0 + track_h * 0.5f + 6),
                     IM_COL32(150, 150, 160, 255), kind_hint);
+        // Mute/hide toggles in the header: M = mute, H = hide.
+        // Clicking toggles the flag and applies it to MLT immediately.
+        auto draw_toggle = [&](const char* label, bool on, float x, ImU32 on_col, ImU32 off_col) -> bool {
+            ImU32 c = on ? on_col : off_col;
+            dl->AddText(ImVec2(x, y0 + 2), c, label);
+            return mouse.x >= x && mouse.x < x + 12 &&
+                   mouse.y >= y0 + 2 && mouse.y < y0 + 18;
+        };
+        float toggle_x = tl_x0 - 50;
+        bool track_muted = tracks[t].muted;
+        if (draw_toggle("M", track_muted, toggle_x,
+                        IM_COL32(255, 180, 80, 255),
+                        IM_COL32(100, 100, 110, 255))) {
+            app.track_set_muted(tracks[t].id, !track_muted);
+            gui.status = track_muted ? "Unmuted track." : "Muted track.";
+        }
+        toggle_x += 20;
+        bool track_hidden = tracks[t].hidden;
+        if (draw_toggle("H", track_hidden, toggle_x,
+                        IM_COL32(255, 100, 100, 255),
+                        IM_COL32(100, 100, 110, 255))) {
+            app.track_set_hidden(tracks[t].id, !track_hidden);
+            gui.status = track_hidden ? "Shown track." : "Hidden track.";
+        }
         // Settings icon for video tracks that have a composite (t > 0).
         // The icon hints that the track has Layout controls in the
         // Filters panel; clicking it selects the track and expands Layout.

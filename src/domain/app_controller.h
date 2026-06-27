@@ -57,6 +57,11 @@ public:
     bool track_remove(TrackId id);
     int track_count() const;
 
+    // Mute silences audio on the track. Hidden hides video on the
+    // track. Both affect preview and export via MLT playlist hide prop.
+    bool track_set_muted(TrackId id, bool muted);
+    bool track_set_hidden(TrackId id, bool hidden);
+
     // --- clips ---
     ClipId clip_append(TrackId track, int media_index,
                        int64_t in_point = -1, int64_t out_point = -1);

@@ -149,6 +149,35 @@ bool TimelineModel::remove_track(TrackId id) {
     return true;
 }
 
+namespace {
+// MLT playlist hide property: bit 0 hides video, bit 1 hides audio.
+// combine_hide_flags sets the playlist property from our flags.
+void apply_track_hide(Mlt::Playlist& pl, bool muted, bool hidden) {
+    int hide = 0;
+    if (hidden) hide |= 1;  // hide video
+    if (muted)  hide |= 2;  // hide audio
+    pl.set("hide", hide);
+}
+} // namespace
+
+bool TimelineModel::set_track_muted(TrackId id, bool muted) {
+    int idx = track_index(id);
+    if (idx < 0) return false;
+    tracks_[idx].info.muted = muted;
+    apply_track_hide(*tracks_[idx].playlist, muted,
+                     tracks_[idx].info.hidden);
+    return true;
+}
+
+bool TimelineModel::set_track_hidden(TrackId id, bool hidden) {
+    int idx = track_index(id);
+    if (idx < 0) return false;
+    tracks_[idx].info.hidden = hidden;
+    apply_track_hide(*tracks_[idx].playlist,
+                     tracks_[idx].info.muted, hidden);
+    return true;
+}
+
 int TimelineModel::track_count() const {
     return static_cast<int>(tracks_.size());
 }

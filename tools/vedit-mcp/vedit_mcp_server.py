@@ -248,6 +248,45 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="set_track_muted",
+            description=(
+                "Mute or unmute the audio on a track. When muted, the "
+                "track's audio is silent in preview and export. Does "
+                "not remove or change clips on the track."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "track_id": {"type": "integer"},
+                    "muted": {
+                        "type": "boolean",
+                        "description": "True to mute, false to unmute",
+                    },
+                },
+                "required": ["track_id", "muted"],
+            },
+        ),
+        Tool(
+            name="set_track_hidden",
+            description=(
+                "Show or hide the video on a track. When hidden, the "
+                "track's video is invisible in preview and export "
+                "(the audio still plays). Does not remove or change "
+                "clips on the track."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "track_id": {"type": "integer"},
+                    "hidden": {
+                        "type": "boolean",
+                        "description": "True to hide, false to show",
+                    },
+                },
+                "required": ["track_id", "hidden"],
+            },
+        ),
+        Tool(
             name="append_clip",
             description=(
                 "Append a clip from the media library to the end of a "
@@ -1002,6 +1041,18 @@ async def call_tool(
         if name == "remove_track":
             return _ok(_call(instance, "track.remove",
                              {"track_id": int(arguments["track_id"])}))
+
+        if name == "set_track_muted":
+            return _ok(_call(instance, "track.set_muted", {
+                "track_id": int(arguments["track_id"]),
+                "muted": bool(arguments["muted"]),
+            }))
+
+        if name == "set_track_hidden":
+            return _ok(_call(instance, "track.set_hidden", {
+                "track_id": int(arguments["track_id"]),
+                "hidden": bool(arguments["hidden"]),
+            }))
 
         if name == "append_clip":
             params = {

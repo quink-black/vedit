@@ -1738,3 +1738,49 @@ TEST_CASE("project.new over RPC clears timeline and library", "[t19]") {
     REQUIRE(app.track_count() == 0);
     REQUIRE(app.library_count() == 0);
 }
+
+// 0.4: track mute/hide over RPC and state.get visibility.
+TEST_CASE("track.set_muted and track.set_hidden over RPC", "[t20]") {
+    std::string clip = vedit::test::make_test_clip("track_mh");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+    REQUIRE(v1.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    auto call = [&](const char* method, nlohmann::json params) {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method",method},
+                              {"id",1},{"params",std::move(params)}};
+        auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+        REQUIRE_FALSE(resp.contains("error"));
+        return resp["result"];
+    };
+
+    // Mute the track.
+    call("track.set_muted", {{"track_id", v1.value}, {"muted", true}});
+    REQUIRE(app.project().timeline().track(v1)->muted == true);
+
+    // Unmute.
+    call("track.set_muted", {{"track_id", v1.value}, {"muted", false}});
+    REQUIRE(app.project().timeline().track(v1)->muted == false);
+
+    // Hide the track.
+    call("track.set_hidden", {{"track_id", v1.value}, {"hidden", true}});
+    REQUIRE(app.project().timeline().track(v1)->hidden == true);
+
+    // Unhide.
+    call("track.set_hidden", {{"track_id", v1.value}, {"hidden", false}});
+    REQUIRE(app.project().timeline().track(v1)->hidden == false);
+
+    // Verify mute/hidden appear in state.get.
+    std::string js = vedit::ProjectSaveLoad::state_json(app.project());
+    auto doc = nlohmann::json::parse(js);
+    REQUIRE(doc["tracks"][0]["muted"] == false);
+    REQUIRE(doc["tracks"][0]["hidden"] == false);
+}

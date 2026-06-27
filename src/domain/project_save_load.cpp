@@ -225,6 +225,8 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
         tj["id"] = tr.id.value;
         tj["name"] = tr.name;
         tj["kind"] = (tr.kind == TrackKind::Video) ? "video" : "audio";
+        tj["muted"] = tr.muted;
+        tj["hidden"] = tr.hidden;
         nlohmann::json clips = nlohmann::json::array();
         for (const auto& c : tl.clips_on_track(tr.id)) {
             nlohmann::json cj;
