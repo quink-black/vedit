@@ -432,6 +432,29 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"clip_id", new_id.value}};
     });
 
+    // ---- clip.set_audio_enabled / clip.set_video_enabled ----
+    //
+    // Mute or unmute the audio or video stream on a clip. The clip
+    // stays in the timeline; only the stream is toggled. The effect
+    // is visible in preview and export.
+    d.register_method("clip.set_audio_enabled", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        bool enabled = params.value("enabled", true);
+        if (!app.clip_set_audio_enabled(id, enabled))
+            throw RpcException(ErrorCode::ApplicationError,
+                               "set_audio_enabled failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("clip.set_video_enabled", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        bool enabled = params.value("enabled", true);
+        if (!app.clip_set_video_enabled(id, enabled))
+            throw RpcException(ErrorCode::ApplicationError,
+                               "set_video_enabled failed");
+        return nlohmann::json{{"ok", true}};
+    });
+
     d.register_method("transition.add", [&](const nlohmann::json& params) {
         TrackId tid{params.value("track_id", 0LL)};
         int clip_idx = params.value("clip_index", 0);
@@ -514,7 +537,15 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"path", path}, {"position", pos}};
     });
 
-    // ---- project.save / project.open ----
+    // ---- project.new / project.save / project.open ----
+    //
+    // project.new clears the timeline and library so an agent can start
+    // a fresh editing session without quitting and re-launching vedit.
+    d.register_method("project.new", [&](const nlohmann::json&) {
+        app.project_new();
+        return nlohmann::json{{"ok", true}};
+    });
+
     d.register_method("project.save", [&](const nlohmann::json& params) {
         std::string path = params.value("path", "");
         if (path.empty()) throw RpcException(ErrorCode::InvalidParams, "missing path");
@@ -566,6 +597,17 @@ void register_methods(Dispatcher& d, AppController& app) {
                                "set composite geometry failed "
                                "(not a video track, or track 0)");
         return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("track.get_composite_geometry",
+                      [&](const nlohmann::json& params) {
+        TrackId tid{params.value("track_id", 0LL)};
+        double x = 0, y = 0, w = 100, h = 100;
+        if (!app.composite_geometry_get(tid, x, y, w, h))
+            throw RpcException(ErrorCode::ApplicationError,
+                               "get composite geometry failed "
+                               "(not a video track, or track 0)");
+        return nlohmann::json{{"x", x}, {"y", y}, {"w", w}, {"h", h}};
     });
 
     // ---- export.start / export.poll / export.cancel ----

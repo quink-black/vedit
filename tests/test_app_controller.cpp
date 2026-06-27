@@ -1632,3 +1632,109 @@ TEST_CASE("transition.list_types over RPC dispatcher", "[t18]") {
     REQUIRE(has_luma);
     REQUIRE(has_dissolve);
 }
+
+// 0.2: clip audio/video enable/disable over RPC.
+TEST_CASE("clip.set_audio_enabled and clip.set_video_enabled over RPC", "[t19]") {
+    std::string clip = vedit::test::make_test_clip("clip_enable");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    auto call = [&](const char* method, nlohmann::json params) {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method",method},
+                              {"id",1},{"params",std::move(params)}};
+        auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+        REQUIRE_FALSE(resp.contains("error"));
+        return resp["result"];
+    };
+
+    // Disable audio.
+    call("clip.set_audio_enabled", {{"clip_id", cid.value}, {"enabled", false}});
+    // Re-enable audio.
+    call("clip.set_audio_enabled", {{"clip_id", cid.value}, {"enabled", true}});
+    // Disable video.
+    call("clip.set_video_enabled", {{"clip_id", cid.value}, {"enabled", false}});
+    // Re-enable video.
+    call("clip.set_video_enabled", {{"clip_id", cid.value}, {"enabled", true}});
+
+    // Disabled video should still render (blank frames but no crash).
+    call("clip.set_video_enabled", {{"clip_id", cid.value}, {"enabled", false}});
+    std::string png = vedit::test::unique_temp_path(
+        "vedit-test", "disabled_video", ".png");
+    vedit::ExportService svc;
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 2, png));
+}
+
+// 0.2: track.get_composite_geometry over RPC.
+TEST_CASE("track.get_composite_geometry over RPC dispatcher", "[t19]") {
+    std::string clip = vedit::test::make_test_clip("comp_get");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+    app.clip_append(v2, mi);
+    REQUIRE(v2.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    // Set geometry on track 2.
+    nlohmann::json req = {{"jsonrpc","2.0"},
+                          {"method","track.set_composite_geometry"},
+                          {"id",1},
+                          {"params", {{"track_id", v2.value},
+                                       {"x",25},{"y",25},{"w",50},{"h",50}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    // Get it back.
+    req = {{"jsonrpc","2.0"},{"method","track.get_composite_geometry"},
+           {"id",2},{"params", {{"track_id", v2.value}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"]["x"] == 25);
+    REQUIRE(resp["result"]["y"] == 25);
+    REQUIRE(resp["result"]["w"] == 50);
+    REQUIRE(resp["result"]["h"] == 50);
+
+    // Track 0 should fail (no composite).
+    req = {{"jsonrpc","2.0"},{"method","track.get_composite_geometry"},
+           {"id",3},{"params", {{"track_id", v1.value}}}};
+    resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp.contains("error"));
+}
+
+// 0.2: project.new over RPC clears state.
+TEST_CASE("project.new over RPC clears timeline and library", "[t19]") {
+    std::string clip = vedit::test::make_test_clip("proj_new");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","project.new"},
+                          {"id",1},{"params", nlohmann::json::object()}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    REQUIRE(app.track_count() == 0);
+    REQUIRE(app.library_count() == 0);
+}

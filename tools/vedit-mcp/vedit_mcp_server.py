@@ -644,6 +644,24 @@ async def list_tools() -> list[Tool]:
                 "required": ["track_id"],
             },
         ),
+        Tool(
+            name="get_composite_geometry",
+            description=(
+                "Get the current position and size of a video track's "
+                "content on the canvas. Returns x, y, w, h as "
+                "percentages (0-100). Track 0 always reports 0/0/100/100."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "track_id": {
+                        "type": "integer",
+                        "description": "Track id (must be a video track)",
+                    },
+                },
+                "required": ["track_id"],
+            },
+        ),
         # ---- Advanced clip operations ----
         Tool(
             name="overwrite_clip",
@@ -719,6 +737,44 @@ async def list_tools() -> list[Tool]:
                     "clip_id": {"type": "integer"},
                 },
                 "required": ["clip_id"],
+            },
+        ),
+        Tool(
+            name="set_audio_enabled",
+            description=(
+                "Enable or disable the audio stream on a clip. When "
+                "disabled the clip is silent in preview and export "
+                "but stays in the timeline."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to enable audio, false to mute",
+                    },
+                },
+                "required": ["clip_id", "enabled"],
+            },
+        ),
+        Tool(
+            name="set_video_enabled",
+            description=(
+                "Enable or disable the video stream on a clip. When "
+                "disabled the clip shows black in preview and export "
+                "but stays in the timeline."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to enable video, false to disable",
+                    },
+                },
+                "required": ["clip_id", "enabled"],
             },
         ),
         Tool(
@@ -801,7 +857,17 @@ async def list_tools() -> list[Tool]:
                 "required": ["path"],
             },
         ),
-        # ---- Project settings ----
+        # ---- Project management ----
+        Tool(
+            name="project_new",
+            description=(
+                "Clear the current timeline and media library to start "
+                "a fresh project. All clips, tracks, and imports are "
+                "discarded. Call this before building a new timeline "
+                "from scratch."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
         Tool(
             name="set_profile",
             description=(
@@ -1075,6 +1141,10 @@ async def call_tool(
                 params["h"] = float(arguments["h"])
             return _ok(_call(instance, "track.set_composite_geometry", params))
 
+        if name == "get_composite_geometry":
+            return _ok(_call(instance, "track.get_composite_geometry",
+                             {"track_id": int(arguments["track_id"])}))
+
         # ---- Advanced clip operations ----
         if name == "overwrite_clip":
             params = {
@@ -1102,6 +1172,18 @@ async def call_tool(
             return _ok(_call(instance, "clip.detach_audio",
                              {"clip_id": int(arguments["clip_id"])}))
 
+        if name == "set_audio_enabled":
+            return _ok(_call(instance, "clip.set_audio_enabled", {
+                "clip_id": int(arguments["clip_id"]),
+                "enabled": bool(arguments["enabled"]),
+            }))
+
+        if name == "set_video_enabled":
+            return _ok(_call(instance, "clip.set_video_enabled", {
+                "clip_id": int(arguments["clip_id"]),
+                "enabled": bool(arguments["enabled"]),
+            }))
+
         if name == "add_transition":
             params = {
                 "track_id": int(arguments["track_id"]),
@@ -1127,7 +1209,10 @@ async def call_tool(
             return _ok(_call(instance, "view.screenshot",
                              {"path": str(arguments["path"])}))
 
-        # ---- Project settings ----
+        # ---- Project management ----
+        if name == "project_new":
+            return _ok(_call(instance, "project.new"))
+
         if name == "set_profile":
             return _ok(_call(instance, "project.set_profile", {
                 "width": int(arguments["width"]),
