@@ -7,9 +7,49 @@
 #ifdef _WIN32
   #include <cstdlib>   // _putenv_s
   #include <filesystem>
+#else
+  #include <fcntl.h>
+  #include <sys/file.h>
+  #include <unistd.h>
 #endif
 
 namespace vedit {
+
+namespace {
+
+// MLT's Factory::init() scans and dlopen's every plugin in the
+// repository directory. When many test processes (ctest -jN) call
+// Factory::init() concurrently, dyld's global loader lock serializes
+// the dlopen calls but can leave stragglers waiting long enough that
+// ctest's pipe-read timeout triggers and the process appears to hang.
+//
+// Serialize Factory::init() across processes with a file lock so only
+// one process runs the expensive plugin scan at a time. The lock file
+// lives in TMPDIR so it is per-machine, not per-checkout.
+class MltInitLock {
+public:
+    MltInitLock() {
+        const char* tmp = getenv("TMPDIR");
+        std::string path = (tmp ? tmp : "/tmp");
+        path += "/vedit_mlt_init.lock";
+        fd_ = open(path.c_str(), O_CREAT | O_RDWR, 0666);
+        if (fd_ >= 0) {
+            flock(fd_, LOCK_EX);
+        }
+    }
+    ~MltInitLock() {
+        if (fd_ >= 0) {
+            flock(fd_, LOCK_UN);
+            close(fd_);
+        }
+    }
+    MltInitLock(const MltInitLock&) = delete;
+    MltInitLock& operator=(const MltInitLock&) = delete;
+private:
+    int fd_ = -1;
+};
+
+} // namespace
 
 bool MltRuntime::init() {
     if (initialized_) return true;
@@ -28,6 +68,7 @@ bool MltRuntime::init() {
         std::string data = (prefix / "share" / "mlt").string();
         _putenv_s("MLT_REPOSITORY", repo.c_str());
         _putenv_s("MLT_DATA", data.c_str());
+        MltInitLock lock;
         Mlt::Factory::init(repo.c_str());
         initialized_ = true;
         Logger::log(Logger::Level::Info, "MLT Factory initialized");
@@ -35,6 +76,7 @@ bool MltRuntime::init() {
     }
   #endif
 #endif
+    MltInitLock lock;
     Mlt::Factory::init();
     initialized_ = true;
     Logger::log(Logger::Level::Info, "MLT Factory initialized");
