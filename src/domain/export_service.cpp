@@ -85,33 +85,14 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     // whole timeline regardless of where preview left the playhead.
     producer.set_speed(1.0);
 
-    // Compute the effective export length. The tractor's get_length()
-    // returns the maximum across all tracks. When tracks have different
-    // durations (e.g., differing in/out points), the tractor produces
-    // blank frames on the shorter track after it ends. Clamp to the
-    // minimum track length so every track has content for the full
-    // export. Set on the producer before connect() so the consumer
-    // picks up the corrected length.
-    int total = producer.get_length();
+    // The tractor's get_playtime() is the timeline duration: the
+    // longest playlist across all user tracks. Use it directly as the
+    // export length. Prior code clamped to the minimum track length,
+    // but that broke single-track exports because MLT's tractor always
+    // includes an internal black background track whose length can be
+    // shorter than the user's clip.
+    int total = producer.get_playtime();
     int orig_out = producer.get_int("out");
-    {
-        Mlt::Tractor tractor(producer);
-        if (tractor.is_valid()) {
-            Mlt::Multitrack* mt = tractor.multitrack();
-            if (mt && mt->is_valid()) {
-                int min_len = total;
-                for (int i = 0; i < mt->count(); ++i) {
-                    Mlt::Producer* track = mt->track(i);
-                    if (track && track->is_valid()) {
-                        int len = track->get_length();
-                        if (len > 0 && len < min_len) min_len = len;
-                    }
-                }
-                if (min_len > 0 && min_len < total) total = min_len;
-            }
-            delete mt;
-        }
-    }
 
     // Range export: if caller supplied an in-point, seek there instead
     // of frame 0. If out_point is supplied, clamp the export length.
