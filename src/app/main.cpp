@@ -887,14 +887,34 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         }
         ImGui::Separator();
         // Add transition: only makes sense between two adjacent clips.
+        // The submenu lets the user pick a type; each maps to the same
+        // type strings transition.add accepts over RPC.
         if (sel_ci) {
-            if (ImGui::MenuItem("Add transition (30 frames)")) {
-                int pl_idx = tl.playlist_index_of(gui.selected_clip);
-                if (pl_idx >= 0 && app.clip_add_transition(sel_ci->track_id, pl_idx, 30)) {
-                    gui.status = "Added 30-frame transition.";
-                } else {
-                    gui.status = "Transition failed (need an adjacent clip).";
+            if (ImGui::BeginMenu("Add transition (30 frames)")) {
+                struct TransOpt { const char* label; const char* type; };
+                static const TransOpt opts[] = {
+                    {"Cross dissolve", "dissolve"},
+                    {"Luma wipe",      "luma"},
+                    {"Bar wipe",       "bar"},
+                    {"Barn door",      "barn"},
+                    {"Clock wipe",     "clock"},
+                    {"Iris",           "iris"},
+                    {"Spiral",         "spiral"},
+                };
+                for (const auto& o : opts) {
+                    if (ImGui::MenuItem(o.label)) {
+                        int pl_idx = tl.playlist_index_of(gui.selected_clip);
+                        if (pl_idx >= 0 &&
+                            app.clip_add_transition(sel_ci->track_id, pl_idx,
+                                                    30, o.type)) {
+                            gui.status = std::string("Added ") + o.label +
+                                         " transition.";
+                        } else {
+                            gui.status = "Transition failed (need an adjacent clip).";
+                        }
+                    }
                 }
+                ImGui::EndMenu();
             }
         }
         ImGui::EndPopup();

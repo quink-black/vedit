@@ -724,9 +724,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="add_transition",
             description=(
-                "Add a cross-fade transition between two adjacent clips "
-                "on a track. clip_index is the playlist index (including "
-                "blanks). length is in frames (default: 30)."
+                "Add a transition between two adjacent clips on a track. "
+                "clip_index is the playlist index (including blanks). "
+                "length is in frames (default: 30). type selects the "
+                "transition style (default: dissolve); call "
+                "list_transition_types for the available values."
             ),
             inputSchema={
                 "type": "object",
@@ -740,9 +742,23 @@ async def list_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Transition length in frames (default: 30)",
                     },
+                    "type": {
+                        "type": "string",
+                        "description": "Transition type (e.g. dissolve, luma, "
+                        "bar, barn, clock, iris, spiral)",
+                    },
                 },
                 "required": ["track_id", "clip_index"],
             },
+        ),
+        Tool(
+            name="list_transition_types",
+            description=(
+                "List the transition types add_transition can apply. Each "
+                "entry has id, title, and description. Only these ids "
+                "produce a visible result."
+            ),
+            inputSchema={"type": "object", "properties": {}},
         ),
         # ---- Frame capture ----
         Tool(
@@ -1093,7 +1109,12 @@ async def call_tool(
             }
             if "length" in arguments:
                 params["length"] = int(arguments["length"])
+            if "type" in arguments:
+                params["type"] = str(arguments["type"])
             return _ok(_call(instance, "transition.add", params))
+
+        if name == "list_transition_types":
+            return _ok(_call(instance, "transition.list_types"))
 
         # ---- Frame capture ----
         if name == "get_frame":

@@ -442,6 +442,29 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
+    // ---- transition.list_types ----
+    // Reports the transition types add_transition actually wires up, not
+    // every MLT transition service. Keeping this honest means an agent's
+    // type string is guaranteed to produce a visible result.
+    d.register_method("transition.list_types", [&](const nlohmann::json&) {
+        auto entry = [](const char* id, const char* title,
+                        const char* desc) {
+            return nlohmann::json{{"id", id}, {"title", title},
+                                  {"description", desc}};
+        };
+        return nlohmann::json::array({
+            entry("dissolve", "Cross dissolve",
+                  "Soft luma dissolve plus audio cross-fade"),
+            entry("luma", "Luma wipe",
+                  "Diagonal luma wipe plus audio cross-fade"),
+            entry("bar", "Bar wipe", "Bar luma pattern wipe"),
+            entry("barn", "Barn door", "Barn-door luma pattern wipe"),
+            entry("clock", "Clock wipe", "Clock luma pattern wipe"),
+            entry("iris", "Iris", "Iris luma pattern wipe"),
+            entry("spiral", "Spiral", "Spiral luma pattern wipe"),
+        });
+    });
+
     // ---- player.play / player.pause / player.seek ----
     d.register_method("player.play", [&](const nlohmann::json&) {
         if (!app.play()) throw RpcException(ErrorCode::ApplicationError, "play failed");
