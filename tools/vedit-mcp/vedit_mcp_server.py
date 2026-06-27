@@ -827,6 +827,36 @@ async def list_tools() -> list[Tool]:
                 "required": ["clip_id", "duration"],
             },
         ),
+        Tool(
+            name="analyze_track",
+            description=(
+                "Run OpenCV object tracking on a clip. Given an initial "
+                "bounding rect, tracks the object across all frames and "
+                "returns per-frame rect keyframes. The tracker filter "
+                "stays attached so the results can be rendered as an "
+                "overlay. algo selects the OpenCV tracker (KCF, MIL, "
+                "CSRT, MOSSE, ...). steps controls keyframe spacing."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "rect": {
+                        "type": "string",
+                        "description": "Initial bounding rect 'x y w h' in pixels",
+                    },
+                    "algo": {
+                        "type": "string",
+                        "description": "OpenCV tracker: KCF, MIL, CSRT, MOSSE, ...",
+                    },
+                    "steps": {
+                        "type": "integer",
+                        "description": "Keyframe every N frames (default: 5)",
+                    },
+                },
+                "required": ["clip_id", "rect"],
+            },
+        ),
         # ---- Advanced clip operations ----
         Tool(
             name="overwrite_clip",
@@ -1364,6 +1394,18 @@ async def call_tool(
                 "clip_id": int(arguments["clip_id"]),
                 "duration": int(arguments["duration"]),
             }))
+
+        # ---- Analysis ----
+        if name == "analyze_track":
+            params = {
+                "clip_id": int(arguments["clip_id"]),
+                "rect": str(arguments["rect"]),
+            }
+            if "algo" in arguments:
+                params["algo"] = str(arguments["algo"])
+            if "steps" in arguments:
+                params["steps"] = int(arguments["steps"])
+            return _ok(_call(instance, "analysis.track", params))
 
         # ---- Advanced clip operations ----
         if name == "overwrite_clip":

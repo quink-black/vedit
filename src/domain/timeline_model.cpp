@@ -1716,4 +1716,52 @@ bool TimelineModel::clip_set_fade_out(ClipId id, int duration_frames) {
     return video_ok && audio_ok;
 }
 
+// ---- analysis.track ----
+
+nlohmann::json TimelineModel::clip_analyze_track(
+        ClipId id, const std::string& rect,
+        const std::string& algo, int steps) {
+    const ClipInfo* ci = clip(id);
+    if (!ci || ci->length <= 0) return nlohmann::json::array();
+
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return nlohmann::json::array();
+
+    // Attach opencv.tracker to the parent producer.
+    Mlt::Producer& parent = cut->parent();
+    int fidx = find_attached_filter(parent, "opencv.tracker");
+    if (fidx < 0) {
+        delete cut;
+        if (!attach_filter(id, "opencv.tracker")) return nlohmann::json::array();
+        cut = find_cut_producer(id, nullptr);
+        if (!cut) return nlohmann::json::array();
+    }
+    delete cut;
+
+    // Configure the tracker.
+    set_filter_param(id, "opencv.tracker", "rect", rect);
+    set_filter_param(id, "opencv.tracker", "algo", algo);
+    set_filter_param(id, "opencv.tracker", "steps", std::to_string(steps));
+    // Disable overlay rendering during analysis.
+    set_filter_param(id, "opencv.tracker", "shape_width", "0");
+
+    // Run a null consumer over the tractor to force every frame
+    // through the filter chain. The tracker's analyze() path fires on
+    // each frame and accumulates per-frame rects in _results.
+    // terminate_on_pause=1 stops cleanly after the last frame.
+    tractor_->set_speed(1.0);
+    tractor_->seek(0);
+    {
+        Mlt::Consumer null_consumer(profile_, "null", "");
+        null_consumer.set("real_time", -1);
+        null_consumer.set("terminate_on_pause", 1);
+        null_consumer.connect(*tractor_);
+        null_consumer.run();
+        null_consumer.stop();
+    }
+
+    // Read the results as keyframes.
+    return get_filter_param_keyframes(id, "opencv.tracker", "results");
+}
+
 } // namespace vedit

@@ -560,6 +560,22 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"ok", true}};
     });
 
+    // ---- analysis.track ----
+    //
+    // Run opencv.tracker on a clip and return per-frame rect keyframes.
+    // The initial rect is "x y w h" (pixels at clip resolution).
+    // algo selects the OpenCV tracker (KCF, MIL, CSRT, MOSSE, ...).
+    // steps controls keyframe spacing (every N frames, default 5).
+    d.register_method("analysis.track", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        std::string rect = params.value("rect", "0 0 50 50");
+        std::string algo = params.value("algo", "KCF");
+        int steps = params.value("steps", 5);
+        auto result = app.clip_analyze_track(id, rect, algo, steps);
+        return nlohmann::json{{"keyframes", std::move(result)}};
+    });
+
     d.register_method("transition.add", [&](const nlohmann::json& params) {
         TrackId tid{params.value("track_id", 0LL)};
         int clip_idx = params.value("clip_index", 0);

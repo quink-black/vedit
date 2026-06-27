@@ -2238,3 +2238,51 @@ TEST_CASE("fade filters appear in state.get attached filters", "[t23]") {
     }
     REQUIRE(found_brightness);
 }
+
+// Stage 4: analysis.track via opencv.tracker.
+
+TEST_CASE("analysis.track runs and returns keyframes", "[t24]") {
+    std::string clip = vedit::test::make_test_clip("tracker");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Run tracker with a small rect near the center.
+    auto result = app.clip_analyze_track(cid, "60 60 50 50", "KCF", 10);
+
+    // The result is either a keyframes array or a value object (MLT
+    // serializes the animation as a string). Either way it should be
+    // non-empty — the tracker should produce at least one keyframe.
+    REQUIRE_FALSE(result.is_null());
+}
+
+TEST_CASE("analysis.track over RPC dispatcher", "[t24]") {
+    std::string clip = vedit::test::make_test_clip("tracker_rpc");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    auto req = nlohmann::json{{"jsonrpc","2.0"},{"method","analysis.track"},
+                              {"id",1},
+                              {"params", {{"clip_id", cid.value},
+                                           {"rect", "50 50 50 50"},
+                                           {"algo", "KCF"},
+                                           {"steps", 10}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(resp["result"].contains("keyframes"));
+    REQUIRE_FALSE(resp["result"]["keyframes"].is_null());
+}

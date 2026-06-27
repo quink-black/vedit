@@ -244,6 +244,12 @@ bool AppController::clip_set_fade_out(ClipId id, int duration_frames) {
     return ok;
 }
 
+nlohmann::json AppController::clip_analyze_track(
+        ClipId id, const std::string& rect,
+        const std::string& algo, int steps) {
+    return project_->timeline().clip_analyze_track(id, rect, algo, steps);
+}
+
 // --- transport ---
 
 bool AppController::play() {

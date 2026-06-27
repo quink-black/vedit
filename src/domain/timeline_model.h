@@ -175,6 +175,17 @@ public:
     bool clip_set_fade_in(ClipId id, int duration_frames);
     bool clip_set_fade_out(ClipId id, int duration_frames);
 
+    // Run an analysis pass on a clip using the opencv.tracker filter.
+    // Attaches the tracker, sets the initial rect and algorithm, runs
+    // every frame through the producer to produce tracking data, then
+    // reads back the per-frame rect keyframes. The tracker filter is
+    // left attached so a subsequent render pass can use the results.
+    // Returns a keyframes JSON array or empty array on failure.
+    nlohmann::json clip_analyze_track(ClipId id,
+                                      const std::string& rect,
+                                      const std::string& algo = "KCF",
+                                      int steps = 5);
+
     // --- queries ---
     int clip_count() const;
     const ClipInfo* clip(ClipId id) const;
