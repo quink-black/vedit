@@ -1824,6 +1824,9 @@ int main(int, char**) {
                     app.profile_set(gui.profile_dialog_w,
                                     gui.profile_dialog_h,
                                     gui.profile_dialog_fps);
+                    // The ruler and timecodes read this cached value; it
+                    // must follow the profile or they desync.
+                    gui.project_fps = gui.profile_dialog_fps;
                     gui.status = "Profile set to " +
                                  std::to_string(gui.profile_dialog_w) + "x" +
                                  std::to_string(gui.profile_dialog_h) + " @ " +
