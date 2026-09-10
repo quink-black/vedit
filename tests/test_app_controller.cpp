@@ -2355,6 +2355,46 @@ TEST_CASE("a clip filter stays private to its clip", "[t22]") {
 // Minimal repro for a segfault seen while prototyping undo: saving a
 // project that was itself loaded. Isolated here so it can be diagnosed
 // independently of the undo machinery.
+// Undo history is recorded from one hook (the refresh every mutator
+// already calls), so this covers the same path the RPC undo method uses.
+TEST_CASE("undo and redo restore timeline state", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("undo");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(v1.valid());
+    REQUIRE(app.can_undo());
+
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+    REQUIRE(app.project().timeline().clip_count() == 1);
+
+    // Undo the append.
+    REQUIRE(app.undo());
+    REQUIRE(app.project().timeline().clip_count() == 0);
+    REQUIRE(app.can_redo());
+
+    // Redo brings it back, with fresh ids because a restore re-mints.
+    REQUIRE(app.redo());
+    REQUIRE(app.project().timeline().clip_count() == 1);
+    const auto restored_tracks = app.project().timeline().tracks();
+    REQUIRE(restored_tracks.size() == 1);
+    const auto restored =
+        app.project().timeline().clips_on_track(restored_tracks[0].id);
+    REQUIRE(restored.size() == 1);
+    cid = restored[0].id;
+
+    // KNOWN GAP: undoing a filter change loses the filter on redo.
+    // Structural history above is the part that works; the filter case is
+    // recorded in doc/next-phase-design.md Phase 1.1.
+    REQUIRE(app.filter_add(cid, "brightness"));
+    REQUIRE(app.project().timeline().attached_filters().size() == 1);
+    REQUIRE(app.undo());
+    REQUIRE(app.project().timeline().attached_filters().empty());
+}
+
 TEST_CASE("save after load of a project with clips", "[t10]") {
     std::string clip = vedit::test::make_test_clip("resave");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

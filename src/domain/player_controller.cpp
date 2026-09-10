@@ -121,7 +121,12 @@ int64_t PlayerController::duration() const {
     return project_.timeline().duration();
 }
 
+void PlayerController::set_state_changed_listener(std::function<void()> fn) {
+    state_changed_ = std::move(fn);
+}
+
 void PlayerController::refresh() {
+    if (state_changed_) state_changed_();
     // A timeline edit happened. If paused, re-render the freeze frame so
     // the preview reflects the edit immediately.
     if (!is_playing()) {

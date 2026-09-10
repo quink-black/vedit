@@ -345,7 +345,25 @@ in their mlt++ constructors, so the lifetime theory is not confirmed. A
 backtrace under a debugger is the next step (lldb hung in batch mode;
 try `catchpoint`/signal handler or ASan).
 
-**Update, same day.** The loader is exonerated. A regression test
+**Update, same day.** Undo for structural operations (track add, clip
+append/remove, and any sequence of them) is now merged, built on a
+single hook rather than per-method guards: every mutator already ends
+with `player_->refresh()`, so `PlayerController` exposes a
+state-changed listener and `AppController::record_history()` snapshots
+the project there. A snapshot identical to the current entry is
+dropped, which is what makes a failed mutation a no-op, and
+`restoring_` suppresses recording while `undo`/`redo` themselves
+refresh the preview. Ten filter and composite-geometry mutators were
+missing `refresh()` entirely, which also meant filter changes never
+updated the preview; they call it now.
+
+Still open: after `filter_add` -> `undo` -> `redo`, the filter does not
+come back. History positions trace correctly (the snapshot after
+`filter_add` exists and is reached), so the loss is in restoring a
+document that contains a `<filter>` inside a playlist entry. That is
+the next thing to diagnose.
+
+The loader is exonerated. A regression test
 (`save after load of a project with clips`) exercises exactly what the
 undo path does -- save, adopt, save again, then four more
 adopt/save/refresh cycles, plus a track-with-no-clips round trip -- and

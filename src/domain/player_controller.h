@@ -2,6 +2,7 @@
 #define VEDIT_DOMAIN_PLAYER_CONTROLLER_H
 
 #include <cstdint>
+#include <functional>
 
 #include "core/preview_renderer.h"
 
@@ -35,6 +36,11 @@ public:
     void pause();
     // True while the realtime consumer is running.
     bool is_playing() const;
+
+    // Called after every timeline mutation: AppController registers a
+    // listener here to record undo history, which keeps the history
+    // hook in one place instead of duplicated across every mutator.
+    void set_state_changed_listener(std::function<void()> fn);
 
     // True if playback reached end-of-clip and the consumer self-stopped,
     // but the renderer has not yet been torn down. The GUI main loop uses
@@ -89,6 +95,9 @@ private:
     int freeze_w_ = 0;
     int freeze_h_ = 0;
     const uint8_t* freeze_image_ = nullptr;
+
+    // Invoked from refresh(); see set_state_changed_listener.
+    std::function<void()> state_changed_;
 };
 
 } // namespace vedit

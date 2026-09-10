@@ -691,6 +691,23 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"path", path}, {"position", pos}};
     });
 
+    // ---- undo / redo ----
+    //
+    // Same history the GUI drives, because both go through AppController.
+    // A restore re-mints clip and track ids, so the caller must re-read
+    // state.get before addressing clips again.
+    d.register_method("undo", [&](const nlohmann::json&) {
+        if (!app.undo())
+            throw RpcException(ErrorCode::ApplicationError, "nothing to undo");
+        return nlohmann::json{{"ok", true}};
+    });
+
+    d.register_method("redo", [&](const nlohmann::json&) {
+        if (!app.redo())
+            throw RpcException(ErrorCode::ApplicationError, "nothing to redo");
+        return nlohmann::json{{"ok", true}};
+    });
+
     // ---- project.new / project.save / project.open ----
     //
     // project.new clears the timeline and library so an agent can start

@@ -1,18 +1,46 @@
 #include "app_controller.h"
 
 #include "media_library.h"
+#include "project_save_load.h"
 #include "timeline_model.h"
 #include "util/logger.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#ifdef _WIN32
+  #include <process.h>
+#else
+  #include <unistd.h>
+#endif
 #include <thread>
 
 namespace vedit {
 
+namespace {
+inline int current_pid() {
+#ifdef _WIN32
+    return ::_getpid();
+#else
+    return ::getpid();
+#endif
+}
+} // namespace
+
+
 AppController::AppController()
     : project_(std::make_unique<ProjectModel>()),
       player_(std::make_unique<PlayerController>(*project_)),
-      filter_catalog_(std::make_unique<FilterCatalog>()) {}
+      filter_catalog_(std::make_unique<FilterCatalog>()) {
+    // Every mutator ends with player_->refresh(), so this one hook
+    // records history for all of them. Seed the history with the empty
+    // project so the first mutation is undoable.
+    player_->set_state_changed_listener([this]() { record_history(); });
+    record_history();
+}
 
 AppController::~AppController() = default;
 
@@ -363,17 +391,20 @@ bool AppController::export_cancel(int64_t job_id) {
 
 bool AppController::filter_add(ClipId clip_id, const std::string& name,
                                  int in, int out) {
+    player_->refresh();
     return project_->timeline().attach_filter(clip_id, name, in, out);
 }
 
 bool AppController::filter_set_in_out(ClipId clip_id,
                                        const std::string& filter_name,
                                        int in, int out) {
+    player_->refresh();
     return project_->timeline().set_filter_in_out(
         clip_id, filter_name, in, out);
 }
 
 bool AppController::filter_remove(ClipId clip_id, const std::string& name) {
+    player_->refresh();
     return project_->timeline().detach_filter(clip_id, name);
 }
 
@@ -381,6 +412,7 @@ bool AppController::filter_set_param(ClipId clip_id,
                                       const std::string& filter_name,
                                       const std::string& param,
                                       const std::string& value) {
+    player_->refresh();
     return project_->timeline().set_filter_param(
         clip_id, filter_name, param, value);
 }
@@ -393,10 +425,12 @@ std::string AppController::filter_get_param(ClipId clip_id,
 }
 
 bool AppController::track_filter_add(TrackId track_id, const std::string& name) {
+    player_->refresh();
     return project_->timeline().track_attach_filter(track_id, name);
 }
 
 bool AppController::track_filter_remove(TrackId track_id, const std::string& name) {
+    player_->refresh();
     return project_->timeline().track_detach_filter(track_id, name);
 }
 
@@ -404,6 +438,7 @@ bool AppController::track_filter_set_param(TrackId track_id,
                                             const std::string& filter_name,
                                             const std::string& param,
                                             const std::string& value) {
+    player_->refresh();
     return project_->timeline().track_set_filter_param(
         track_id, filter_name, param, value);
 }
@@ -418,6 +453,7 @@ std::string AppController::track_filter_get_param(TrackId track_id,
 bool AppController::filter_set_param_keyframes(
         ClipId clip_id, const std::string& filter_name,
         const std::string& param, const nlohmann::json& keyframes) {
+    player_->refresh();
     return project_->timeline().set_filter_param_keyframes(
         clip_id, filter_name, param, keyframes);
 }
@@ -432,6 +468,7 @@ nlohmann::json AppController::filter_get_param_keyframes(
 bool AppController::track_filter_set_param_keyframes(
         TrackId track_id, const std::string& filter_name,
         const std::string& param, const nlohmann::json& keyframes) {
+    player_->refresh();
     return project_->timeline().track_set_filter_param_keyframes(
         track_id, filter_name, param, keyframes);
 }
@@ -450,6 +487,7 @@ void AppController::profile_set(int width, int height, double fps) {
 bool AppController::composite_geometry_set(TrackId track_id,
                                             double x, double y,
                                             double w, double h) {
+    player_->refresh();
     return project_->timeline().set_composite_geometry(
         track_id, x, y, w, h);
 }
@@ -461,7 +499,123 @@ bool AppController::composite_geometry_get(TrackId track_id,
         track_id, x, y, w, h);
 }
 
+// --- undo/redo ---
+
+// Snapshots live in a per-process directory; the seq counter keeps
+// concurrent processes from clobbering each other.
+static std::filesystem::path undo_snapshot_dir() {
+    return std::filesystem::temp_directory_path() / "vedit-undo";
+}
+
+std::string AppController::snapshot_state() {
+    std::error_code ec;
+    std::filesystem::create_directories(undo_snapshot_dir(), ec);
+    if (ec) return {};
+    static std::atomic<int> seq{0};
+    std::string path = (undo_snapshot_dir() /
+                        ("snap-" + std::to_string(current_pid()) + "-" +
+                         std::to_string(seq++) + ".xml"))
+                           .string();
+    if (!ProjectSaveLoad::save_xml(*project_, path)) return {};
+    return path;
+}
+
+// MLT's XML consumer writes nothing at all for a tractor with no tracks,
+// so a snapshot of an empty project is a missing file rather than a
+// document. Restoring it legitimately means an empty timeline.
+bool AppController::restore_snapshot(const std::string& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) ||
+        std::filesystem::file_size(path, ec) == 0) {
+        auto& tl = project_->timeline();
+        while (tl.track_count() > 0)
+            tl.remove_track(tl.tracks()[0].id);
+        return true;
+    }
+    return ProjectSaveLoad::load_xml(*project_, path);
+}
+
+void AppController::record_history() {
+    if (restoring_) return;
+    std::string path = snapshot_state();
+    if (path.empty()) return;
+
+    // A mutation that changed nothing (a failed call still refreshes)
+    // must not enter history, so compare against the current entry.
+    std::error_code ec;
+    if (history_pos_ >= 0 &&
+        std::filesystem::file_size(history_[history_pos_], ec) ==
+            std::filesystem::file_size(path, ec)) {
+        std::ifstream a(history_[history_pos_], std::ios::binary);
+        std::ifstream b(path, std::ios::binary);
+        if (a && b && std::equal(std::istreambuf_iterator<char>(a),
+                                 std::istreambuf_iterator<char>(),
+                                 std::istreambuf_iterator<char>(b))) {
+            std::remove(path.c_str());
+            return;
+        }
+    }
+
+    // Anything after the current position is a redo tail; a new mutation
+    // discards it.
+    for (int i = history_pos_ + 1; i < (int)history_.size(); ++i)
+        std::remove(history_[i].c_str());
+    history_.resize(history_pos_ + 1);
+
+    constexpr size_t kMaxHistory = 50;
+    if (history_.size() >= kMaxHistory) {
+        std::remove(history_.front().c_str());
+        history_.erase(history_.begin());
+        --history_pos_;
+    }
+    history_.push_back(std::move(path));
+    history_pos_ = static_cast<int>(history_.size()) - 1;
+    fprintf(stderr, "TRACE record pos=%d filters=%zu\n", history_pos_,
+            project_->timeline().attached_filters().size());
+}
+
+void AppController::clear_history() {
+    for (auto& p : history_) std::remove(p.c_str());
+    history_.clear();
+    history_pos_ = -1;
+}
+
+bool AppController::can_undo() const {
+    return !restoring_ && history_pos_ > 0;
+}
+
+bool AppController::can_redo() const {
+    return !restoring_ && history_pos_ < static_cast<int>(history_.size()) - 1;
+}
+
+bool AppController::undo() {
+    if (!can_undo()) return false;
+    restoring_ = true;
+    fprintf(stderr, "TRACE undo -> pos=%d\n", history_pos_ - 1);
+    --history_pos_;
+    bool ok = restore_snapshot(history_[history_pos_]);
+    if (!ok) ++history_pos_;
+    // The refresh must still see restoring_ == true: it exists to update
+    // the preview, not to record the restored state as a new mutation.
+    player_->refresh();
+    restoring_ = false;
+    return ok;
+}
+
+bool AppController::redo() {
+    if (!can_redo()) return false;
+    restoring_ = true;
+    fprintf(stderr, "TRACE redo -> pos=%d\n", history_pos_ + 1);
+    ++history_pos_;
+    bool ok = restore_snapshot(history_[history_pos_]);
+    if (!ok) --history_pos_;
+    player_->refresh();
+    restoring_ = false;
+    return ok;
+}
+
 void AppController::project_new() {
+    clear_history();
     auto& tl = project_->timeline();
     while (tl.track_count() > 0)
         tl.remove_track(tl.tracks()[0].id);

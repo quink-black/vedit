@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "export_service.h"
 #include "filter_catalog.h"
@@ -162,6 +163,33 @@ public:
     // Clear the timeline and library for a new project.
     void project_new();
 
+    // --- undo/redo (G4) ---
+    // History is recorded from a single hook: every mutator already ends
+    // with player_->refresh(), and that listener lands here. A snapshot
+    // identical to the current entry is dropped, which is what makes a
+    // failed mutation a no-op without needing guards in every method.
+    // Both channels (GUI and RPC) go through AppController, so both get
+    // the same history. A restore re-mints clip and track ids, so
+    // callers must re-read state.get before addressing them again.
+    bool can_undo() const;
+    bool can_redo() const;
+    bool undo();
+    bool redo();
+
+private:
+    void record_history();
+    std::string snapshot_state();
+    bool restore_snapshot(const std::string& path);
+    void clear_history();
+
+    // history_[history_pos_] is the state on screen now; entries after it
+    // are the redo tail. restoring_ is true while a restore is in flight,
+    // so the refresh() it triggers does not record the state again.
+    std::vector<std::string> history_;
+    int history_pos_ = -1;
+    bool restoring_ = false;
+
+public:
     // --- transport ---
     bool play();
     void pause();
