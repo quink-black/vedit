@@ -117,6 +117,14 @@ public:
     // are preserved.
     void reconnect_clips(int media_index);
 
+    // Replace the timeline with the tracks of an MLT producer that was
+    // loaded from XML, adopting its graph as-is. This is what keeps a
+    // save/load cycle lossless: filters, transitions, keyframes, per-clip
+    // geometry and blanks all live in the producer and would be dropped
+    // by any loader that rebuilds the tracks from the library. `loaded`
+    // must be a tractor. Returns false if it is not one.
+    bool adopt(Mlt::Producer& loaded);
+
     bool remove_clip(ClipId id);
     bool move_clip(ClipId id, TrackId dest_track, int64_t dest_position);
     bool trim_clip(ClipId id, int64_t new_in, int64_t new_out);

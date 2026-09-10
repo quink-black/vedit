@@ -2322,6 +2322,103 @@ TEST_CASE("geometry and crop getters reject an unknown clip_id", "[t22]") {
     }
 }
 
+// Filters used to attach to the shared library producer, so two clips
+// cut from the same source shared one filter instance: adding a filter
+// to one clip changed the other, and the filter showed up twice.
+TEST_CASE("a clip filter stays private to its clip", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("iso");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid1 = app.clip_append(v1, mi);
+    auto cid2 = app.clip_append(v1, mi);
+    REQUIRE(cid1.valid());
+    REQUIRE(cid2.valid());
+
+    REQUIRE(app.filter_add(cid1, "brightness"));
+    REQUIRE(app.filter_set_param(cid1, "brightness", "level", "0.5"));
+
+    const auto filters = app.project().timeline().attached_filters();
+    REQUIRE(filters.size() == 1);
+    REQUIRE(filters[0].target_type == "clip");
+    REQUIRE(filters[0].target_id == cid1.value);
+
+    // The second clip must not report the first clip's filter.
+    REQUIRE(app.filter_get_param(cid2, "brightness", "level").empty());
+}
+
+// The loader used to rebuild tracks from the library, keeping only clip
+// in/out points and dropping every effect. This pins the round trip for
+// the state that survives it.
+TEST_CASE("save/load keeps filters and mute flags", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("fidelity");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto a1 = app.track_add(vedit::TrackKind::Audio);
+    REQUIRE(v1.valid());
+    REQUIRE(a1.valid());
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+    REQUIRE(app.clip_append(a1, mi).valid());
+
+    REQUIRE(app.filter_add(cid, "brightness"));
+    REQUIRE(app.filter_set_param(cid, "brightness", "level", "0.5"));
+    REQUIRE(app.track_filter_add(a1, "volume"));
+    REQUIRE(app.track_set_muted(a1, true));
+
+    // Per-clip filters live on the cut, so they are private to it.
+    const auto before = app.project().timeline().attached_filters();
+    int clip_filters = 0, track_filters = 0;
+    for (const auto& f : before) {
+        if (f.target_type == "clip") ++clip_filters;
+        else ++track_filters;
+    }
+    REQUIRE(clip_filters == 1);
+    REQUIRE(track_filters == 1);
+
+    std::string xml_path = vedit::test::unique_temp_path(
+        "vedit-test", "fidelity", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), xml_path));
+
+    vedit::AppController app2;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(app2.project(), xml_path));
+
+    REQUIRE(app2.track_count() == 2);
+    REQUIRE(app2.project().timeline().clip_count() == 2);
+
+    // Track kinds, order and the mute flag come back with the tracks.
+    const auto tracks = app2.project().timeline().tracks();
+    REQUIRE(tracks.size() == 2);
+    REQUIRE(tracks[0].kind == vedit::TrackKind::Video);
+    REQUIRE(tracks[1].kind == vedit::TrackKind::Audio);
+    REQUIRE(tracks[1].muted);
+
+    // Both the per-clip filter and the track-level filter come back.
+    const auto after = app2.project().timeline().attached_filters();
+    REQUIRE(after.size() == 2);
+    int clip_back = 0, track_back = 0;
+    for (const auto& f : after) {
+        if (f.target_type == "clip") ++clip_back;
+        else ++track_back;
+    }
+    REQUIRE(clip_back == 1);
+    REQUIRE(track_back == 1);
+    bool volume_back = false;
+    for (const auto& f : after) {
+        if (f.filter_name == "volume" && f.target_type == "track" &&
+            f.target_id == tracks[1].id.value) {
+            volume_back = true;
+        }
+    }
+    REQUIRE(volume_back);
+}
+
 TEST_CASE("clip.get_crop returns zeros with no filter", "[t22]") {    std::string clip = vedit::test::make_test_clip("crop_default");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 

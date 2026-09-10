@@ -63,73 +63,15 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
         return false;
     }
 
-    TimelineModel& tl = project.timeline();
-    MediaLibrary& lib = project.library();
-
-    // Remove all existing tracks first.
-    while (tl.track_count() > 0) {
-        tl.remove_track(tl.tracks()[0].id);
+    // Adopt the loaded graph as-is. Rebuilding the tracks from the
+    // library instead kept only clip in/out points and dropped every
+    // filter, transition, keyframe, per-clip effect and blank.
+    if (!project.timeline().adopt(loaded)) {
+        Logger::log(Logger::Level::Error,
+                    "ProjectSaveLoad: XML does not contain a tractor");
+        return false;
     }
 
-    // Enumerate tracks via the C API (no mlt++ wrapper for tractor
-    // track enumeration). The XML-loaded producer is a tractor; each
-    // track is a playlist producer. mlt_tractor_get_track is a pure
-    // positional getter into the multitrack array, so nothing is
-    // consumed here and the producer does not need re-parsing.
-    int num_tracks = 0;
-    while (mlt_tractor_get_track(MLT_TRACTOR(loaded.get_producer()),
-                                 num_tracks)) {
-        ++num_tracks;
-    }
-
-    for (int t = 0; t < num_tracks; ++t) {
-        mlt_producer raw = mlt_tractor_get_track(
-            MLT_TRACTOR(loaded.get_producer()), t);
-        if (!raw) continue;
-
-        Mlt::Producer track_prod(raw);
-        Mlt::Playlist pl(track_prod);
-
-        // Infer track kind from clip content (M1 heuristic: if any
-        // clip has video, it's a video track; else audio).
-        TrackKind kind = TrackKind::Video;
-        for (int c = 0; c < pl.count(); ++c) {
-            if (pl.is_blank(c)) continue;
-            Mlt::Producer* clip = pl.get_clip(c);
-            if (clip && clip->get_int("video_index") >= 0) {
-                kind = TrackKind::Video;
-                delete clip;
-                break;
-            }
-            delete clip;
-            kind = TrackKind::Audio;
-        }
-
-        auto track_id = tl.add_track(kind);
-        if (!track_id.valid()) continue;
-
-        for (int c = 0; c < pl.count(); ++c) {
-            Mlt::ClipInfo* ci = pl.clip_info(c);
-            if (!ci) continue;
-
-            std::string source = ci->resource ? ci->resource : "";
-            if (source.empty() || pl.is_blank(c)) {
-                Mlt::Playlist::delete_clip_info(ci);
-                continue;
-            }
-
-            int media_idx = lib.import(source);
-            if (media_idx < 0) {
-                Mlt::Playlist::delete_clip_info(ci);
-                continue;
-            }
-
-            tl.append_clip(track_id, media_idx, ci->frame_in, ci->frame_out);
-            Mlt::Playlist::delete_clip_info(ci);
-        }
-    }
-
-    tl.replant_compositions();
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: loaded XML");
     return true;
 }

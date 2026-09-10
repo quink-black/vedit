@@ -24,8 +24,9 @@ constexpr const char* kMediaIdxProp = "_vedit_media_idx";
 // Playback speed stamped on a clip wrapped in a timewarp producer.
 // Absent (or 1.0) means the clip is a plain cut of the source. Stored
 // so a second change_clip_speed call can convert the clip's current
-// in/out back to source frames instead of compounding the ratio.
-constexpr const char* kSpeedProp = "_vedit_speed";
+// in/out back to source frames instead of compounding the ratio. No
+// underscore prefix: it has to survive the XML round trip.
+constexpr const char* kSpeedProp = "vedit_speed";
 
 // Marker stamped on every filter vedit attaches on behalf of a user or
 // agent. attached_filters() reports only marked filters, so a producer's
@@ -41,8 +42,16 @@ constexpr const char* kUserFilterProp = "_vedit_user_filter";
 constexpr const char* kTransitionTypeProp = "_vedit_transition_type";
 
 // Marks a clip whose audio is silenced by detach_audio, so the muting
-// filter is attached once rather than stacked on every call.
-constexpr const char* kAudioMutedProp = "_vedit_audio_muted";
+// filter is attached once rather than stacked on every call. No
+// underscore prefix: it has to survive the XML round trip.
+constexpr const char* kAudioMutedProp = "vedit_audio_muted";
+
+// Track metadata carried on the playlist producer. MLT's XML consumer
+// skips any property whose name starts with an underscore, and writes
+// playlist properties only when they are prefixed with "meta." or
+// "xml_", so these must use the meta. prefix to survive a round trip.
+constexpr const char* kTrackKindProp = "meta.vedit.track_kind";
+constexpr const char* kTrackNameProp = "meta.vedit.track_name";
 
 int64_t read_clip_id(Mlt::Producer& cut) {
     return cut.get_int(kClipIdProp);
@@ -129,6 +138,9 @@ TrackId TimelineModel::add_track(TrackKind kind, const std::string& name) {
     }
     ts.playlist = std::make_unique<Mlt::Playlist>(profile_);
     ts.playlist->set(kTrackIdProp, static_cast<int>(ts.info.id.value));
+    ts.playlist->set(kTrackKindProp,
+                     ts.info.kind == TrackKind::Audio ? "audio" : "video");
+    ts.playlist->set(kTrackNameProp, ts.info.name.c_str());
 
     int index = static_cast<int>(tracks_.size());
     // Multitrack::connect wires the playlist as track `index`.
@@ -812,6 +824,128 @@ void TimelineModel::replant_compositions() {
     }
 }
 
+bool TimelineModel::adopt(Mlt::Producer& loaded) {
+    mlt_tractor raw = MLT_TRACTOR(loaded.get_producer());
+    if (!raw) {
+        Logger::log(Logger::Level::Error,
+                    "TimelineModel::adopt: loaded producer is not a tractor");
+        return false;
+    }
+
+    // Adopt the loaded graph wholesale. Rebuilding the tracks from the
+    // library instead would keep only clip in/out points and drop every
+    // filter, transition, keyframe, per-clip effect and blank the file
+    // carries.
+    auto new_tractor = std::make_unique<Mlt::Tractor>(raw);
+    Mlt::Multitrack* mt = new_tractor->multitrack();
+    if (!mt) return false;
+    auto new_multitrack = std::make_unique<Mlt::Multitrack>(*mt);
+    delete mt;
+
+    std::vector<TrackState> adopted;
+    for (int t = 0;; ++t) {
+        mlt_producer track_raw = mlt_tractor_get_track(raw, t);
+        if (!track_raw) break;
+        // Loaded tracks carry no mlt_service property, so identify the
+        // service by its class rather than by property name.
+        if (mlt_service_identify(MLT_SERVICE(track_raw)) !=
+            mlt_service_playlist_type) {
+            continue;
+        }
+
+        auto pl = std::make_unique<Mlt::Playlist>(MLT_PLAYLIST(track_raw));
+        if (!pl->is_valid()) continue;
+
+        TrackState ts;
+        int hide = pl->get_int("hide");
+        ts.info.hidden = (hide & 1) != 0;
+        ts.info.muted = (hide & 2) != 0;
+        ts.info.kind =
+            std::strcmp(pl->get(kTrackKindProp) ? pl->get(kTrackKindProp) : "",
+                        "audio") == 0
+                ? TrackKind::Audio
+                : TrackKind::Video;
+        const char* name = pl->get(kTrackNameProp);
+        if (name && name[0]) {
+            ts.info.name = name;
+        } else {
+            int same_kind = 1;
+            for (const auto& existing : adopted) {
+                if (existing.info.kind == ts.info.kind) ++same_kind;
+            }
+            ts.info.name = (ts.info.kind == TrackKind::Video ? "V" : "A") +
+                           std::to_string(same_kind);
+        }
+        ts.info.id = next_track_id();
+        ts.playlist = std::move(pl);
+        ts.playlist->set(kTrackIdProp, static_cast<int>(ts.info.id.value));
+
+        // The user-filter marker is underscore-prefixed and so is not
+        // serialized; without re-stamping, loaded filters would be
+        // invisible to attached_filters() and uneditable over RPC.
+        for (int f = 0; f < ts.playlist->filter_count(); ++f) {
+            Mlt::Filter* filter = ts.playlist->filter(f);
+            if (filter) {
+                filter->set(kUserFilterProp, 1);
+                delete filter;
+            }
+        }
+        adopted.push_back(std::move(ts));
+    }
+
+    // Re-stamp our ids on the adopted clips and map each one back to a
+    // library entry so media_index addressing keeps working.
+    for (auto& ts : adopted) {
+        Mlt::Playlist& pl = *ts.playlist;
+        for (int i = 0; i < pl.count(); ++i) {
+            if (pl.is_blank(i)) continue;
+            Mlt::Producer* clip = pl.get_clip(i);
+            if (!clip) continue;
+            ClipId id = next_clip_id();
+            stamp_clip_id(*clip, id.value);
+
+            for (int f = 0; f < clip->filter_count(); ++f) {
+                Mlt::Filter* filter = clip->filter(f);
+                if (filter) {
+                    filter->set(kUserFilterProp, 1);
+                    delete filter;
+                }
+            }
+
+            // The clip's parent carries the resource. A retimed clip's
+            // parent is a timewarp producer whose resource is
+            // "speed:path"; the library wants the bare path.
+            Mlt::Producer& parent = clip->parent();
+            const char* res = parent.get("resource");
+            std::string path = res ? res : "";
+            const char* service = parent.get("mlt_service");
+            if (service && std::strcmp(service, "timewarp") == 0) {
+                size_t colon = path.find(':');
+                if (colon != std::string::npos) path = path.substr(colon + 1);
+            }
+            int media_index = path.empty() ? -1 : library_.import(path);
+            if (media_index < 0) {
+                Logger::log(Logger::Level::Warn,
+                            "TimelineModel::adopt: could not import resource");
+            }
+            stamp_media_index(*clip, media_index);
+            delete clip;
+        }
+    }
+
+    // Ownership of the planted composite transitions passes to the
+    // adopted tractor, so stop tracking them. Note that adding or
+    // removing a track afterwards replants composites with default
+    // geometry, which loses any canvas placement set before the save.
+    composites_.clear();
+
+    multitrack_ = std::move(new_multitrack);
+    tractor_ = std::move(new_tractor);
+    tracks_ = std::move(adopted);
+    rebuild_clip_view();
+    return true;
+}
+
 void TimelineModel::rebuild_clip_view() {
     clips_.clear();
     for (int t = 0; t < static_cast<int>(tracks_.size()); ++t) {
@@ -890,19 +1024,23 @@ bool TimelineModel::attach_filter(ClipId clip_id, const std::string& filter_name
     }
     filter.set(kUserFilterProp, 1);
 
-    // Attach to cut->parent() — the shared root producer stored in the
+    // Attach to cut->target() — the shared root producer stored in the
     // playlist. pl->get_clip() returns a temporary cut wrapper; its
-    // parent() is the actual producer that plays back.
-    Mlt::Producer& parent = cut->parent();
-    int rc = mlt_service_attach(MLT_SERVICE(parent.get_producer()),
+    // target() is the actual producer that plays back.
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's parent instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int rc = mlt_service_attach(MLT_SERVICE(target.get_producer()),
                                 MLT_FILTER(filter.get_filter()));
 
     // set_in_and_out must be called AFTER attach because
     // mlt_service_attach resets out to 0 (mlt_service_clone_filter).
     if (rc == 0 && (in >= 0 || out >= 0)) {
-        int fidx = find_attached_filter(parent, filter_name);
+        int fidx = find_attached_filter(target, filter_name);
         if (fidx >= 0) {
-            Mlt::Filter* attached = parent.filter(fidx);
+            Mlt::Filter* attached = target.filter(fidx);
             if (attached) {
                 int fin = (in >= 0) ? in : 0;
                 int fout = (out >= 0) ? out : 0;
@@ -922,13 +1060,17 @@ bool TimelineModel::set_filter_in_out(ClipId clip_id,
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, filter_name);
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's target instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, filter_name);
     if (fidx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (!filter) {
         delete cut;
         return false;
@@ -943,18 +1085,22 @@ bool TimelineModel::detach_filter(ClipId clip_id, const std::string& filter_name
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, filter_name);
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's parent instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, filter_name);
     if (fidx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (!filter) {
         delete cut;
         return false;
     }
-    int rc = mlt_service_detach(MLT_SERVICE(parent.get_producer()),
+    int rc = mlt_service_detach(MLT_SERVICE(target.get_producer()),
                                 MLT_FILTER(filter->get_filter()));
     delete filter;
     delete cut;
@@ -968,13 +1114,17 @@ bool TimelineModel::set_filter_param(ClipId clip_id,
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, filter_name);
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's target instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, filter_name);
     if (fidx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (!filter) {
         delete cut;
         return false;
@@ -991,13 +1141,17 @@ std::string TimelineModel::get_filter_param(ClipId clip_id,
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return "";
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, filter_name);
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's parent instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, filter_name);
     if (fidx < 0) {
         delete cut;
         return "";
     }
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (!filter) {
         delete cut;
         return "";
@@ -1031,13 +1185,17 @@ bool TimelineModel::set_filter_param_keyframes(
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return false;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, filter_name);
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's parent instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, filter_name);
     if (fidx < 0) {
         delete cut;
         return false;
     }
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (!filter) {
         delete cut;
         return false;
@@ -1106,13 +1264,17 @@ nlohmann::json TimelineModel::get_filter_param_keyframes(
     Mlt::Producer* cut = find_cut_producer(clip_id, nullptr);
     if (!cut) return nlohmann::json::object();
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, filter_name);
+    // Per-clip services live on the cut itself: get_clip returns the
+    // stored producer, so changes persist and stay private to this
+    // clip. The cut's parent is shared by every clip cut from the
+    // same source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, filter_name);
     if (fidx < 0) {
         delete cut;
         return nlohmann::json::object();
     }
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (!filter) {
         delete cut;
         return nlohmann::json::object();
@@ -1398,18 +1560,15 @@ TimelineModel::attached_filters() const {
 
     for (const auto& ts : tracks_) {
         if (!ts.playlist) continue;
-        // Per-clip filters. Use the parent producer (not the cut
-        // from get_clip()) so we see the same filter set that
-        // attach_filter writes to.
+        // Per-clip filters live on the cut, matching attach_filter.
         for (int i = 0; i < ts.playlist->count(); ++i) {
             if (ts.playlist->is_blank(i)) continue;
             Mlt::Producer* cut = ts.playlist->get_clip(i);
             if (!cut) continue;
             int64_t clip_id = read_clip_id(*cut);
-            Mlt::Producer& parent = cut->parent();
-            int nf = parent.filter_count();
+            int nf = cut->filter_count();
             for (int f = 0; f < nf; ++f) {
-                Mlt::Filter* filter = parent.filter(f);
+                Mlt::Filter* filter = cut->filter(f);
                 if (!filter) continue;
                 const char* svc = filter->get("mlt_service");
                 if (!svc || !svc[0]) { delete filter; continue; }
@@ -1585,10 +1744,14 @@ Mlt::Filter* TimelineModel::ensure_affine_filter(ClipId id) const {
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return nullptr;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, "affine");
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's parent instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, "affine");
     if (fidx >= 0) {
-        Mlt::Filter* filter = parent.filter(fidx);
+        Mlt::Filter* filter = target.filter(fidx);
         delete cut;
         return filter;
     }
@@ -1615,10 +1778,14 @@ bool TimelineModel::clip_set_geometry(ClipId id, double x, double y,
     double current_rot = kDefaultRotation;
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, "affine");
+    // Per-clip services live on the cut itself: get_clip returns the
+    // stored producer, so changes persist and stay private to this
+    // clip. The cut's parent is shared by every clip cut from the
+    // same source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, "affine");
     if (fidx >= 0) {
-        Mlt::Filter* filter = parent.filter(fidx);
+        Mlt::Filter* filter = target.filter(fidx);
         if (filter) {
             const char* rot_str = filter->get("transition.fix_rotate_z");
             if (rot_str) current_rot = std::atof(rot_str);
@@ -1656,7 +1823,7 @@ bool TimelineModel::clip_set_rotation(ClipId id, double degrees) {
     // Attach affine filter if not already present.
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
-    int fidx = find_attached_filter(cut->parent(), "affine");
+    int fidx = find_attached_filter(*cut, "affine");
     delete cut;
     if (fidx < 0) {
         if (!attach_filter(id, "affine")) return false;
@@ -1677,14 +1844,18 @@ bool TimelineModel::clip_get_geometry(ClipId id, double& x, double& y,
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, "affine");
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's parent instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, "affine");
     if (fidx < 0) {
         delete cut;
         return true;  // no affine filter, return defaults
     }
 
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (!filter) {
         delete cut;
         return true;
@@ -1706,8 +1877,12 @@ bool TimelineModel::clip_set_crop(ClipId id, int left, int right,
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, "crop");
+    // Per-clip filters live on the cut itself: get_clip returns the
+    // stored producer, so attaching to it persists and stays
+    // private to this clip. Attaching to the cut's parent instead
+    // shares the filter with every clip cut from that source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, "crop");
     delete cut;
 
     if (left == 0 && right == 0 && top == 0 && bottom == 0) {
@@ -1723,7 +1898,7 @@ bool TimelineModel::clip_set_crop(ClipId id, int left, int right,
         // so attached_filters() reports it.
         cut = find_cut_producer(id, nullptr);
         if (cut) {
-            Mlt::Filter* f = cut->parent().filter(fidx);
+            Mlt::Filter* f = (*cut).filter(fidx);
             if (f) {
                 f->set(kUserFilterProp, 1);
                 delete f;
@@ -1752,14 +1927,18 @@ bool TimelineModel::clip_get_crop(ClipId id, int& left, int& right,
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
 
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, "crop");
+    // Per-clip services live on the cut itself: get_clip returns the
+    // stored producer, so changes persist and stay private to this
+    // clip. The cut's parent is shared by every clip cut from the
+    // same source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, "crop");
     if (fidx < 0) {
         delete cut;
         return true;
     }
 
-    Mlt::Filter* filter = parent.filter(fidx);
+    Mlt::Filter* filter = target.filter(fidx);
     if (filter) {
         left   = filter->get_int("left");
         right  = filter->get_int("right");
@@ -1801,7 +1980,7 @@ bool TimelineModel::clip_set_fade_in(ClipId id, int duration_frames) {
     // Ensure brightness filter for video fade.
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
-    int bfidx = find_attached_filter(cut->parent(), "brightness");
+    int bfidx = find_attached_filter(*cut, "brightness");
     delete cut;
     if (bfidx < 0) {
         if (!attach_filter(id, "brightness")) return false;
@@ -1810,7 +1989,7 @@ bool TimelineModel::clip_set_fade_in(ClipId id, int duration_frames) {
     // Ensure volume filter for audio fade.
     cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
-    int vfidx = find_attached_filter(cut->parent(), "volume");
+    int vfidx = find_attached_filter(*cut, "volume");
     delete cut;
     if (vfidx < 0) {
         if (!attach_filter(id, "volume")) return false;
@@ -1840,7 +2019,7 @@ bool TimelineModel::clip_set_fade_out(ClipId id, int duration_frames) {
     // Ensure brightness filter.
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
-    int bfidx = find_attached_filter(cut->parent(), "brightness");
+    int bfidx = find_attached_filter(*cut, "brightness");
     delete cut;
     if (bfidx < 0) {
         if (!attach_filter(id, "brightness")) return false;
@@ -1849,7 +2028,7 @@ bool TimelineModel::clip_set_fade_out(ClipId id, int duration_frames) {
     // Ensure volume filter.
     cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
-    int vfidx = find_attached_filter(cut->parent(), "volume");
+    int vfidx = find_attached_filter(*cut, "volume");
     delete cut;
     if (vfidx < 0) {
         if (!attach_filter(id, "volume")) return false;
@@ -1875,8 +2054,12 @@ nlohmann::json TimelineModel::clip_analyze_track(
     if (!cut) return nlohmann::json::array();
 
     // Attach opencv.tracker to the parent producer.
-    Mlt::Producer& parent = cut->parent();
-    int fidx = find_attached_filter(parent, "opencv.tracker");
+    // Per-clip services live on the cut itself: get_clip returns the
+    // stored producer, so changes persist and stay private to this
+    // clip. The cut's parent is shared by every clip cut from the
+    // same source.
+    Mlt::Producer& target = *cut;
+    int fidx = find_attached_filter(target, "opencv.tracker");
     if (fidx < 0) {
         delete cut;
         if (!attach_filter(id, "opencv.tracker")) return nlohmann::json::array();
