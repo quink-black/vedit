@@ -358,10 +358,16 @@ missing `refresh()` entirely, which also meant filter changes never
 updated the preview; they call it now.
 
 Still open: after `filter_add` -> `undo` -> `redo`, the filter does not
-come back. History positions trace correctly (the snapshot after
-`filter_add` exists and is reached), so the loss is in restoring a
-document that contains a `<filter>` inside a playlist entry. That is
-the next thing to diagnose.
+come back. Root cause measured: MLT's XML reader attaches a filter
+written inside a playlist `<entry>` to the entry's **parent producer**,
+not to the cut, so after a round trip a per-clip filter has migrated to
+the shared source producer (`cut_filters=0, parent_filters=10` right
+after adopt). This is an MLT behaviour, not a vedit bug, and it means
+per-clip filters cannot survive an MLT XML round trip while clips share
+one source producer. Shotcut avoids it by giving every clip its own
+producer in the document. The durable fix is the same: on save, give
+each clip its own producer instead of a cut of a shared one, or store
+the per-clip filter list beside the document and re-attach on load.
 
 The loader is exonerated. A regression test
 (`save after load of a project with clips`) exercises exactly what the
