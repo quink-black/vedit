@@ -338,31 +338,38 @@ bool TimelineModel::move_clip(ClipId id, TrackId dest_track,
 bool TimelineModel::trim_clip(ClipId id, int64_t new_in, int64_t new_out) {
     auto found = clips_.find(id.value);
     if (found == clips_.end()) return false;
+    if (new_in < 0 || new_out < new_in) return false;
     int tidx = track_index(found->second.track_id);
     if (tidx < 0) return false;
     auto& pl = tracks_[tidx].playlist;
 
     const int64_t old_in = found->second.in_point;
     const int64_t old_start = found->second.start;
+    const int64_t old_len = found->second.length;
+    const int64_t old_end = old_start + old_len;
     const int64_t media_index = found->second.media_index;
 
-    // Standard NLE semantics: when the LEFT edge is trimmed (new_in
-    // changes), the clip's timeline start moves by the same delta so
-    // the left edge visually follows the mouse while the right edge
-    // stays fixed. MLT's resize_clip alone keeps the clip's playlist
-    // position (and thus its timeline start) unchanged — only the
-    // in/out and length change — which looks like "the yellow handle
-    // doesn't move". We remove + reinsert at the moved start to keep
-    // both the stable ClipId and the NLE-correct visual.
-    int64_t delta = new_in - old_in;
-    int64_t new_start = old_start + delta;
-    if (new_start < 0) {
-        // Clamp: don't let the clip start before the timeline origin.
-        new_in -= new_start;  // equivalently, pull in back by |new_start|
-        new_start = 0;
+    // A trim reshapes the clip inside its existing footprint: the clip
+    // keeps the neighbours where they are, and blank fills whatever the
+    // clip no longer occupies. Removing and re-inserting instead would
+    // close the gap, which shifts every later clip on the track.
+    int64_t new_start = old_start + (new_in - old_in);
+    if (new_start < old_start) {
+        // Extending the left edge would reach into the previous clip.
+        // Without blank to consume there, hold the start and keep the
+        // source window where it is.
+        new_in = old_in;
+        new_start = old_start;
     }
+    int64_t new_len = new_out - new_in + 1;
+    if (new_start + new_len > old_end) {
+        // Same on the right: hold the out point at the old footprint.
+        new_len = old_end - new_start;
+        new_out = new_in + new_len - 1;
+    }
+    if (new_len <= 0) return false;
+    const int64_t new_end = new_start + new_len;
 
-    // Locate and remove the existing clip entry.
     int idx = -1;
     for (int i = 0; i < pl->count(); ++i) {
         Mlt::Producer* cut = pl->get_clip(i);
@@ -371,19 +378,28 @@ bool TimelineModel::trim_clip(ClipId id, int64_t new_in, int64_t new_out) {
         if (cid == id.value) { idx = i; break; }
     }
     if (idx < 0) return false;
-    pl->remove(idx);
 
-    // Re-stamp a fresh cut with the new in/out and the SAME stable id,
-    // then insert at the moved timeline start so the left edge tracks.
-    Mlt::Producer* cut = make_stamped_cut(library_, static_cast<int>(media_index),
-                                          new_in, new_out, id.value);
-    if (!cut) return false;
-    if (new_start > pl->get_length()) {
-        pl->blank(static_cast<int>(new_start - pl->get_length()));
+    // Resize in place first: no entry moves. Then pad with blank on
+    // whichever side the clip gave up, which puts the neighbours back
+    // exactly where they were and keeps the total duration stable.
+    if (pl->resize_clip(idx, static_cast<int>(new_in),
+                        static_cast<int>(new_out)) != 0) {
+        return false;
     }
-    int new_idx = pl->insert_at(static_cast<int>(new_start), *cut, 0);
-    delete cut;
-    if (new_idx < 0) return false;
+    // insert_blank takes a CLIP INDEX and the blank's out frame, so a
+    // blank of N frames is out = N - 1. Padding goes immediately before
+    // the clip for a moved start, and immediately after it for the space
+    // it gave up; either way the neighbours land back where they were.
+    int clip_idx = idx;
+    const int64_t blank_before = new_start - old_start;
+    if (blank_before > 0) {
+        pl->insert_blank(clip_idx, static_cast<int>(blank_before - 1));
+        ++clip_idx;
+    }
+    const int64_t blank_after = old_end - new_end;
+    if (blank_after > 0)
+        pl->insert_blank(clip_idx + 1, static_cast<int>(blank_after - 1));
+
     rebuild_clip_view();
     return true;
 }

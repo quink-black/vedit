@@ -2360,6 +2360,49 @@ TEST_CASE("a clip filter stays private to its clip", "[t22]") {
 // what lift_clip is for. Slipping moves the source window while the
 // clip sits still, which trim cannot express because trim moves the
 // start when the left edge changes.
+// Trimming reshapes a clip inside its own footprint: the neighbours
+// keep their starts and the total duration only changes by the length
+// change. The previous implementation removed and re-inserted the clip,
+// which closed the gap and dragged every later clip sideways.
+TEST_CASE("trimming does not move the neighbouring clips", "[t5]") {
+    std::string clip = vedit::test::make_test_clip("trim");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(v1.valid());
+    auto a = app.clip_append(v1, mi);
+    auto b = app.clip_append(v1, mi);
+    auto c = app.clip_append(v1, mi);
+    REQUIRE(a.valid());
+    REQUIRE(b.valid());
+    REQUIRE(c.valid());
+
+    auto& tl = app.project().timeline();
+    const int64_t one = tl.clip(a)->length;
+    REQUIRE(tl.clip(b)->start == one);
+    REQUIRE(tl.clip(c)->start == 2 * one);
+
+    // Right-trim the first clip: it shrinks, blank takes its place, and
+    // the total duration is unchanged because the space is still there.
+    REQUIRE(app.clip_trim(a, 0, one / 2 - 1));
+    REQUIRE(tl.clip(a)->length == one / 2);
+    REQUIRE(tl.clip(b)->start == one);
+    REQUIRE(tl.clip(c)->start == 2 * one);
+    REQUIRE(tl.duration() == 3 * one);
+
+    // Left-trim the second clip: its start moves by the same delta and
+    // the third clip stays put.
+    REQUIRE(app.clip_trim(b, 10, one - 1));
+    const vedit::ClipInfo* bb = tl.clip(b);
+    REQUIRE(bb->start == one + 10);
+    REQUIRE(bb->in_point == 10);
+    REQUIRE(bb->length == one - 10);
+    REQUIRE(tl.clip(c)->start == 2 * one);
+    REQUIRE(tl.duration() == 3 * one);
+}
+
 TEST_CASE("delete ripples and slip keeps the clip in place", "[t5]") {
     std::string clip = vedit::test::make_test_clip("ripple");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
