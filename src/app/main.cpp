@@ -1647,6 +1647,58 @@ int main(int, char**) {
                         "  (press I to set in-point)";
                     arrow_handled = true;
                 }
+                // Keyboard shortcuts. Transport and editing live here so
+                // they work regardless of which ImGui widget has focus.
+                bool ctrl = (SDL_GetModState() & KMOD_CTRL) != 0;
+                bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+                bool sel_valid = gui.selected_clip.valid() &&
+                                 app.project().timeline().clip(gui.selected_clip) != nullptr;
+                switch (event.key.keysym.sym) {
+                case SDLK_SPACE:
+                    if (app.is_playing()) { app.pause(); gui.status = "Paused."; }
+                    else { app.play(); gui.status = "Playing."; }
+                    arrow_handled = true;
+                    break;
+                case SDLK_DELETE:
+                case SDLK_BACKSPACE:
+                    if (sel_valid && !ctrl) {
+                        app.clip_remove(gui.selected_clip);
+                        gui.selected_clip = vedit::ClipId{0};
+                        gui.status = "Deleted clip.";
+                        arrow_handled = true;
+                    }
+                    break;
+                case SDLK_s:
+                    if (!ctrl && sel_valid) {
+                        auto new_id = app.clip_split(gui.selected_clip, app.position());
+                        if (new_id.valid()) {
+                            gui.selected_clip = new_id;
+                            gui.status = "Cut the clip at the playhead.";
+                        }
+                        arrow_handled = true;
+                    }
+                    break;
+                case SDLK_z:
+                    if (ctrl && !shift) {
+                        if (app.undo()) gui.status = "Undo.";
+                        else gui.status = "Nothing to undo.";
+                        arrow_handled = true;
+                    } else if (ctrl && shift) {
+                        if (app.redo()) gui.status = "Redo.";
+                        else gui.status = "Nothing to redo.";
+                        arrow_handled = true;
+                    }
+                    break;
+                case SDLK_y:
+                    if (ctrl) {
+                        if (app.redo()) gui.status = "Redo.";
+                        else gui.status = "Nothing to redo.";
+                        arrow_handled = true;
+                    }
+                    break;
+                default:
+                    break;
+                }
                 if (arrow_handled) continue;
             }
         }
