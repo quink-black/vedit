@@ -128,6 +128,10 @@ public:
     bool remove_clip(ClipId id);
     bool move_clip(ClipId id, TrackId dest_track, int64_t dest_position);
     bool trim_clip(ClipId id, int64_t new_in, int64_t new_out);
+
+    // Slip: move the window into the source without moving the clip.
+    // Unlike trim, the timeline start and the length both stay put.
+    bool slip_clip(ClipId id, int64_t new_in, int64_t new_out);
     ClipId split_clip(ClipId id, int64_t at_timeline_position);
 
     // --- advanced editing (M4) ---

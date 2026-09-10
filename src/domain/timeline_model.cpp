@@ -388,6 +388,34 @@ bool TimelineModel::trim_clip(ClipId id, int64_t new_in, int64_t new_out) {
     return true;
 }
 
+bool TimelineModel::slip_clip(ClipId id, int64_t new_in, int64_t new_out) {
+    auto found = clips_.find(id.value);
+    if (found == clips_.end()) return false;
+    if (new_in < 0 || new_out < new_in) return false;
+
+    int tidx = track_index(found->second.track_id);
+    if (tidx < 0) return false;
+    auto& pl = tracks_[tidx].playlist;
+    for (int i = 0; i < pl->count(); ++i) {
+        Mlt::Producer* cut = pl->get_clip(i);
+        if (!cut) continue;
+        int64_t cid = read_clip_id(*cut);
+        delete cut;
+        if (cid != id.value) continue;
+
+        // resize_clip changes the source range in place; the playlist
+        // position of every other entry is untouched, which is what
+        // makes this a slip rather than a trim.
+        if (pl->resize_clip(i, static_cast<int>(new_in),
+                            static_cast<int>(new_out)) != 0) {
+            return false;
+        }
+        rebuild_clip_view();
+        return true;
+    }
+    return false;
+}
+
 ClipId TimelineModel::split_clip(ClipId id, int64_t at_timeline_position) {
     auto found = clips_.find(id.value);
     if (found == clips_.end()) return ClipId{0};

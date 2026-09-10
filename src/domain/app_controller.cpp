@@ -172,6 +172,12 @@ bool AppController::clip_trim(ClipId id, int64_t new_in, int64_t new_out) {
     return ok;
 }
 
+bool AppController::clip_slip(ClipId id, int64_t new_in, int64_t new_out) {
+    bool ok = project_->timeline().slip_clip(id, new_in, new_out);
+    player_->refresh();
+    return ok;
+}
+
 ClipId AppController::clip_split(ClipId id, int64_t at_timeline_position) {
     auto new_id = project_->timeline().split_clip(id, at_timeline_position);
     player_->refresh();

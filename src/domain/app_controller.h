@@ -71,6 +71,7 @@ public:
     bool clip_remove(ClipId id);
     bool clip_move(ClipId id, TrackId dest_track, int64_t dest_position);
     bool clip_trim(ClipId id, int64_t new_in, int64_t new_out);
+    bool clip_slip(ClipId id, int64_t new_in, int64_t new_out);
     ClipId clip_split(ClipId id, int64_t at_timeline_position);
 
     // --- advanced editing (M4) ---

@@ -2355,6 +2355,50 @@ TEST_CASE("a clip filter stays private to its clip", "[t22]") {
 // Minimal repro for a segfault seen while prototyping undo: saving a
 // project that was itself loaded. Isolated here so it can be diagnosed
 // independently of the undo machinery.
+// Removing a clip closes the gap behind it (ripple) because MLT's
+// playlist_remove shifts the following entries down; leaving the gap is
+// what lift_clip is for. Slipping moves the source window while the
+// clip sits still, which trim cannot express because trim moves the
+// start when the left edge changes.
+TEST_CASE("delete ripples and slip keeps the clip in place", "[t5]") {
+    std::string clip = vedit::test::make_test_clip("ripple");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(v1.valid());
+    // The first clip takes only the first half of the source, which
+    // leaves source material to slip into.
+    auto a = app.clip_append(v1, mi, 0, 24);
+    auto b = app.clip_append(v1, mi);
+    auto c = app.clip_append(v1, mi);
+    REQUIRE(a.valid());
+    REQUIRE(b.valid());
+    REQUIRE(c.valid());
+
+    auto& tl = app.project().timeline();
+    const vedit::ClipInfo* aa = tl.clip(a);
+    REQUIRE(aa->length == 25);
+    const int64_t b_start = tl.clip(b)->start;
+    const int64_t c_start = tl.clip(c)->start;
+
+    // Slip: the source window moves, the clip does not.
+    REQUIRE(app.clip_slip(a, 25, 49));
+    aa = tl.clip(a);
+    REQUIRE(aa->start == 0);
+    REQUIRE(aa->length == 25);
+    REQUIRE(aa->in_point == 25);
+    REQUIRE(aa->out_point == 49);
+    REQUIRE(tl.clip(b)->start == b_start);
+    REQUIRE(tl.clip(c)->start == c_start);
+
+    // Ripple: removing the middle pulls the last clip back over it.
+    REQUIRE(app.clip_remove(b));
+    REQUIRE(tl.clip(c)->start == b_start);
+    REQUIRE(tl.duration() == c_start + tl.clip(c)->length - 50);
+}
+
 // Undo history is recorded from one hook (the refresh every mutator
 // already calls), so this covers the same path the RPC undo method uses.
 TEST_CASE("undo and redo restore timeline state", "[t18]") {
