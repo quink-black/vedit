@@ -2352,6 +2352,57 @@ TEST_CASE("a clip filter stays private to its clip", "[t22]") {
 // The loader used to rebuild tracks from the library, keeping only clip
 // in/out points and dropping every effect. This pins the round trip for
 // the state that survives it.
+// Minimal repro for a segfault seen while prototyping undo: saving a
+// project that was itself loaded. Isolated here so it can be diagnosed
+// independently of the undo machinery.
+TEST_CASE("save after load of a project with clips", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("resave");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    std::string first = vedit::test::unique_temp_path(
+        "vedit-test", "resave_first", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), first));
+
+    // Loading adopts the parsed graph in place of the built one.
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(app.project(), first));
+    REQUIRE(app.project().timeline().clip_count() == 1);
+
+    std::string second = vedit::test::unique_temp_path(
+        "vedit-test", "resave_second", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), second));
+
+    // Undo does this cycle repeatedly in one process, so make sure the
+    // adopt/save pair survives repetition.
+    for (int i = 0; i < 4; ++i) {
+        REQUIRE(vedit::ProjectSaveLoad::load_xml(app.project(), first));
+        REQUIRE(app.project().timeline().clip_count() == 1);
+        REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), second));
+        // Every AppController mutation refreshes the preview, which
+        // seeks and pulls a frame from the adopted tractor.
+        REQUIRE(app.library_import(clip) >= 0);
+    }
+
+    // A snapshot taken after an undo can describe a track with no clips.
+    vedit::AppController empty_track;
+    int mi2 = empty_track.library_import(clip);
+    auto v2 = empty_track.track_add(vedit::TrackKind::Video);
+    REQUIRE(v2.valid());
+    std::string no_clips = vedit::test::unique_temp_path(
+        "vedit-test", "no_clips", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(empty_track.project(), no_clips));
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(empty_track.project(), no_clips));
+    REQUIRE(empty_track.project().timeline().track_count() == 1);
+    REQUIRE(empty_track.project().timeline().clip_count() == 0);
+    std::string no_clips2 = vedit::test::unique_temp_path(
+        "vedit-test", "no_clips2", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(empty_track.project(), no_clips2));
+}
+
 TEST_CASE("save/load keeps filters and mute flags", "[t10]") {
     std::string clip = vedit::test::make_test_clip("fidelity");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
