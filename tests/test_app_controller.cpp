@@ -1439,22 +1439,44 @@ TEST_CASE("clip.lift replaces clip with blank", "[t18]") {
     REQUIRE(attached.empty());
 }
 
-TEST_CASE("clip.change_speed wraps clip in timewarp", "[t18]") {
-    std::string clip = vedit::test::make_test_clip("speed");
+// player.get_frame / view.screenshot hand an agent the pixels it
+// reasons about. Returning the same frame for every position makes
+// them silently useless, which is why this asserts content rather
+// than "the call succeeded".
+TEST_CASE("single frame grab honors the requested position", "[t18]") {
+    auto frame_bytes = [](const std::string& path) {
+        std::FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) return std::string{};
+        std::string out;
+        char buf[4096];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+        std::fclose(f);
+        return out;
+    };
+
+    std::string clip = vedit::test::make_test_clip("grab");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
     vedit::AppController app;
     int mi = app.library_import(clip);
     auto v1 = app.track_add(vedit::TrackKind::Video);
-    auto cid = app.clip_append(v1, mi);
+    REQUIRE(app.clip_append(v1, mi).valid());
 
-    vedit::rpc::Dispatcher d;
-    vedit::rpc::register_methods(d, app);
+    vedit::ExportService svc;
+    auto at = [&](int pos) {
+        auto p = unique_temp_path("vedit-grab", std::to_string(pos), ".png");
+        REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), pos, p));
+        return frame_bytes(p);
+    };
 
-    nlohmann::json req = {{"jsonrpc","2.0"},{"method","clip.change_speed"},{"id",1},
-                          {"params", {{"clip_id", cid.value}, {"speed", 2.0}}}};
-    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
-    REQUIRE_FALSE(resp.contains("error"));
+    const std::string f0 = at(0);
+    const std::string f10 = at(10);
+    const std::string f20 = at(20);
+    REQUIRE_FALSE(f0.empty());
+    REQUIRE(f0 != f10);
+    REQUIRE(f10 != f20);
+    REQUIRE(f0 != f20);
 }
 
 TEST_CASE("clip.detach_audio creates audio track", "[t18]") {

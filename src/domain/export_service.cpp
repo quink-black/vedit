@@ -143,16 +143,28 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
 
 bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
                               int64_t position, const std::string& image_path) {
-    // A prior consumer (preview or another get_frame call) leaves the
-    // producer paused with speed 0. Without restoring forward playback
-    // the image2 consumer (terminate_on_pause) stops before emitting a
-    // frame — same defect as the empty-export bug. See
-    // lessons-mistakes-to-avoid.md #10.
-    producer.set_speed(1.0);
-    producer.seek(static_cast<int>(position));
+    // Seeking the producer and then running the consumer ignores the
+    // seek: MLT's consumer restarts the producer from its start, so
+    // positions 0/10/20/40 all yielded byte-identical PNGs (measured).
+    // Cutting the single wanted frame out of the producer and rendering
+    // that cut is the form that actually honors the position.
+    int pos = static_cast<int>(position);
+    if (pos < 0) pos = 0;
+    if (pos >= producer.get_length()) pos = producer.get_length() - 1;
+    if (pos < 0) {
+        Logger::log(Logger::Level::Error, "ExportService: get_frame — empty producer");
+        return false;
+    }
+    Mlt::Producer* frame_cut = producer.cut(pos, pos);
+    if (!frame_cut || !frame_cut->is_valid()) {
+        delete frame_cut;
+        Logger::log(Logger::Level::Error, "ExportService: get_frame — cut failed");
+        return false;
+    }
 
     Mlt::Consumer consumer(profile, "avformat", image_path.c_str());
     if (!consumer.is_valid()) {
+        delete frame_cut;
         Logger::log(Logger::Level::Error, "ExportService: get_frame — avformat unavailable");
         return false;
     }
@@ -170,14 +182,14 @@ bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
     // Without -update, the image2 muxer rejects a plain filename
     // (it expects a %03d sequence pattern). We write one still frame.
     consumer.set("update", 1);
-    // One frame only — seek above positions the producer; the
-    // terminate_on_pause + single-frame emit + stop below keep this
-    // cheap. Explicit frame cap in case the producer is longer.
+    // The cut already contains exactly one frame; the cap keeps the
+    // consumer from running past it.
     consumer.set("frames", 1);
 
-    consumer.connect(producer);
+    consumer.connect(*frame_cut);
     consumer.run();
     consumer.stop();
+    delete frame_cut;
     return true;
 }
 
