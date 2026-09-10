@@ -1567,7 +1567,47 @@ TEST_CASE("clip.change_speed retimes instead of truncating", "[t18]") {
     REQUIRE(std::abs(twice->length - len_before / 2) <= 1);
 }
 
-TEST_CASE("clip.detach_audio creates audio track", "[t18]") {
+// Detaching has to copy the clip's SOURCE range and silence the
+// original. Passing timeline positions as source in/out shifted the
+// copy, and leaving the original audible doubled the audio.
+TEST_CASE("clip.detach_audio copies the source range and mutes the original",
+          "[t18]") {
+    // Render the project's audio and report its RMS in dB, or -999 when
+    // ffprobe reports -inf (true silence).
+    auto rms_db = [&](vedit::AppController& app, const std::string& tag) {
+        auto wav = unique_temp_path("vedit-detach", tag, ".wav");
+        {
+            // A finished consumer leaves the producer paused at speed 0;
+            // without restoring forward playback the next render faults.
+            Mlt::Producer* prod = app.project().producer();
+            prod->set_speed(1.0);
+            prod->seek(0);
+            Mlt::Consumer c(app.profile(), "avformat", wav.c_str());
+            c.set("vcodec", "none");
+            c.set("acodec", "pcm_s16le");
+            c.connect(*prod);
+            c.run();
+            c.stop();
+        }
+        std::string cmd =
+            "ffprobe -v error -f lavfi -i amovie=\"" + wav +
+            "\",astats=metadata=1:reset=0 -show_entries "
+            "frame_tags=lavfi.astats.Overall.RMS_level -of csv=p=0 2>/dev/null";
+        FILE* f = VEDIT_POPEN(cmd.c_str(), "r");
+        if (!f) return -999.0;
+        std::string last;
+        char buf[256];
+        while (std::fgets(buf, sizeof(buf), f)) {
+            std::string line(buf);
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+                line.pop_back();
+            if (!line.empty()) last = line;
+        }
+        VEDIT_PCLOSE(f);
+        if (last.empty() || last == "-inf") return -999.0;
+        return std::atof(last.c_str());
+    };
+
     std::string clip = vedit::test::make_test_clip("detach");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
@@ -1575,6 +1615,18 @@ TEST_CASE("clip.detach_audio creates audio track", "[t18]") {
     int mi = app.library_import(clip);
     auto v1 = app.track_add(vedit::TrackKind::Video);
     auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Park the clip away from the timeline origin so its source in-point
+    // and its timeline start are different numbers.
+    REQUIRE(app.clip_move(cid, v1, 20));
+    const vedit::ClipInfo* moved = app.project().timeline().clip(cid);
+    REQUIRE(moved);
+    REQUIRE(moved->start == 20);
+    REQUIRE(moved->in_point == 0);
+    const int64_t src_out = moved->out_point;
+
+    REQUIRE(rms_db(app, "before") > -60.0);
 
     vedit::rpc::Dispatcher d;
     vedit::rpc::register_methods(d, app);
@@ -1583,7 +1635,19 @@ TEST_CASE("clip.detach_audio creates audio track", "[t18]") {
                           {"params", {{"clip_id", cid.value}}}};
     nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
     REQUIRE(resp.contains("result"));
-    REQUIRE(resp["result"]["clip_id"] > 0);
+    const int64_t audio_id = resp["result"]["clip_id"];
+    REQUIRE(audio_id > 0);
+
+    const vedit::ClipInfo* audio_clip =
+        app.project().timeline().clip(vedit::ClipId{audio_id});
+    REQUIRE(audio_clip);
+    REQUIRE(audio_clip->in_point == 0);
+    REQUIRE(audio_clip->out_point == src_out);
+
+    // Drop the copy. What is left must be silent, which is only true if
+    // the original stopped carrying audio.
+    REQUIRE(app.clip_remove(vedit::ClipId{audio_id}));
+    REQUIRE(rms_db(app, "after") < -60.0);
 }
 
 TEST_CASE("project.set_profile changes output resolution", "[t19]") {

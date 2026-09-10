@@ -40,6 +40,10 @@ constexpr const char* kUserFilterProp = "_vedit_user_filter";
 // with the internal "mlt_mix" data property, which does not carry type.
 constexpr const char* kTransitionTypeProp = "_vedit_transition_type";
 
+// Marks a clip whose audio is silenced by detach_audio, so the muting
+// filter is attached once rather than stacked on every call.
+constexpr const char* kAudioMutedProp = "_vedit_audio_muted";
+
 int64_t read_clip_id(Mlt::Producer& cut) {
     return cut.get_int(kClipIdProp);
 }
@@ -585,17 +589,51 @@ ClipId TimelineModel::detach_audio(ClipId id) {
     const auto* item = library_.item(found->second.media_index);
     if (!item || !item->has_audio) return ClipId{0};
 
-    Mlt::Producer* producer = library_.producer(found->second.media_index);
-    if (!producer) return ClipId{0};
+    // Cut the copy from the SOURCE range. in/out are source frames
+    // while start/length are timeline positions; passing the timeline
+    // range here shifted the detached audio by however far the clip sat
+    // from the start of the track.
+    const int64_t src_in = found->second.in_point;
+    const int64_t src_out = found->second.out_point;
 
     // Create a new audio track.
     TrackId audio_track = add_track(TrackKind::Audio, "Audio (detached)");
     if (!audio_track.valid()) return ClipId{0};
 
-    // Append a clip to the audio track with the same in/out.
     auto audio_clip = append_clip(audio_track, found->second.media_index,
-                                   found->second.start, found->second.start + found->second.length);
+                                  src_in, src_out);
+    if (!audio_clip.valid()) return ClipId{0};
+
+    // Without this the source clip keeps its audio and both it and the
+    // new audio clip play it.
+    if (!mute_clip_audio(id)) return ClipId{0};
     return audio_clip;
+}
+
+bool TimelineModel::mute_clip_audio(ClipId id) {
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    if (cut->get_int(kAudioMutedProp) == 1) {
+        delete cut;
+        return true;
+    }
+
+    // Measured: setting audio_index = -1 on a cut that has already been
+    // decoded leaves the audio playing at its original level, because
+    // MLT only reads the index when the producer opens. Dropping the
+    // stream therefore needs a fresh producer, which would discard the
+    // clip's filters, so attenuate instead. -100 dB puts a normal
+    // source below the 16-bit noise floor.
+    Mlt::Filter volume(profile_, "volume");
+    if (!volume.is_valid()) {
+        delete cut;
+        return false;
+    }
+    volume.set("level", -100.0);
+    cut->attach(volume);
+    cut->set(kAudioMutedProp, 1);
+    delete cut;
+    return true;
 }
 
 bool TimelineModel::set_clip_audio_enabled(ClipId id, bool enabled) {

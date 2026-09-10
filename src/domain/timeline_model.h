@@ -309,6 +309,12 @@ private:
     // delete the returned filter (it is a new reference from filter()).
     Mlt::Filter* ensure_affine_filter(ClipId id) const;
 
+    // Silence a clip's audio. MLT ignores audio_index once the producer
+    // has decoded a frame, so dropping the stream would mean re-cutting
+    // from a fresh producer, which discards everything attached to the
+    // clip. Attenuate with the volume filter instead.
+    bool mute_clip_audio(ClipId id);
+
     // Check whether geometry params are at their defaults and the
     // affine filter should be detached.
     bool geometry_is_default(ClipId id, double x, double y,
