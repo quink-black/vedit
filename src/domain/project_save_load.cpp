@@ -42,7 +42,7 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
         Logger::log(Logger::Level::Error, "ProjectSaveLoad: xml consumer unavailable");
         return false;
     }
-    consumer.set("resource", path.c_str());
+    consumer.set("resource", normalized.c_str());
     consumer.set("no_root", 0);
     consumer.connect(*producer);
     consumer.run();
@@ -73,15 +73,14 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
 
     // Enumerate tracks via the C API (no mlt++ wrapper for tractor
     // track enumeration). The XML-loaded producer is a tractor; each
-    // track is a playlist producer.
+    // track is a playlist producer. mlt_tractor_get_track is a pure
+    // positional getter into the multitrack array, so nothing is
+    // consumed here and the producer does not need re-parsing.
     int num_tracks = 0;
-    while (mlt_producer producer = mlt_tractor_get_track(
-               MLT_TRACTOR(loaded.get_producer()), num_tracks)) {
+    while (mlt_tractor_get_track(MLT_TRACTOR(loaded.get_producer()),
+                                 num_tracks)) {
         ++num_tracks;
     }
-    // Reset — we consumed the tracks above.
-    loaded = Mlt::Producer(project.profile(), "xml", path.c_str());
-    if (!loaded.is_valid()) return false;
 
     for (int t = 0; t < num_tracks; ++t) {
         mlt_producer raw = mlt_tractor_get_track(
