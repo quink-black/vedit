@@ -11,6 +11,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <fstream>
+
 #include <cstdio>
 #include <sstream>
 
@@ -20,6 +22,101 @@
 namespace vedit {
 
 namespace {
+
+// MLT's XML reader attaches a filter written inside a playlist entry to
+// the entry's parent producer rather than to the cut, so per-clip
+// filters migrate to the shared source producer across a round trip.
+// They are recorded beside the document, keyed by track and clip index
+// (document order, which adopt preserves), and re-attached on load.
+std::string sidecar_path(const std::string& xml_path) {
+    return xml_path + ".vedit";
+}
+
+nlohmann::json sidecar_for(const TimelineModel& tl) {
+    nlohmann::json entries = nlohmann::json::array();
+    const auto tracks = tl.tracks();
+    for (size_t t = 0; t < tracks.size(); ++t) {
+        const auto clips = tl.clips_on_track(tracks[t].id);
+        for (size_t c = 0; c < clips.size(); ++c) {
+            nlohmann::json entry;
+            entry["track"] = t;
+            entry["clip"] = c;
+            nlohmann::json filters = nlohmann::json::array();
+            for (const auto& f : tl.attached_filters()) {
+                if (f.target_type != "clip" || f.target_id != clips[c].id.value)
+                    continue;
+                nlohmann::json fj;
+                fj["name"] = f.filter_name;
+                nlohmann::json params = nlohmann::json::array();
+                for (const auto& [key, value] : f.params) {
+                    params.push_back({{"key", key}, {"value", value}});
+                }
+                fj["params"] = params;
+                filters.push_back(fj);
+            }
+            entry["filters"] = filters;
+            entries.push_back(entry);
+        }
+    }
+    nlohmann::json doc;
+    doc["vedit_sidecar"] = 1;
+    doc["clips"] = entries;
+    return doc;
+}
+
+void apply_sidecar(const std::string& path, TimelineModel& tl) {
+    std::ifstream in(path);
+    if (!in) return;
+    nlohmann::json doc;
+    try {
+        in >> doc;
+    } catch (const std::exception&) {
+        Logger::log(Logger::Level::Warn,
+                    "ProjectSaveLoad: unreadable sidecar, filters skipped");
+        return;
+    }
+    if (!doc.contains("clips")) return;
+    const auto tracks = tl.tracks();
+    for (const auto& entry : doc["clips"]) {
+        int t = entry.value("track", -1);
+        int c = entry.value("clip", -1);
+        if (t < 0 || c < 0 || t >= static_cast<int>(tracks.size())) continue;
+        const auto clips = tl.clips_on_track(tracks[t].id);
+        if (c >= static_cast<int>(clips.size())) continue;
+        const ClipId clip_id = clips[c].id;
+
+        // The sidecar is authoritative: MLT already attached the
+        // document's entry filters, and attaching again would double
+        // them up.
+        for (const auto& f : tl.attached_filters()) {
+            if (f.target_type == "clip" && f.target_id == clip_id.value)
+                tl.detach_filter(clip_id, f.filter_name);
+        }
+
+        for (const auto& f : entry.value("filters", nlohmann::json::array())) {
+            std::string name = f.value("name", "");
+            if (name.empty()) continue;
+            int in = f.value("in", -1);
+            int out = f.value("out", -1);
+            if (!tl.attach_filter(clip_id, name, in, out)) continue;
+            for (const auto& pv : f.value("params", nlohmann::json::array())) {
+                std::string key = pv.value("key", "");
+                if (key.empty()) continue;
+                const nlohmann::json& v = pv["value"];
+                if (v.contains("keyframes")) {
+                    tl.set_filter_param_keyframes(clip_id, name, key,
+                                                  v["keyframes"]);
+                } else if (v.contains("value")) {
+                    const nlohmann::json& scalar = v["value"];
+                    std::string text = scalar.is_string()
+                                           ? scalar.get<std::string>()
+                                           : scalar.dump();
+                    tl.set_filter_param(clip_id, name, key, text);
+                }
+            }
+        }
+    }
+}
 
 } // namespace
 
@@ -47,6 +144,14 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     consumer.connect(*producer);
     consumer.run();
 
+    // Record what MLT cannot carry, then clean up stale sidecars.
+    std::remove(sidecar_path(normalized).c_str());
+    nlohmann::json sidecar = sidecar_for(project.timeline());
+    if (!sidecar["clips"].empty()) {
+        std::ofstream out(sidecar_path(normalized));
+        if (out) out << sidecar.dump(2);
+    }
+
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: saved XML");
     return true;
 }
@@ -71,6 +176,8 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
                     "ProjectSaveLoad: XML does not contain a tractor");
         return false;
     }
+
+    apply_sidecar(sidecar_path(normalized), project.timeline());
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: loaded XML");
     return true;

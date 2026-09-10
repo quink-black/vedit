@@ -2473,10 +2473,13 @@ TEST_CASE("undo and redo restore timeline state", "[t18]") {
     REQUIRE(restored.size() == 1);
     cid = restored[0].id;
 
-    // KNOWN GAP: undoing a filter change loses the filter on redo.
-    // Structural history above is the part that works; the filter case is
-    // recorded in doc/next-phase-design.md Phase 1.1.
+    // A filter change is undoable too: the snapshots carry a sidecar
+    // that re-attaches per-clip filters on restore.
     REQUIRE(app.filter_add(cid, "brightness"));
+    REQUIRE(app.project().timeline().attached_filters().size() == 1);
+    REQUIRE(app.undo());
+    REQUIRE(app.project().timeline().attached_filters().empty());
+    REQUIRE(app.redo());
     REQUIRE(app.project().timeline().attached_filters().size() == 1);
     REQUIRE(app.undo());
     REQUIRE(app.project().timeline().attached_filters().empty());
@@ -2579,6 +2582,11 @@ TEST_CASE("save/load keeps filters and mute flags", "[t10]") {
 
     // Both the per-clip filter and the track-level filter come back.
     const auto after = app2.project().timeline().attached_filters();
+    for (const auto& f : after)
+        printf("DBG f type=%s id=%lld name=%s params=%zu\n",
+               f.target_type.c_str(), (long long)f.target_id,
+               f.filter_name.c_str(), f.params.size());
+    fflush(stdout);
     REQUIRE(after.size() == 2);
     int clip_back = 0, track_back = 0;
     for (const auto& f : after) {

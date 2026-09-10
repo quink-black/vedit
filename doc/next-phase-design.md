@@ -357,17 +357,25 @@ refresh the preview. Ten filter and composite-geometry mutators were
 missing `refresh()` entirely, which also meant filter changes never
 updated the preview; they call it now.
 
-Still open: after `filter_add` -> `undo` -> `redo`, the filter does not
-come back. Root cause measured: MLT's XML reader attaches a filter
-written inside a playlist `<entry>` to the entry's **parent producer**,
-not to the cut, so after a round trip a per-clip filter has migrated to
-the shared source producer (`cut_filters=0, parent_filters=10` right
-after adopt). This is an MLT behaviour, not a vedit bug, and it means
-per-clip filters cannot survive an MLT XML round trip while clips share
-one source producer. Shotcut avoids it by giving every clip its own
-producer in the document. The durable fix is the same: on save, give
-each clip its own producer instead of a cut of a shared one, or store
-the per-clip filter list beside the document and re-attach on load.
+`filter_add` -> `undo` -> `redo` now restores the filter. Root cause
+measured and fixed: MLT's XML reader attaches a filter written inside a
+playlist `<entry>` to the entry's **parent producer**, not to the cut
+(`cut_filters=0, parent_filters=10` right after adopt), so per-clip
+filters cannot survive an MLT XML round trip while clips share one
+source producer. Rather than give every clip its own producer, the
+document now has a sidecar: `save_xml` writes `<path>.vedit` recording
+each clip's filters by track and clip index in document order (which
+`adopt` preserves), and `load_xml` re-attaches them, detaching whatever
+MLT loaded first so the sidecar is authoritative. Params round-trip as
+`{"value": scalar}` or `{"keyframes": [...]}` and are replayed through
+the same setters the RPC uses.
+
+Two defects surfaced while wiring it, both real and now fixed: the ten
+filter and composite-geometry mutators called `player_->refresh()`
+*before* the mutation, so the preview lagged one edit behind and the
+history hook recorded the pre-mutation state (which is why undo looked
+like it worked while redo restored nothing); and a stale sidecar was
+never removed when a save produced no filters.
 
 The loader is exonerated. A regression test
 (`save after load of a project with clips`) exercises exactly what the
