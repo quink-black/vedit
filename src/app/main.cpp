@@ -329,6 +329,13 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
                 add_media_to_timeline(app, gui, i);
             }
         }
+        // Drag source: hands the library index to the timeline lanes.
+        // This is what the status text has always promised.
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("VEDIT_MEDIA_IDX", &i, sizeof(int));
+            ImGui::TextUnformatted(basename_of(item->path).c_str());
+            ImGui::EndDragDropSource();
+        }
         if (ImGui::IsItemHovered()) {
             // Tooltip shows the stream list so the user can see which
             // tracks the source carries without opening ffprobe.
@@ -679,6 +686,43 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         if (rel < 0) rel = 0;
         return static_cast<int64_t>(rel / px_per_frame + 0.5f);
     };
+
+    // Drop target for media dragged from the library. The whole canvas
+    // accepts the payload; the lane is worked out from the mouse Y and
+    // the insert point from the mouse X, snapped to nearby clip edges.
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload =
+                ImGui::AcceptDragDropPayload("VEDIT_MEDIA_IDX")) {
+            int media_index = *static_cast<const int*>(payload->Data);
+            int lane = static_cast<int>((mouse.y - lanes_y0) / track_h);
+            lane = std::clamp(lane, 0, static_cast<int>(tracks.size()) - 1);
+            if (lane >= 0 && !tracks.empty()) {
+                int64_t frame = x_to_frame(mouse.x);
+                // Snap to clip edges and the playhead within ~8 px so a
+                // hand-placed drop lands exactly against a neighbour.
+                int64_t tol = std::max<int64_t>(1, static_cast<int64_t>(8.0f / px_per_frame));
+                int64_t best = frame, best_d = tol;
+                for (const auto& tr : tracks) {
+                    for (const auto& c : tl.clips_on_track(tr.id)) {
+                        for (int64_t edge : {c.start, c.start + c.length}) {
+                            int64_t d = edge > frame ? edge - frame : frame - edge;
+                            if (d < best_d) { best_d = d; best = edge; }
+                        }
+                    }
+                }
+                frame = best;
+                auto new_id = app.clip_insert(tracks[lane].id, media_index, frame);
+                if (new_id.valid()) {
+                    gui.selected_clip = new_id;
+                    gui.status = "Inserted media at " +
+                                 timecode(frame, gui.project_fps) + ".";
+                } else {
+                    gui.status = "Could not insert media at that position.";
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
 
     // Background.
     dl->AddRectFilled(origin, ImVec2(origin.x + content_w, origin.y + content_h),
