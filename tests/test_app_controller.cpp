@@ -2291,8 +2291,38 @@ TEST_CASE("clip.set_crop domain round-trip", "[t22]") {
     REQUIRE(bottom == 0);
 }
 
-TEST_CASE("clip.get_crop returns zeros with no filter", "[t22]") {
-    std::string clip = vedit::test::make_test_clip("crop_default");
+// A clip id that does not exist used to come back as a successful
+// result carrying default values, which looks like real geometry to a
+// caller and can silently misplace content.
+TEST_CASE("geometry and crop getters reject an unknown clip_id", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("geo_unknown");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    double x = 0, y = 0, w = 0, h = 0;
+    REQUIRE_FALSE(app.clip_get_geometry(vedit::ClipId{424242}, x, y, w, h));
+    int l = 0, r = 0, t = 0, b = 0;
+    REQUIRE_FALSE(app.clip_get_crop(vedit::ClipId{424242}, l, r, t, b));
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+    for (const char* method : {"clip.get_geometry", "clip.get_crop",
+                               "clip.set_geometry", "clip.set_crop"}) {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method",method},{"id",1},
+                              {"params", {{"clip_id", 424242}}}};
+        auto parsed = nlohmann::json::parse(d.handle_request(req.dump()));
+        INFO(method);
+        REQUIRE(parsed.contains("error"));
+        REQUIRE(parsed["error"]["code"] == -32602);
+    }
+}
+
+TEST_CASE("clip.get_crop returns zeros with no filter", "[t22]") {    std::string clip = vedit::test::make_test_clip("crop_default");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
     vedit::AppController app;

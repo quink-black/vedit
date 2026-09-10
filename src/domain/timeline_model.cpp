@@ -1675,7 +1675,7 @@ bool TimelineModel::clip_get_geometry(ClipId id, double& x, double& y,
     h = kDefaultGeoH;
 
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
-    if (!cut) return true;  // no clip, return defaults
+    if (!cut) return false;
 
     Mlt::Producer& parent = cut->parent();
     int fidx = find_attached_filter(parent, "affine");
@@ -1750,7 +1750,7 @@ bool TimelineModel::clip_get_crop(ClipId id, int& left, int& right,
     bottom = 0;
 
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
-    if (!cut) return true;
+    if (!cut) return false;
 
     Mlt::Producer& parent = cut->parent();
     int fidx = find_attached_filter(parent, "crop");

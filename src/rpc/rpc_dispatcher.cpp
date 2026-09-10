@@ -60,7 +60,9 @@ json Dispatcher::handle_one(const json& request, bool& is_notification) noexcept
         return make_error_response(ErrorCode::InvalidRequest, "Missing or invalid method name", response_id);
     const std::string method_name = method_it->get<std::string>();
 
-    json params = json(nullptr);
+    // Absent params means an empty object, not null: handlers read
+    // params with value()/at(), and calling those on null throws.
+    json params = json::object();
     auto params_it = request.find("params");
     if (params_it != request.end()) {
         if (!params_it->is_object() && !params_it->is_array())
@@ -77,6 +79,12 @@ json Dispatcher::handle_one(const json& request, bool& is_notification) noexcept
         return json{{"jsonrpc", "2.0"}, {"result", std::move(result)}, {"id", response_id}};
     } catch (const RpcException& ex) {
         return make_error_response(ex.code(), ex.msg(), response_id, ex.data());
+    } catch (const json::exception& ex) {
+        // Handlers read params with value()/at(), which throw on a type
+        // or shape mismatch. A malformed request is the caller's fault,
+        // so it is InvalidParams rather than a server-side failure.
+        return make_error_response(ErrorCode::InvalidParams, ex.what(),
+                                   response_id);
     } catch (const std::exception& ex) {
         return make_error_response(ErrorCode::InternalError, std::string("Internal error: ") + ex.what(), response_id);
     } catch (...) {

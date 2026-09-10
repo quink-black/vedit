@@ -76,6 +76,12 @@ void register_methods(Dispatcher& d, AppController& app) {
             int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
             if (fd < 0) continue;
 
+            // Bound the handshake. A socket file left behind by a crashed
+            // instance still accepts connects but never replies, and a
+            // blocking recv without a timeout would hang the caller.
+            struct timeval tv = {0, 500000};  // 500 ms
+            ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
             struct sockaddr_un addr;
             std::memset(&addr, 0, sizeof(addr));
             addr.sun_family = AF_UNIX;
@@ -506,7 +512,8 @@ void register_methods(Dispatcher& d, AppController& app) {
         ClipId id{params.value("clip_id", 0LL)};
         if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
         double cx, cy, cw, ch;
-        app.clip_get_geometry(id, cx, cy, cw, ch);
+        if (!app.clip_get_geometry(id, cx, cy, cw, ch))
+            throw RpcException(ErrorCode::InvalidParams, "unknown clip_id");
         double x = params.contains("x") ? params["x"].get<double>() : cx;
         double y = params.contains("y") ? params["y"].get<double>() : cy;
         double w = params.contains("w") ? params["w"].get<double>() : cw;
@@ -520,7 +527,8 @@ void register_methods(Dispatcher& d, AppController& app) {
         ClipId id{params.value("clip_id", 0LL)};
         if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
         double x, y, w, h;
-        app.clip_get_geometry(id, x, y, w, h);
+        if (!app.clip_get_geometry(id, x, y, w, h))
+            throw RpcException(ErrorCode::InvalidParams, "unknown clip_id");
         return nlohmann::json{{"x", x}, {"y", y}, {"w", w}, {"h", h}};
     });
 
@@ -541,7 +549,8 @@ void register_methods(Dispatcher& d, AppController& app) {
         ClipId id{params.value("clip_id", 0LL)};
         if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
         int cl, cr, ct, cb;
-        app.clip_get_crop(id, cl, cr, ct, cb);
+        if (!app.clip_get_crop(id, cl, cr, ct, cb))
+            throw RpcException(ErrorCode::InvalidParams, "unknown clip_id");
         int left   = params.value("left",   cl);
         int right  = params.value("right",  cr);
         int top    = params.value("top",    ct);
@@ -555,7 +564,8 @@ void register_methods(Dispatcher& d, AppController& app) {
         ClipId id{params.value("clip_id", 0LL)};
         if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
         int left, right, top, bottom;
-        app.clip_get_crop(id, left, right, top, bottom);
+        if (!app.clip_get_crop(id, left, right, top, bottom))
+            throw RpcException(ErrorCode::InvalidParams, "unknown clip_id");
         return nlohmann::json{{"left", left}, {"right", right},
                               {"top", top},   {"bottom", bottom}};
     });

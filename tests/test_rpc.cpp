@@ -84,3 +84,32 @@ TEST_CASE("Uncaught exception returns InternalError", "[rpc]") {
     REQUIRE(parsed["error"]["code"] == -32603);
     REQUIRE(parsed["error"]["message"].get<std::string>().find("oops") != std::string::npos);
 }
+
+// Handlers read params with value()/at(); a type mismatch used to leak
+// out as nlohmann's exception and be reported as InternalError, which
+// tells an agent the server is broken rather than that its request was
+// malformed.
+TEST_CASE("Type mismatch in params reports InvalidParams, not InternalError",
+          "[rpc]") {
+    vedit::rpc::Dispatcher d;
+    d.register_method("needs.number", [](const json& params) {
+        return json{{"value", params.value("n", 0LL)}};
+    });
+    std::string response = d.handle_request(
+        R"({"jsonrpc":"2.0","method":"needs.number","params":{"n":"abc"},"id":1})");
+    auto parsed = json::parse(response);
+    REQUIRE(parsed.contains("error"));
+    REQUIRE(parsed["error"]["code"] == -32602);
+}
+
+TEST_CASE("Missing params object still reaches the handler", "[rpc]") {
+    vedit::rpc::Dispatcher d;
+    d.register_method("needs.number", [](const json& params) {
+        return json{{"value", params.value("n", 0LL)}};
+    });
+    std::string response = d.handle_request(
+        R"({"jsonrpc":"2.0","method":"needs.number","id":1})");
+    auto parsed = json::parse(response);
+    REQUIRE(parsed.contains("result"));
+    REQUIRE(parsed["result"]["value"] == 0);
+}
