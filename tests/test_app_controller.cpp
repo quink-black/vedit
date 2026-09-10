@@ -860,6 +860,58 @@ TEST_CASE("Async export via AppController export_start/poll", "[t14][export]") {
     REQUIRE(probe.find("h264") != std::string::npos);
 }
 
+// export.cancel used to set a flag that nothing ever read: render()
+// branched on whether a cancel callback existed and ran the identical
+// consumer.run() either way, so the encode always finished and the job
+// only reported "cancelled" afterwards.
+TEST_CASE("export.cancel interrupts a running encode", "[t14][export]") {
+    std::string clip = make_test_clip("cancel_export");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    // Long enough that the encode is still running when we cancel.
+    for (int i = 0; i < 25; ++i) REQUIRE(app.clip_append(v1, mi).valid());
+
+    std::string out = vedit::test::unique_temp_path(
+        "vedit-test", "cancel_export", ".mp4");
+    int64_t job_id = app.export_start(out);
+    REQUIRE(job_id > 0);
+
+    // Wait until frames are actually being written.
+    double seen = 0.0;
+    for (int i = 0; i < 300 && seen <= 0.0; ++i) {
+        auto r = app.export_poll(job_id);
+        REQUIRE(r.found);
+        if (r.state != "running") break;
+        seen = r.fraction;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    REQUIRE(seen > 0.0);
+
+    REQUIRE(app.export_cancel(job_id));
+
+    // The worker must stop promptly rather than finishing the encode.
+    auto t0 = std::chrono::steady_clock::now();
+    vedit::AppController::ExportPollResult r;
+    for (int i = 0; i < 200; ++i) {  // 200 * 50ms = 10s ceiling
+        r = app.export_poll(job_id);
+        REQUIRE(r.found);
+        if (r.state != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    const double waited =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+            .count();
+
+    REQUIRE(r.state == "cancelled");
+    REQUIRE(waited < 8.0);
+    // Stopped well before the end; a runaway encode would report 1.0.
+    REQUIRE(r.fraction < 0.9);
+}
+
 TEST_CASE("Async export poll on unknown job_id returns found=false", "[t14]") {
     vedit::AppController app;
     auto r = app.export_poll(99999);

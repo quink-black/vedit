@@ -20,12 +20,23 @@ struct ExportProgressData {
     int total;
     int start_frame;
     ExportService::ProgressFn* fn;
+    ExportService::CancelFn* cancel;
+    mlt_consumer consumer;
 };
 
 // Static callback for the consumer-frame-show event during export.
 void on_export_frame(mlt_consumer, void* ud, mlt_event_data data) {
     if (!ud) return;
     auto* pd = static_cast<ExportProgressData*>(ud);
+
+    // Stop the consumer from inside the callback. run() is synchronous
+    // and cannot be interleaved, so this is the only point where a
+    // cancel request can actually interrupt the encode.
+    if (pd->cancel && *pd->cancel && (*pd->cancel)()) {
+        if (pd->consumer) mlt_consumer_stop(pd->consumer);
+        return;
+    }
+
     if (!pd->fn || !*pd->fn) return;
     Mlt::Frame frame = Mlt::EventData(data).to_frame();
     if (!frame.is_valid() || !frame.get_int("rendered")) return;
@@ -112,25 +123,18 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     // Progress reporting via consumer-frame-show.
     // Re-read total in case producer.set("out", ...) changed it.
     int total2 = producer.get_length();
-    ExportProgressData progress_data{total2, static_cast<int>(start_frame), &on_progress};
-    if (on_progress) {
+    // The listener drives both progress reporting and cancellation, so
+    // it has to be attached whenever either callback was supplied.
+    ExportProgressData progress_data{total2, static_cast<int>(start_frame),
+                                     &on_progress,
+                                     on_cancel ? &on_cancel : nullptr,
+                                     consumer.get_consumer()};
+    if (on_progress || on_cancel) {
         consumer.listen("consumer-frame-show", &progress_data,
                         reinterpret_cast<mlt_listener>(on_export_frame));
     }
 
-    // Run the encode, checking cancel between frames.
-    if (on_cancel) {
-        // Poll cancel in a tight-ish loop while run() blocks.
-        // run() is synchronous, so we can't interleave. Instead,
-        // rely on the progress callback to check cancel.
-        // The consumer will stop naturally when terminate_on_pause
-        // fires at the end. For mid-stream cancel, the caller
-        // should set cancel_requested on the ExportJob and the
-        // progress callback checks it.
-        consumer.run();
-    } else {
-        consumer.run();
-    }
+    consumer.run();
     // run() returns when terminate_on_pause fires, but the avformat
     // consumer's encoder worker threads are only joined and their
     // buffers freed by an explicit stop(). Without it FFmpeg's
