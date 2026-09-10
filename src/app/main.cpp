@@ -687,6 +687,26 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
         return static_cast<int64_t>(rel / px_per_frame + 0.5f);
     };
 
+    // Snap a frame to the nearest edge of another clip within ~8 px, so
+    // a dragged or trimmed clip lands flush against its neighbour
+    // instead of a few frames off. The clip being manipulated is skipped
+    // or it would glue to its own edges.
+    auto snap_frame = [&](int64_t f, vedit::ClipId ignore) -> int64_t {
+        int64_t tol = std::max<int64_t>(1, static_cast<int64_t>(8.0f / px_per_frame));
+        int64_t best = f;
+        int64_t best_d = tol;
+        for (const auto& tr : tracks) {
+            for (const auto& c : tl.clips_on_track(tr.id)) {
+                if (c.id == ignore) continue;
+                for (int64_t edge : {c.start, c.start + c.length}) {
+                    int64_t d = edge > f ? edge - f : f - edge;
+                    if (d < best_d) { best_d = d; best = edge; }
+                }
+            }
+        }
+        return best;
+    };
+
     // Drop target for media dragged from the library. The whole canvas
     // accepts the payload; the lane is worked out from the mouse Y and
     // the insert point from the mouse X, snapped to nearby clip edges.
@@ -1064,6 +1084,7 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                 if (!ci) break;
                 int64_t new_start = frame - gui.drag_grab_offset;
                 if (new_start < 0) new_start = 0;
+                new_start = snap_frame(new_start, gui.drag_clip);
                 vedit::TrackId dest = ci->track_id;
                 int lane = static_cast<int>((mouse.y - lanes_y0) / track_h);
                 if (lane >= 0 && lane < static_cast<int>(tracks.size()))
@@ -1075,7 +1096,8 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
             }
             case DragMode::TrimLeft: {
                 if (!ci) break;
-                int64_t delta = frame - gui.drag_orig_start;
+                int64_t delta = snap_frame(frame, gui.drag_clip) -
+                                gui.drag_orig_start;
                 int64_t new_in = gui.drag_orig_in + delta;
                 int64_t new_out = gui.drag_orig_out;
                 clamp_trim(new_in, new_out, gui.drag_source_len);
@@ -1086,7 +1108,8 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
                 if (!ci) break;
                 int64_t new_in = gui.drag_orig_in;
                 int64_t new_out = gui.drag_orig_in +
-                                  (frame - gui.drag_orig_start);
+                                  (snap_frame(frame, gui.drag_clip) -
+                                   gui.drag_orig_start);
                 clamp_trim(new_in, new_out, gui.drag_source_len);
                 if (gui.drag_source_len > 0 && new_out >= gui.drag_source_len - 1) {
                     gui.status = "Reached the end of the source clip.";
