@@ -1619,6 +1619,30 @@ TEST_CASE("clip.change_speed retimes instead of truncating", "[t18]") {
     REQUIRE(std::abs(twice->length - len_before / 2) <= 1);
 }
 
+// The GUI's transition menu resolves a clip through playlist_index_of,
+// which read a property name that was never stamped and so always
+// returned -1, making every transition fail.
+TEST_CASE("playlist_index_of resolves a clip to its playlist slot", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("plidx");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid1 = app.clip_append(v1, mi);
+    auto cid2 = app.clip_append(v1, mi);
+    REQUIRE(cid1.valid());
+    REQUIRE(cid2.valid());
+
+    auto& tl = app.project().timeline();
+    REQUIRE(tl.playlist_index_of(cid1) == 0);
+    REQUIRE(tl.playlist_index_of(cid2) == 1);
+    REQUIRE(tl.playlist_index_of(vedit::ClipId{9999}) == -1);
+
+    // The index has to be usable, which is the whole point of it.
+    REQUIRE(app.clip_add_transition(v1, tl.playlist_index_of(cid1), 30, "luma"));
+}
+
 // Detaching has to copy the clip's SOURCE range and silence the
 // original. Passing timeline positions as source in/out shifted the
 // copy, and leaving the original audible doubled the audio.

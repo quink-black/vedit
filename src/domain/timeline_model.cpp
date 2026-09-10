@@ -694,7 +694,7 @@ int TimelineModel::playlist_index_of(ClipId id) const {
         if (pl->is_blank(i)) continue;
         Mlt::Producer* cut = pl->get_clip(i);
         if (!cut) continue;
-        int64_t cid = cut->get_int("vedit_clip_id");
+        int64_t cid = read_clip_id(*cut);
         delete cut;
         if (cid == id.value) return i;
     }

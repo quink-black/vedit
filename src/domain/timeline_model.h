@@ -61,12 +61,6 @@ public:
     // model's lifetime; PreviewRenderer connects its consumer to this.
     Mlt::Producer* producer() { return tractor_.get(); }
 
-    // Ensure a composite transition is planted so a higher video track
-    // overlays the base track. Idempotent: replanting on track add is
-    // safe (MLT deduplicates by service identity). M1 plants one
-    // composite per video track above track 0.
-    void ensure_composite_transitions();
-
     // --- tracks ---
     TrackId add_track(TrackKind kind, const std::string& name = "");
     bool remove_track(TrackId id);
