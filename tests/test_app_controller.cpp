@@ -1479,6 +1479,94 @@ TEST_CASE("single frame grab honors the requested position", "[t18]") {
     REQUIRE(f0 != f20);
 }
 
+// Two rendered frames can only be compared by content, not by "did the
+// call succeed": truncating a clip to half its length and actually
+// retimes it to 2x both halve the duration. What separates them is
+// which source frame lands at a given timeline position.
+TEST_CASE("clip.change_speed retimes instead of truncating", "[t18]") {
+    auto frame_bytes = [](const std::string& path) {
+        std::FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) return std::string{};
+        std::string out;
+        char buf[4096];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+        std::fclose(f);
+        return out;
+    };
+
+    std::string clip = vedit::test::make_test_clip("speed");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    const vedit::ClipInfo* before = app.project().timeline().clip(cid);
+    REQUIRE(before);
+    const int64_t len_before = before->length;
+    REQUIRE(len_before >= 20);
+
+    // On an unretimed clip, timeline position N shows source frame N.
+    vedit::ExportService svc;
+    auto ref10 = unique_temp_path("vedit-speed", "ref10", ".png");
+    auto ref20 = unique_temp_path("vedit-speed", "ref20", ".png");
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 10, ref10));
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 20, ref20));
+    const std::string src10 = frame_bytes(ref10);
+    const std::string src20 = frame_bytes(ref20);
+    REQUIRE_FALSE(src10.empty());
+    REQUIRE_FALSE(src20.empty());
+    // Guard: if these two frames were identical the test would pass on
+    // any implementation, so make sure the clip really has motion.
+    REQUIRE(src10 != src20);
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","clip.change_speed"},{"id",1},
+                          {"params", {{"clip_id", cid.value}, {"speed", 2.0}}}};
+    nlohmann::json resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE_FALSE(resp.contains("error"));
+
+    const vedit::ClipInfo* after = app.project().timeline().clip(cid);
+    REQUIRE(after);
+    // Halved, allowing one frame of rounding on the in/out conversion.
+    REQUIRE(std::abs(after->length - len_before / 2) <= 1);
+
+    // At 2x, timeline position 10 must show source frame 20. Truncation
+    // would show source frame 10 there instead.
+    auto got = unique_temp_path("vedit-speed", "got10", ".png");
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 10, got));
+    const std::string retimed10 = frame_bytes(got);
+    REQUIRE_FALSE(retimed10.empty());
+    REQUIRE(retimed10 == src20);
+    REQUIRE(retimed10 != src10);
+
+    // Moving must carry the cut over rather than re-cutting from the
+    // source, which would drop the timewarp and restore full speed.
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_move(cid, v2, 0));
+    const vedit::ClipInfo* moved = app.project().timeline().clip(cid);
+    REQUIRE(moved);
+    REQUIRE(std::abs(moved->length - len_before / 2) <= 1);
+    auto moved_png = unique_temp_path("vedit-speed", "moved10", ".png");
+    REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), 10,
+                          moved_png));
+    REQUIRE(frame_bytes(moved_png) == src20);
+
+    // Applying 2.0 twice must stay at 2.0, not compound to 4.0.
+    nlohmann::json again = {{"jsonrpc","2.0"},{"method","clip.change_speed"},{"id",2},
+                            {"params", {{"clip_id", cid.value}, {"speed", 2.0}}}};
+    REQUIRE_FALSE(nlohmann::json::parse(d.handle_request(again.dump()))
+                      .contains("error"));
+    const vedit::ClipInfo* twice = app.project().timeline().clip(cid);
+    REQUIRE(twice);
+    REQUIRE(std::abs(twice->length - len_before / 2) <= 1);
+}
+
 TEST_CASE("clip.detach_audio creates audio track", "[t18]") {
     std::string clip = vedit::test::make_test_clip("detach");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

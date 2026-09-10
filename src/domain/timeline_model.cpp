@@ -4,6 +4,7 @@
 #include "util/logger.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -19,6 +20,12 @@ namespace {
 constexpr const char* kClipIdProp = "_vedit_clip_id";
 constexpr const char* kTrackIdProp = "_vedit_track_id";
 constexpr const char* kMediaIdxProp = "_vedit_media_idx";
+
+// Playback speed stamped on a clip wrapped in a timewarp producer.
+// Absent (or 1.0) means the clip is a plain cut of the source. Stored
+// so a second change_clip_speed call can convert the clip's current
+// in/out back to source frames instead of compounding the ratio.
+constexpr const char* kSpeedProp = "_vedit_speed";
 
 // Marker stamped on every filter vedit attaches on behalf of a user or
 // agent. attached_filters() reports only marked filters, so a producer's
@@ -47,6 +54,17 @@ int read_media_index(Mlt::Producer& cut) {
 
 void stamp_media_index(Mlt::Producer& cut, int idx) {
     cut.set(kMediaIdxProp, idx);
+}
+
+double read_clip_speed(Mlt::Producer& cut) {
+    // 0 is MLT's "property absent" answer for a double, and speed 0 is
+    // meaningless, so treat both as 1.0 (plain, unretimed cut).
+    double s = cut.get_double(kSpeedProp);
+    return (s == 0.0) ? 1.0 : s;
+}
+
+void stamp_clip_speed(Mlt::Producer& cut, double speed) {
+    cut.set(kSpeedProp, speed);
 }
 
 // Create a cut of a library producer with our stable id stamps.
@@ -281,24 +299,14 @@ bool TimelineModel::move_clip(ClipId id, TrackId dest_track,
     }
     if (src_idx < 0) return false;
 
-    const int64_t media_index = found->second.media_index;
-    const int64_t in_point = found->second.in_point;
-    const int64_t out_point = found->second.out_point;
-
-    if (src_tidx == dst_tidx) {
-        // Same-track move: use playlist->move, then pad/handle position
-        // via insert_at semantics. For M1, move-within-track reorders
-        // the clip to dest_position by remove + insert_at.
-        src_pl->remove(src_idx);
-    } else {
-        // Cross-track: remove from source, insert into dest.
-        src_pl->remove(src_idx);
-    }
-
-    // Re-stamp a fresh cut (the removed cut's id is gone with it).
-    Mlt::Producer* cut = make_stamped_cut(library_, static_cast<int>(media_index),
-                                          in_point, out_point, id.value);
+    // Carry the clip's existing cut over instead of re-cutting it from
+    // the library. A retimed clip is a cut of a timewarp producer, so
+    // re-cutting from the source at its current in/out would both drop
+    // the retime and reinterpret timewarp frames as source frames.
+    Mlt::Producer* cut = src_pl->get_clip(src_idx);
     if (!cut) return false;
+    src_pl->remove(src_idx);
+
     auto& dst_pl = tracks_[dst_tidx].playlist;
     int64_t dst_len = dst_pl->get_length();
     if (dest_position > dst_len) {
@@ -451,30 +459,56 @@ bool TimelineModel::change_clip_speed(ClipId id, double speed) {
     const auto* item = library_.item(found->second.media_index);
     if (!item) return false;
 
+    const double abs_speed = std::abs(speed);
+
     auto& pl = tracks_[tidx].playlist;
     for (int i = 0; i < pl->count(); ++i) {
         Mlt::Producer* cut = pl->get_clip(i);
         if (!cut) continue;
         int64_t cid = read_clip_id(*cut);
+        if (cid != id.value) {
+            delete cut;
+            continue;
+        }
+        const double cur_speed = std::abs(read_clip_speed(*cut));
         delete cut;
-        if (cid != id.value) continue;
 
-        // Build the timewarp resource string: "speed:path"
-        std::string tw_res = std::to_string(speed) + ":" + item->path;
-        Mlt::Producer tw(profile_, "timewarp", tw_res.c_str());
-        if (!tw.is_valid()) return false;
+        // in/out are frames of the current producer, which is already
+        // timewarped when the clip was retimed before. Convert back to
+        // source frames first, otherwise repeated calls compound and
+        // 2.0 twice would not equal 4.0.
+        const int64_t src_in =
+            static_cast<int64_t>(std::llround(found->second.in_point * cur_speed));
+        const int64_t src_out =
+            static_cast<int64_t>(std::llround(found->second.out_point * cur_speed));
 
-        auto ci = found->second;
-        // Remove old entry and insert new cut from timewarp.
+        Mlt::Producer* new_cut = nullptr;
+        if (abs_speed == 1.0) {
+            new_cut = make_stamped_cut(library_,
+                                       static_cast<int>(found->second.media_index),
+                                       src_in, src_out, id.value);
+        } else {
+            // MLT's timewarp producer exposes source frame f * speed at
+            // its own frame f, so the source range maps to itself
+            // divided by the speed.
+            std::string tw_res = std::to_string(speed) + ":" + item->path;
+            Mlt::Producer tw(profile_, "timewarp", tw_res.c_str());
+            if (!tw.is_valid()) return false;
+            new_cut = tw.cut(static_cast<int>(std::llround(src_in / abs_speed)),
+                             static_cast<int>(std::llround(src_out / abs_speed)));
+            if (new_cut && new_cut->is_valid()) {
+                stamp_clip_id(*new_cut, id.value);
+                stamp_media_index(*new_cut,
+                                  static_cast<int>(found->second.media_index));
+                stamp_clip_speed(*new_cut, speed);
+            }
+        }
+        if (!new_cut || !new_cut->is_valid()) {
+            delete new_cut;
+            return false;
+        }
+
         pl->remove(i);
-
-        Mlt::Producer* new_cut = make_stamped_cut(
-            library_, static_cast<int>(found->second.media_index),
-            0,
-            ci.length > 0 ? static_cast<int64_t>(ci.length / std::abs(speed)) : -1,
-            id.value);
-        if (!new_cut) return false;
-
         pl->insert(*new_cut, i, 0, -1);
         delete new_cut;
         rebuild_clip_view();
