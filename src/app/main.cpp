@@ -3,7 +3,11 @@
 #include <cstring>
 #include <algorithm>
 #include <cctype>
+#include <map>
+#include <mutex>
+#include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <SDL.h>
@@ -135,6 +139,97 @@ static void set_window_icon(SDL_Window* window) {
 // ============================================================================
 
 enum class DragMode { None, Move, TrimLeft, TrimRight, Scrub };
+
+// Media-bin thumbnails. Decoding runs on a worker thread with its own
+// producer and profile, so the UI thread never blocks on a seek and no
+// MLT object is shared across the boundary: the worker hands back a
+// small RGBA buffer and the main thread turns it into an SDL texture.
+struct ThumbnailResult {
+    int index = -1;
+    int w = 0;
+    int h = 0;
+    std::vector<uint8_t> rgba;
+};
+
+class ThumbnailCache {
+public:
+    ~ThumbnailCache() {
+        if (worker_.joinable()) worker_.join();
+    }
+
+    // Requests a thumbnail for a library item. No-op if one is already
+    // ready or a decode is in flight; the media bin calls this each frame
+    // for items it can see, so a failed decode is simply not retried
+    // until the item goes away and comes back.
+    void request(int index, const std::string& path) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (ready_.count(index) || pending_.count(index) || in_flight_) return;
+        pending_.insert(index);
+        in_flight_ = true;
+        if (worker_.joinable()) worker_.join();
+        worker_ = std::thread([this, index, path]() {
+            ThumbnailResult r;
+            r.index = index;
+            // A fixed small profile keeps the decode cheap; the buffer is
+            // downscaled before it is handed back, so the aspect is all
+            // that survives.
+            Mlt::Profile profile("quarter_15");
+            Mlt::Producer p(profile, path.c_str());
+            if (p.is_valid()) {
+                int len = p.get_length();
+                p.seek(len > 20 ? len / 10 : 0);
+                Mlt::Frame* f = p.get_frame();
+                if (f && f->is_valid()) {
+                    mlt_image_format fmt = mlt_image_rgba;
+                    int w = 0, h = 0;
+                    uint8_t* img = f->get_image(fmt, w, h);
+                    if (img && w > 0 && h > 0) {
+                        r.w = kThumbW;
+                        r.h = std::max(1, kThumbW * h / w);
+                        r.rgba.resize(static_cast<size_t>(r.w) * r.h * 4);
+                        for (int y = 0; y < r.h; ++y) {
+                            int sy = y * h / r.h;
+                            for (int x = 0; x < r.w; ++x) {
+                                int sx = x * w / r.w;
+                                const uint8_t* src = img + (static_cast<size_t>(sy) * w + sx) * 4;
+                                uint8_t* dst = r.rgba.data() + (static_cast<size_t>(y) * r.w + x) * 4;
+                                dst[0] = src[2];  // MLT gives BGRA order for
+                                dst[1] = src[1];  // RGBA-requested frames on
+                                dst[2] = src[0];  // little-endian; swap to RGBA
+                                dst[3] = src[3];
+                            }
+                        }
+                    }
+                }
+                delete f;
+            }
+            std::lock_guard<std::mutex> lk(mu_);
+            ready_[index] = std::move(r);
+            pending_.erase(index);
+            in_flight_ = false;
+        });
+    }
+
+    // Copies rather than consuming: the caller caches the texture and
+    // calls again every frame, and consuming here would make it re-decode
+    // the same item forever.
+    bool take(int index, ThumbnailResult& out) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = ready_.find(index);
+        if (it == ready_.end()) return false;
+        out = it->second;
+        return true;
+    }
+
+    static constexpr int kThumbW = 96;
+
+private:
+    mutable std::mutex mu_;
+    std::map<int, ThumbnailResult> ready_;
+    std::set<int> pending_;
+    bool in_flight_ = false;
+    std::thread worker_;
+};
 
 struct GuiState {
     int selected_media = -1;
@@ -286,7 +381,9 @@ static void add_media_to_timeline(vedit::AppController& app, GuiState& gui,
 // Panels
 // ============================================================================
 
-static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
+static void draw_media_panel(vedit::AppController& app, GuiState& gui,
+                             SDL_Renderer* renderer, ThumbnailCache& thumbs,
+                             std::map<int, SDL_Texture*>& thumb_tex) {
     ImGui::TextUnformatted("Media");
     ImGui::Separator();
 
@@ -316,6 +413,28 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui) {
     for (int i = 0; i < app.library_count(); ++i) {
         const auto* item = app.project().library().item(i);
         if (!item) continue;
+        thumbs.request(i, item->path);
+        ThumbnailResult res;
+        if (thumbs.take(i, res) && res.w > 0 && res.h > 0) {
+            SDL_Texture* tex = SDL_CreateTexture(
+                renderer, SDL_PIXELFORMAT_ABGR8888,
+                SDL_TEXTUREACCESS_STATIC, res.w, res.h);
+            if (tex) {
+                SDL_UpdateTexture(tex, nullptr, res.rgba.data(), res.w * 4);
+                thumb_tex[i] = tex;
+            }
+        }
+        auto tex_it = thumb_tex.find(i);
+        if (tex_it != thumb_tex.end() && tex_it->second) {
+            // Show the frame at native thumbnail size; the label sits
+            // under it so the list stays readable.
+            ImGui::Image(reinterpret_cast<ImTextureID>(tex_it->second),
+                         ImVec2(static_cast<float>(ThumbnailCache::kThumbW),
+                                static_cast<float>(ThumbnailCache::kThumbW *
+                                                   item->height /
+                                                   std::max(1, item->width))));
+        }
+
         char label[300];
         std::snprintf(label, sizeof(label), "%s  (%dx%d, %.0ffps)",
                       basename_of(item->path).c_str(),
@@ -1658,6 +1777,8 @@ int main(int, char**) {
     // Preview frame texture. Created lazily / recreated when the frame
     // size changes; streaming so per-frame pixel updates are cheap.
     SDL_Texture* preview_tex = nullptr;
+    ThumbnailCache thumbs;
+    std::map<int, SDL_Texture*> thumb_tex;
     int tex_w = 0, tex_h = 0;
 
     bool running = true;
@@ -1796,6 +1917,7 @@ int main(int, char**) {
         if (app.player().current_frame(fw, fh, fimg) && fimg && fw > 0 && fh > 0) {
             if (!preview_tex || fw != tex_w || fh != tex_h) {
                 if (preview_tex) SDL_DestroyTexture(preview_tex);
+    for (auto& kv : thumb_tex) SDL_DestroyTexture(kv.second);
                 preview_tex = SDL_CreateTexture(
                     renderer, SDL_PIXELFORMAT_ABGR8888,
                     SDL_TEXTUREACCESS_STREAMING, fw, fh);
@@ -2269,7 +2391,7 @@ int main(int, char**) {
         float top_h = full_h * 0.52f;
 
         ImGui::BeginChild("left", ImVec2(left_w, top_h), ImGuiChildFlags_Borders);
-        draw_media_panel(app, gui);
+        draw_media_panel(app, gui, renderer, thumbs, thumb_tex);
         ImGui::EndChild();
 
         ImGui::SameLine();
