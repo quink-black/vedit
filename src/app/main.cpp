@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -17,6 +18,7 @@
 #include <nfd.h>
 
 #include "core/mlt_runtime.h"
+#include "util/waveform.h"
 #include "domain/app_controller.h"
 #include "domain/export_service.h"
 #include "domain/ids.h"
@@ -139,6 +141,119 @@ static void set_window_icon(SDL_Window* window) {
 // ============================================================================
 
 enum class DragMode { None, Move, TrimLeft, TrimRight, Scrub };
+
+// Audio peak envelopes for the timeline. Decoding runs on a worker
+// thread with its own producer, exactly like ThumbnailCache: the UI
+// thread never touches MLT audio, and the cache holds one peak per
+// frame so drawing is a lookup.
+struct WaveformResult {
+    int index = -1;
+    std::vector<float> peaks;   // one entry per source frame
+    bool has_audio = false;
+};
+
+class WaveformCache {
+public:
+    ~WaveformCache() {
+        if (worker_.joinable()) worker_.join();
+    }
+
+    void request(int index, const std::string& path) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (ready_.count(index) || pending_.count(index) || in_flight_) return;
+        pending_.insert(index);
+        in_flight_ = true;
+        if (worker_.joinable()) worker_.join();
+        worker_ = std::thread([this, index, path]() {
+            WaveformResult r;
+            r.index = index;
+
+            // Pulling frames directly yields silent audio: MLT only
+            // routes decoded audio through a consumer, so render the
+            // track to a WAV on this thread and read it back. This is
+            // the same path the audio tests use.
+            Mlt::Profile profile("quarter_15");
+            Mlt::Producer p(profile, path.c_str());
+            std::error_code ec;
+            std::filesystem::path wav = std::filesystem::temp_directory_path() /
+                ("vedit-wave-" + std::to_string(index) + ".wav");
+            if (p.is_valid()) {
+                Mlt::Consumer c(profile, "avformat", wav.string().c_str());
+                c.set("vcodec", "none");
+                c.set("acodec", "pcm_s16le");
+                c.set("real_time", -1);
+                c.connect(p);
+                c.run();
+                c.stop();
+            }
+
+            // Parse the WAV: find the data chunk and fold every frame
+            // into one peak, so the envelope has one entry per frame.
+            std::ifstream in(wav, std::ios::binary);
+            std::vector<char> bytes;
+            if (in) {
+                in.seekg(0, std::ios::end);
+                std::streamoff size = in.tellg();
+                in.seekg(0, std::ios::beg);
+                bytes.resize(static_cast<size_t>(size));
+                in.read(bytes.data(), size);
+            }
+            std::remove(wav.string().c_str());
+            if (bytes.size() > 44) {
+                // 16-bit PCM: locate "data" and take everything after it.
+                size_t pos = 36;
+                while (pos + 8 <= bytes.size()) {
+                    if (std::memcmp(bytes.data() + pos, "data", 4) == 0) {
+                        pos += 4;
+                        break;
+                    }
+                    ++pos;
+                }
+                const int16_t* samples =
+                    reinterpret_cast<const int16_t*>(bytes.data() + pos);
+                size_t count = (bytes.size() - pos) / sizeof(int16_t);
+                // Fold the samples into fixed chunks of 1920 samples
+                // (20 ms of 48 kHz stereo): more chunks than timeline
+                // frames, so the drawing stays detailed when zoomed in.
+                constexpr int kChannels = 2;
+                constexpr size_t kChunk = 1920;
+                int frames = static_cast<int>(count / kChunk);
+                if (frames > 0) {
+                    r.peaks.reserve(static_cast<size_t>(frames));
+                    for (int f = 0; f < frames; ++f) {
+                        const int16_t* begin =
+                            samples + static_cast<size_t>(f) * kChunk * kChannels;
+                        auto pk = vedit::compute_peaks(
+                            begin, kChunk * kChannels, kChannels, 1);
+                        r.peaks.push_back(pk.empty() ? 0.0f : pk[0]);
+                        if (pk.empty() ? false : pk[0] > 0.0f)
+                            r.has_audio = true;
+                    }
+                }
+            }
+            std::lock_guard<std::mutex> lk(mu_);
+            ready_[index] = std::move(r);
+            pending_.erase(index);
+            in_flight_ = false;
+        });
+    }
+
+    // Copies rather than consumes: the envelope is drawn every frame.
+    bool get(int index, WaveformResult& out) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = ready_.find(index);
+        if (it == ready_.end()) return false;
+        out = it->second;
+        return true;
+    }
+
+private:
+    mutable std::mutex mu_;
+    std::map<int, WaveformResult> ready_;
+    std::set<int> pending_;
+    bool in_flight_ = false;
+    std::thread worker_;
+};
 
 // Media-bin thumbnails. Decoding runs on a worker thread with its own
 // producer and profile, so the UI thread never blocks on a seek and no
@@ -383,7 +498,8 @@ static void add_media_to_timeline(vedit::AppController& app, GuiState& gui,
 
 static void draw_media_panel(vedit::AppController& app, GuiState& gui,
                              SDL_Renderer* renderer, ThumbnailCache& thumbs,
-                             std::map<int, SDL_Texture*>& thumb_tex) {
+                             std::map<int, SDL_Texture*>& thumb_tex,
+                             WaveformCache& waveforms) {
     ImGui::TextUnformatted("Media");
     ImGui::Separator();
 
@@ -414,6 +530,7 @@ static void draw_media_panel(vedit::AppController& app, GuiState& gui,
         const auto* item = app.project().library().item(i);
         if (!item) continue;
         thumbs.request(i, item->path);
+        waveforms.request(i, item->path);
         ThumbnailResult res;
         if (thumbs.take(i, res) && res.w > 0 && res.h > 0) {
             SDL_Texture* tex = SDL_CreateTexture(
@@ -652,7 +769,8 @@ static void clamp_trim(int64_t& new_in, int64_t& new_out, int64_t source_len) {
     if (new_out < new_in + 1) new_out = new_in + 1;
 }
 
-static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
+static void draw_timeline_panel(vedit::AppController& app, GuiState& gui,
+                                WaveformCache& waveforms) {
     // ---- Toolbar ----
     ImGui::TextUnformatted("Timeline");
     ImGui::SameLine();
@@ -959,6 +1077,35 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui) {
             const auto* item = app.project().library().item(c.media_index);
             std::string name = item ? basename_of(item->path) : "clip";
             dl->PushClipRect(ImVec2(cx0 + 5, y0), ImVec2(cx1 - 5, y1), true);
+            if (tracks[t].kind == vedit::TrackKind::Audio && item) {
+                // The envelope is one peak per source frame; map the
+                // clip's source range onto the pixels it covers. Drawn
+                // as a mid-line bar chart so silence reads as a flat
+                // line rather than an empty box.
+                WaveformResult wf;
+                if (waveforms.get(c.media_index, wf) && !wf.peaks.empty() &&
+                    wf.has_audio) {
+                    const float mid = (y0 + y1) * 0.5f;
+                    const float half = (y1 - y0) * 0.42f;
+                    int64_t src_len = c.out_point - c.in_point + 1;
+                    if (src_len > 0) {
+                        for (int64_t px = 0; px < static_cast<int64_t>(cx1 - cx0);
+                             ++px) {
+                            int64_t src_frame =
+                                c.in_point + px * src_len /
+                                                 std::max<int64_t>(1, static_cast<int64_t>(cx1 - cx0));
+                            if (src_frame < 0 ||
+                                src_frame >= static_cast<int64_t>(wf.peaks.size()))
+                                continue;
+                            float h = wf.peaks[static_cast<size_t>(src_frame)] * half;
+                            if (h < 1.0f) h = 1.0f;
+                            dl->AddLine(ImVec2(cx0 + 5 + px, mid - h),
+                                        ImVec2(cx0 + 5 + px, mid + h),
+                                        IM_COL32(140, 220, 160, 200));
+                        }
+                    }
+                }
+            }
             dl->AddText(ImVec2(cx0 + 7, y0 + 6), IM_COL32(255, 255, 255, 255),
                         name.c_str());
             // Show the in/out range under the name.
@@ -1778,6 +1925,7 @@ int main(int, char**) {
     // size changes; streaming so per-frame pixel updates are cheap.
     SDL_Texture* preview_tex = nullptr;
     ThumbnailCache thumbs;
+    WaveformCache waveforms;
     std::map<int, SDL_Texture*> thumb_tex;
     int tex_w = 0, tex_h = 0;
 
@@ -2391,7 +2539,7 @@ int main(int, char**) {
         float top_h = full_h * 0.52f;
 
         ImGui::BeginChild("left", ImVec2(left_w, top_h), ImGuiChildFlags_Borders);
-        draw_media_panel(app, gui, renderer, thumbs, thumb_tex);
+        draw_media_panel(app, gui, renderer, thumbs, thumb_tex, waveforms);
         ImGui::EndChild();
 
         ImGui::SameLine();
@@ -2413,7 +2561,7 @@ int main(int, char**) {
 
         float tl_w = full_w * 0.74f;
         ImGui::BeginChild("timeline", ImVec2(tl_w, 0), ImGuiChildFlags_Borders);
-        draw_timeline_panel(app, gui);
+        draw_timeline_panel(app, gui, waveforms);
         ImGui::EndChild();
 
         ImGui::SameLine();

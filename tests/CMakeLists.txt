@@ -14,6 +14,7 @@ add_executable(vedit_tests
     test_domain.cpp
     test_app_controller.cpp
     test_rpc.cpp
+    test_util.cpp
 )
 if(VEDIT_RPC_SERVER_TEST)
     target_sources(vedit_tests PRIVATE test_rpc_server.cpp)
