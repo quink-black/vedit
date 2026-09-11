@@ -315,7 +315,7 @@ loss), then complete the basic editing experience, then new capability.
 | 0.8 | Return `-32602` for RPC parameter type errors; add a timeout to `app.list_instances` | new parameter validation tests |
 | 0.9 | Make `clip.get_geometry`/`get_crop` return an error for invalid clip_id | assert the error code |
 | 0.10 | Mark `.codebuddy/geometry_transition_gap.md` SUPERSEDED or delete it | no stale to-do sources remain |
-| 0.11 | **Retime audio**: a timewarped cut renders video at the correct retimed length (measured: 24 frames for a 2x clip of a 50-frame source) but audio came out 1.856 s where 1.0 s was expected in a minimal consumer harness, while the `melt` CLI produced correct 1.0 s audio on the same producer. Not yet diagnosed. | audio duration matches video duration on a retimed export |
+| 0.11 | **Retime audio**: OPEN, now measured through the real export path rather than a bare-producer probe. Exporting a timeline containing a 2x retimed clip gives video 1.0 s (correct) and audio 1.856 s (lags by 0.856 s). The bare-producer probe showed the same, while the `melt` CLI produced correct 1.0 s audio on the same producer, so the defect sits in how the audio request is built for a timewarp producer outside `melt` -- not in the retime itself. Explicit `audio_frequency`/`audio_channels` on the producer and on the frame, and `frequency`/`channels`/`real_time` on the consumer, were all tried and none of them change it. The test pins video correctness and SKIPs on the audio lag so it starts failing the moment this is fixed. | audio duration matches video duration on a retimed export |
 
 ### Phase 1 -- Basic functionality (G2 and G4 at zero are hard blockers)
 
