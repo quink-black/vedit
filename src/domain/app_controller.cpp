@@ -590,8 +590,6 @@ void AppController::record_history() {
     }
     history_.push_back(std::move(path));
     history_pos_ = static_cast<int>(history_.size()) - 1;
-    fprintf(stderr, "TRACE record pos=%d filters=%zu\n", history_pos_,
-            project_->timeline().attached_filters().size());
 }
 
 void AppController::clear_history() {
@@ -611,7 +609,6 @@ bool AppController::can_redo() const {
 bool AppController::undo() {
     if (!can_undo()) return false;
     restoring_ = true;
-    fprintf(stderr, "TRACE undo -> pos=%d\n", history_pos_ - 1);
     --history_pos_;
     bool ok = restore_snapshot(history_[history_pos_]);
     if (!ok) ++history_pos_;
@@ -625,7 +622,6 @@ bool AppController::undo() {
 bool AppController::redo() {
     if (!can_redo()) return false;
     restoring_ = true;
-    fprintf(stderr, "TRACE redo -> pos=%d\n", history_pos_ + 1);
     ++history_pos_;
     bool ok = restore_snapshot(history_[history_pos_]);
     if (!ok) --history_pos_;

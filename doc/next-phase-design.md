@@ -413,7 +413,7 @@ Follow `doc/tech-direction-text-and-mlt.md` section 4 exactly:
 | 2.1 | Register an in-process MLT filter `vedit.text` that draws onto the RGBA frame | `filter.add {filter:"vedit.text"}` works |
 | 2.2 | Rasterization backend: Core Text on macOS; stb_truetype plus a bundled font cross-platform | CJK text (for example a Chinese caption) renders real glyphs, not boxes |
 | 2.3 | Combine with the existing `filter.set_range` for timed captions | assert no text is drawn outside [in, out] |
-| 2.4 | GUI: edit text content, font, size, position, duration | -- |
+| 2.4 | GUI: edit text content, font, size, position, duration | DONE: a Caption section in the Filters panel offers Add/Remove caption plus multiline text, font family (blank = system), size, horizontal alignment and a frame range wired to `filter.set_in_out`. Buffers reload when the selection moves so two clips do not share one edit state. Verified live: attaching `vedit.text` over RPC and setting a Chinese caption changed the rendered frame from 21491 to 26017 bytes with different contents. |
 
 Prerequisite (R4) verified on this machine before any code was written,
 re-run 2026-09-11:

@@ -18,6 +18,7 @@
 #include <nfd.h>
 
 #include "core/mlt_runtime.h"
+#include "domain/text_filter.h"
 #include "util/waveform.h"
 #include "domain/app_controller.h"
 #include "domain/export_service.h"
@@ -1412,6 +1413,111 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui,
 // Filter panel (right sidebar, always visible)
 // ============================================================================
 
+// Caption editing for the in-process vedit.text filter. Kept separate
+// from the generic filter list because the text parameters need real
+// widgets, not a string field per property.
+static void draw_caption_editor(vedit::AppController& app, GuiState& gui) {
+    if (!gui.selected_clip.valid()) return;
+    if (!vedit::text_filter_available()) return;
+
+    auto& tl = app.project().timeline();
+    bool attached = false;
+    for (const auto& f : tl.attached_filters()) {
+        if (f.target_type == "clip" &&
+            f.target_id == gui.selected_clip.value &&
+            f.filter_name == "vedit.text") {
+            attached = true;
+            break;
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Caption");
+    if (!attached) {
+        if (ImGui::Button("Add caption")) {
+            if (app.filter_add(gui.selected_clip, "vedit.text"))
+                app.filter_set_param(gui.selected_clip, "vedit.text",
+                                     "argument", "Text");
+        }
+        return;
+    }
+
+    // Editing buffers are shared across clips, so reload them whenever
+    // the selection moves.
+    static vedit::ClipId edited{0};
+    static char text_buf[512] = "";
+    static char family_buf[128] = "";
+    static float size_val = 48.0f;
+    static float halign_val = 0.5f;
+    static int range_val[2] = {0, 0};
+    if (edited != gui.selected_clip) {
+        edited = gui.selected_clip;
+        auto get = [&](const char* p) {
+            return app.filter_get_param(gui.selected_clip, "vedit.text", p);
+        };
+        std::string t = get("argument");
+        std::snprintf(text_buf, sizeof(text_buf), "%s", t.c_str());
+        std::string fam = get("family");
+        std::snprintf(family_buf, sizeof(family_buf), "%s", fam.c_str());
+        size_val = static_cast<float>(std::atof(get("size").c_str()));
+        if (size_val <= 0) size_val = 48.0f;
+        halign_val = static_cast<float>(std::atof(get("halign").c_str()));
+
+        range_val[0] = 0;
+        range_val[1] = 0;
+        // The range lives on the filter, not its properties; start from
+        // the clip's own extent so the caption spans the clip by default.
+        const auto* ci = tl.clip(gui.selected_clip);
+        if (ci) range_val[1] = static_cast<int>(ci->length - 1);
+    }
+
+    if (ImGui::InputTextMultiline("##caption_text", text_buf,
+                                  sizeof(text_buf))) {
+        app.filter_set_param(gui.selected_clip, "vedit.text", "argument",
+                             text_buf);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("text");
+
+    if (ImGui::InputText("##caption_family", family_buf,
+                         sizeof(family_buf))) {
+        app.filter_set_param(gui.selected_clip, "vedit.text", "family",
+                             family_buf);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("font (blank = system)");
+
+    if (ImGui::SliderFloat("##caption_size", &size_val, 8.0f, 240.0f,
+                           "%.0f")) {
+        app.filter_set_param(gui.selected_clip, "vedit.text", "size",
+                             std::to_string(static_cast<int>(size_val)));
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("size");
+
+    if (ImGui::SliderFloat("##caption_align", &halign_val, 0.0f, 1.0f,
+                           "%.2f")) {
+        app.filter_set_param(gui.selected_clip, "vedit.text", "halign",
+                             std::to_string(halign_val));
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("align");
+
+    if (ImGui::InputInt2("##caption_range", range_val)) {
+        if (range_val[0] < 0) range_val[0] = 0;
+        if (range_val[1] < range_val[0]) range_val[1] = range_val[0];
+        app.filter_set_in_out(gui.selected_clip, "vedit.text", range_val[0],
+                              range_val[1]);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("range (frames)");
+
+    if (ImGui::Button("Remove caption")) {
+        app.filter_remove(gui.selected_clip, "vedit.text");
+        edited = vedit::ClipId{0};
+    }
+}
+
 static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
     ImGui::TextUnformatted("Filters");
     ImGui::Separator();
@@ -1421,6 +1527,8 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
         ImGui::TextDisabled("Select a clip or track to edit filters.");
         return;
     }
+
+    draw_caption_editor(app, gui);
 
     // Determine whether the active target is video, audio, or both.
     // A clip inherits its media type; a track is both unless all its
