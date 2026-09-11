@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <thread>
 
 #include "domain/app_controller.h"
@@ -2504,6 +2506,57 @@ TEST_CASE("retime keeps audio in step with video on export", "[t18]") {
     if (std::abs(audio - video) >= 0.35)
         SKIP("retimed audio runs long against the video");
     REQUIRE(std::abs(audio - video) < 0.35);
+}
+
+// Phase 2: an in-process text filter. MLT's own text filters route
+// through Qt or pango and hang headless in this process, so vedit draws
+// into the RGBA frame itself.
+TEST_CASE("vedit.text draws real glyphs and honours its range", "[text]") {
+    std::string clip = vedit::test::make_test_clip("text");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // 2.1: the custom filter is discoverable like any other.
+    REQUIRE(app.filter_add(cid, "vedit.text"));
+
+    // Render a frame with no text, then with two different CJK captions.
+    // Comparing the bytes is what proves per-glyph shaping rather than a
+    // constant placeholder box.
+    vedit::ExportService svc;
+    auto grab = [&](const std::string& tag, int pos) {
+        std::string png = vedit::test::unique_temp_path("vedit-text", tag, ".png");
+        REQUIRE(svc.get_frame(*app.project().producer(), app.profile(), pos,
+                              png));
+        std::ifstream in(png, std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(in)),
+                          std::istreambuf_iterator<char>());
+        return bytes;
+    };
+
+    const std::string blank = grab("blank", 5);
+    REQUIRE_FALSE(blank.empty());
+
+    REQUIRE(app.filter_set_param(cid, "vedit.text", "argument", "\u706b\u7bad"));
+    const std::string caption_a = grab("caption_a", 5);
+    REQUIRE(caption_a != blank);
+
+    REQUIRE(app.filter_set_param(cid, "vedit.text", "argument", "\u70b9\u706b"));
+    const std::string caption_b = grab("caption_b", 5);
+    REQUIRE(caption_b != blank);
+    REQUIRE(caption_b != caption_a);
+
+    // 2.3: outside [in, out] the filter draws nothing, so the frame comes
+    // back identical to the untitled render.
+    REQUIRE(app.filter_set_in_out(cid, "vedit.text", 10, 20));
+    const std::string outside = grab("outside", 5);
+    REQUIRE(outside == blank);
+    const std::string inside = grab("inside", 15);
+    REQUIRE(inside != blank);
 }
 
 TEST_CASE("undo and redo restore timeline state", "[t18]") {

@@ -2,6 +2,7 @@
 
 #include "media_library.h"
 #include "project_save_load.h"
+#include "text_filter.h"
 #include "timeline_model.h"
 #include "util/logger.h"
 
@@ -35,6 +36,15 @@ AppController::AppController()
     : project_(std::make_unique<ProjectModel>()),
       player_(std::make_unique<PlayerController>(*project_)),
       filter_catalog_(std::make_unique<FilterCatalog>()) {
+    // MLT's Factory is up by the time an AppController exists, in both
+    // the app and the tests, which is what makes this a single place to
+    // register the in-process text filter.
+    static bool text_filter_registered = false;
+    if (!text_filter_registered) {
+        register_text_filter();
+        text_filter_registered = true;
+    }
+
     // Every mutator ends with player_->refresh(), so this one hook
     // records history for all of them. Seed the history with the empty
     // project so the first mutation is undoable.

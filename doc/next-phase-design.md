@@ -415,9 +415,29 @@ Follow `doc/tech-direction-text-and-mlt.md` section 4 exactly:
 | 2.3 | Combine with the existing `filter.set_range` for timed captions | assert no text is drawn outside [in, out] |
 | 2.4 | GUI: edit text content, font, size, position, duration | -- |
 
-Prerequisite: run the verification commands in appendix A1-A4 of
-`doc/tech-direction-text-and-mlt.md` and paste the output into the design
-doc before writing code (R4).
+Prerequisite (R4) verified on this machine before any code was written,
+re-run 2026-09-11:
+
+- A1: `ffmpeg -buildconf | grep -iE "freetype|fontconfig|harfbuzz|libass"`
+  returns nothing and `ffmpeg -filters | grep drawtext` finds nothing.
+  The Homebrew FFmpeg has no text libraries, so `avfilter.drawtext` is
+  unavailable.
+- A2: `melt -query filters` lists 426 filters, 276 of them `avfilter.*`.
+  The avfilter bridge works; only text is missing.
+- A3: `qtext`, `dynamictext` and `text` are all present.
+- A4 (reproduced): `melt ... -filter dynamictext argument="HELLO"
+  -consumer avformat:...` was still running after 3m07s despite
+  `timeout 25`, so it ignores SIGTERM, and left a 0-byte output file.
+  MLT's text path is unusable headless in this process, as documented.
+
+Progress: 2.1, 2.2 and 2.3 are DONE. `vedit.text` is registered in
+process through `mlt_repository_register`, draws into the RGBA frame
+buffer it is handed, and rasterizes CJK through Core Text on macOS. The
+test renders a blank frame, then two different Chinese captions, and
+asserts each differs from the blank and from the other -- which is what
+rules out a constant placeholder box. The range test asserts the frame
+outside [in, out] is byte-identical to the untitled render and the frame
+inside is not.
 
 ### Phase 3 -- Channel equality cleanup (G3)
 
