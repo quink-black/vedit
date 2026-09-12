@@ -444,7 +444,7 @@ inside is not.
 | # | Task | Acceptance |
 |---|---|---|
 | 3.1 | Add GUI for `clip.set_geometry/rotation/crop/fade_in/fade_out` | DONE: a Transform section in the Filters panel drives the same AppController methods the RPC handlers call, so both channels share one code path, and a test asserts geometry, rotation and crop read back what was set. Rotation gained a getter (`clip.get_rotation`, also exposed as an RPC method) because the GUI would otherwise have to cache a value it cannot verify -- the same duplicated-state defect the audit flagged for the fps cache. Fade lengths are not stored on the clip, so the GUI resets them on selection change rather than pretending to read a value that does not exist. |
-| 3.2 | Keyframes: curve editor plus interpolation type | state matches `mlt_animation` |
+| 3.2 | Keyframes: curve editor plus interpolation type | state matches `mlt_animation`. DONE on the state side: `set_filter_param_keyframes` now feeds keyframes through `mlt_properties_anim_set` instead of assigning a serialized string. A plain `mlt_properties_set` of `"frame=value;..."` left the property non-animated, so `get_filter_param_keyframes` reported a bare value and every reader that checks for an animation saw nothing. Interpolation types (linear, discrete, smooth) round-trip and are asserted. The old test asserted the bare-value shape, which pinned the defect, and now asserts keyframes. The GUI curve editor is Phase 4. |
 | 3.3 | Rewrite README and MCP README to cover all 54 methods / 51 tools | README, MCP README and code agree item by item |
 
 ### Phase 4 -- Only after the above

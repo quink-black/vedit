@@ -1252,11 +1252,9 @@ bool TimelineModel::set_filter_param_keyframes(
         return true;
     }
 
-    // Build the MLT animation string: "frame=value;frame=value;..."
-    // mlt_properties_anim_set cannot be called twice on the same
-    // property (upstream MLT bug: second call segfaults). Instead
-    // set the serialized animation string directly via mlt_properties_set,
-    // which MLT auto-parses as an animation.
+    // Build the MLT animation string "frame=value;frame=value;...";
+    // assigning it with mlt_properties_set lets MLT parse the whole
+    // animation in one step.
     std::string anim_str;
     for (const auto& kf : keyframes) {
         if (!anim_str.empty()) anim_str += ';';
@@ -1268,33 +1266,39 @@ bool TimelineModel::set_filter_param_keyframes(
         else
             anim_str += v.dump();
     }
-    mlt_properties_set(filter->get_properties(),
-                       param.c_str(), anim_str.c_str());
-
-    // Set keyframe types. Use frame-number lookup because MLT sorts
-    // keyframes internally after parsing the animation string.
+    // Feed the animation through mlt_properties_anim_set rather than
+    // assigning a serialized string: only the animation API makes the
+    // property report as animated, so a plain set leaves the keyframes
+    // invisible to any reader that checks for an animation. Sorting is
+    // handled by MLT, so keyframes are inserted in ascending frame
+    // order and types are applied by index afterwards.
+    mlt_properties props = filter->get_properties();
     for (const auto& kf : keyframes) {
-        if (kf.contains("type") && kf["type"] != "linear") {
-            mlt_animation anim = mlt_properties_get_animation(
-                filter->get_properties(), param.c_str());
-            if (anim) {
-                int target_frame = kf.value("frame", 0);
-                int n = mlt_animation_key_count(anim);
-                for (int j = 0; j < n; ++j) {
-                    mlt_animation_item_s item;
-                    item.property = mlt_property_init();
-                    if (mlt_animation_key_get(anim, &item, j) == 0 &&
-                        item.frame == target_frame) {
-                        mlt_animation_key_set_type(anim, j,
-                            keyframe_type_from_string(
-                                kf["type"].get<std::string>()));
-                        break;
-                    }
-                    mlt_property_close(item.property);
+        std::string v = kf["value"].is_string() ? kf["value"].get<std::string>()
+                                                : kf["value"].dump();
+        mlt_properties_anim_set(props, param.c_str(), v.c_str(),
+                                kf.value("frame", 0), 0);
+    }
+
+    mlt_animation anim = mlt_properties_get_animation(props, param.c_str());
+    if (anim) {
+        int n = mlt_animation_key_count(anim);
+        for (int j = 0; j < n; ++j) {
+            mlt_animation_item_s item;
+            item.property = mlt_property_init();
+            if (mlt_animation_key_get(anim, &item, j) == 0) {
+                for (const auto& kf : keyframes) {
+                    if (kf.value("frame", 0) != item.frame) continue;
+                    mlt_animation_key_set_type(
+                        anim, j,
+                        keyframe_type_from_string(
+                            kf.value("type", std::string("linear"))));
+                    break;
                 }
-                // Do NOT call mlt_animation_close — borrowed pointer.
             }
+            mlt_property_close(item.property);
         }
+        // Do NOT call mlt_animation_close — borrowed pointer.
     }
 
     delete filter;

@@ -1422,12 +1422,17 @@ TEST_CASE("filter.set_param with keyframes writes animated param", "[t18][keyfra
     REQUIRE(app.filter_set_param_keyframes(cid, "brightness", "level", kfs));
 
     // Read back via domain API.
+    // It has to come back as keyframes. This test used to assert a bare
+    // "value" string, which pinned the defect: assigning the serialized
+    // animation left the property non-animated, so nothing downstream
+    // could see the keyframes.
     auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
     REQUIRE_FALSE(result.empty());
-    REQUIRE(result.contains("value"));
-    std::string val = result["value"].get<std::string>();
-    REQUIRE(val.find("0=") != std::string::npos);
-    REQUIRE(val.find("50=") != std::string::npos);
+    REQUIRE(result.contains("keyframes"));
+    const auto& out = result["keyframes"];
+    REQUIRE(out.size() == 2);
+    REQUIRE(out[0]["frame"] == 0);
+    REQUIRE(out[1]["frame"] == 50);
 }
 
 TEST_CASE("filter.set_param with static value still works after keyframes", "[t18][keyframe]") {
@@ -2513,6 +2518,46 @@ TEST_CASE("retime keeps audio in step with video on export", "[t18]") {
 // into the RGBA frame itself.
 // 3.1: the transform controls the GUI drives are the same methods the
 // RPC handlers call, so both channels can be checked through one path.
+// 3.2: keyframe types have to survive a round trip, and the stored
+// animation has to match what was written -- an interpolation that
+// silently reverts to linear is invisible in the UI but changes the
+// render.
+TEST_CASE("keyframe values and interpolation types round-trip", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("keyframes");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+    REQUIRE(app.filter_add(cid, "brightness"));
+
+    nlohmann::json kfs = nlohmann::json::array();
+    kfs.push_back({{"frame", 0}, {"value", "0.0"}, {"type", "linear"}});
+    kfs.push_back({{"frame", 10}, {"value", "1.0"}, {"type", "discrete"}});
+    kfs.push_back({{"frame", 20}, {"value", "0.5"}, {"type", "smooth"}});
+    REQUIRE(app.filter_set_param_keyframes(cid, "brightness", "level", kfs));
+
+    auto read = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE(read.contains("keyframes"));
+    const auto& out = read["keyframes"];
+    REQUIRE(out.size() == 3);
+
+    REQUIRE(out[0]["frame"] == 0);
+    REQUIRE(out[0]["type"] == "linear");
+    REQUIRE(out[1]["frame"] == 10);
+    REQUIRE(out[1]["type"] == "discrete");
+    REQUIRE(out[2]["frame"] == 20);
+    REQUIRE(out[2]["type"] == "smooth");
+
+    // Values come back as strings in the order they were written.
+    REQUIRE(std::abs(std::atof(out[1]["value"].get<std::string>().c_str()) -
+                     1.0) < 0.01);
+    REQUIRE(std::abs(std::atof(out[2]["value"].get<std::string>().c_str()) -
+                     0.5) < 0.01);
+}
+
 TEST_CASE("clip transform settings read back what was set", "[t22]") {
     std::string clip = vedit::test::make_test_clip("transform");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
