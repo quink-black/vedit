@@ -453,6 +453,24 @@ M3 curve editor depth, M4 GPU (movit) rendering, M5 agent workflow
 integration. Reassess G1-G4 and get explicit user agreement before
 entering (R3).
 
+**M3 curve editor: DONE.** Animated parameters now get a value-vs-frame
+canvas: a polyline through the keyframes, draggable handles (horizontal
+moves the frame, vertical moves the value, with the list kept in
+ascending order while dragging), and an interpolation combo for the
+selected keyframe (linear / discrete / smooth). Only numeric parameters
+get a curve; string and colour parameters keep the existing list, since
+they have no meaningful value axis.
+
+**M4 GPU (movit): NOT POSSIBLE on this toolchain, and not faked.** The
+Homebrew MLT ships `share/mlt/presets/filter/movit.*` but no
+`libmltmovit.so` and no movit producer (`melt -query producers | grep
+movit` is empty), so there is nothing to drive. Implementing it would
+mean building MLT against movit and giving vedit a GL context to share
+with MLT -- a prerequisite change, not a feature. Recorded rather than
+worked around, per R2.
+
+**M5 agent workflow: DONE as a checked end-to-end scenario.** See below.
+
 ---
 
 ## 6. Immediate Actions

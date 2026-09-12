@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <algorithm>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1419,6 +1420,97 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui,
 // Transform controls for the selected clip. These drive the same
 // AppController methods the RPC handlers call, which is what keeps the
 // two channels in step; the test covers those methods directly.
+// Value-vs-frame curve for one animated parameter.
+//
+// Reads and writes in place: `frames` and `values` are edited by dragging
+// the handles, `types` by the interpolation combo, and `touched` reports
+// whether the caller should write the set back. Non-numeric parameters
+// (strings, colours) have no meaningful curve, so they are skipped.
+void draw_keyframe_curve(const char* label, std::vector<int>& frames,
+                         std::vector<double>& values,
+                         std::vector<std::string>& types, int clip_len,
+                         int& selected, bool& touched) {
+    if (frames.size() < 2 || clip_len <= 0) return;
+
+    double vmin = values[0], vmax = values[0];
+    for (double v : values) {
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+    double span = vmax - vmin;
+    if (span < 1e-6) { vmin -= 1.0; vmax += 1.0; span = 2.0; }
+    vmin -= span * 0.15;
+    vmax += span * 0.15;
+
+    const ImVec2 size(-1.0f, 88.0f);
+    ImGui::InvisibleButton(label, size);
+    const ImVec2 p0 = ImGui::GetItemRectMin();
+    const ImVec2 p1 = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p0, p1, IM_COL32(24, 24, 30, 255));
+    dl->AddRect(p0, p1, IM_COL32(70, 70, 84, 255));
+
+    auto to_px = [&](int frame, double value) {
+        float x = p0.x + (p1.x - p0.x) * (static_cast<float>(frame) /
+                                          static_cast<float>(clip_len));
+        float y = p1.y - (p1.y - p0.y) * static_cast<float>(
+                                             (value - vmin) / (vmax - vmin));
+        return ImVec2(x, y);
+    };
+
+    // Curve: polyline between keyframes.
+    for (size_t i = 1; i < frames.size(); ++i) {
+        dl->AddLine(to_px(frames[i - 1], values[i - 1]),
+                    to_px(frames[i], values[i]),
+                    IM_COL32(120, 200, 255, 255), 2.0f);
+    }
+
+    // Handles. Drag vertically for value, horizontally for frame.
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    for (size_t i = 0; i < frames.size(); ++i) {
+        ImVec2 pos = to_px(frames[i], values[i]);
+        bool hot = (mouse.x > pos.x - 6 && mouse.x < pos.x + 6 &&
+                    mouse.y > pos.y - 6 && mouse.y < pos.y + 6);
+        if (ImGui::IsItemHovered() && hot && ImGui::IsMouseClicked(0))
+            selected = static_cast<int>(i);
+
+        if (selected == static_cast<int>(i) && ImGui::IsItemHovered() &&
+            ImGui::IsMouseDown(0) && ImGui::IsItemActive()) {
+            float nx = (mouse.x - p0.x) / (p1.x - p0.x);
+            float ny = (p1.y - mouse.y) / (p1.y - p0.y);
+            nx = std::clamp(nx, 0.0f, 1.0f);
+            ny = std::clamp(ny, 0.0f, 1.0f);
+            frames[i] = static_cast<int>(nx * clip_len + 0.5f);
+            values[i] = vmin + ny * (vmax - vmin);
+            // Keep the list ordered; MLT sorts anyway, but the drawn
+            // polyline assumes ascending frames.
+            for (size_t j = i; j > 0 && frames[j - 1] > frames[j]; --j) {
+                std::swap(frames[j - 1], frames[j]);
+                std::swap(values[j - 1], values[j]);
+                std::swap(types[j - 1], types[j]);
+                selected = static_cast<int>(j - 1);
+            }
+            touched = true;
+        }
+
+        dl->AddCircleFilled(pos, 4.0f,
+                            selected == static_cast<int>(i)
+                                ? IM_COL32(255, 220, 120, 255)
+                                : IM_COL32(200, 210, 230, 255));
+    }
+
+    if (selected >= 0 && selected < static_cast<int>(types.size())) {
+        static const char* kTypes[] = {"linear", "discrete", "smooth"};
+        int cur = 0;
+        for (int i = 0; i < 3; ++i)
+            if (types[selected] == kTypes[i]) cur = i;
+        if (ImGui::Combo("interpolation", &cur, kTypes, 3)) {
+            types[selected] = kTypes[cur];
+            touched = true;
+        }
+    }
+}
+
 static void draw_transform_editor(vedit::AppController& app, GuiState& gui) {
     if (!gui.selected_clip.valid()) return;
 
@@ -1721,6 +1813,59 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
                     ImGui::TextUnformatted(k.c_str());
                     ImGui::SameLine(120);
                     ImGui::TextDisabled("keyframes (%zu)", kfs.size());
+
+                    // Curve editor. Only numeric parameters have a
+                    // meaningful value axis, so anything else falls back
+                    // to the list alone.
+                    {
+                        std::vector<int> kf_frames;
+                        std::vector<double> kf_values;
+                        std::vector<std::string> kf_types;
+                        bool numeric = true;
+                        for (const auto& jkf : v["keyframes"]) {
+                            std::string sv = jkf["value"].is_string()
+                                ? jkf["value"].get<std::string>()
+                                : jkf["value"].dump();
+                            double dv = 0;
+                            try {
+                                dv = std::stod(sv);
+                            } catch (const std::exception&) {
+                                numeric = false;
+                                break;
+                            }
+                            kf_frames.push_back(jkf.value("frame", 0));
+                            kf_values.push_back(dv);
+                            kf_types.push_back(
+                                jkf.value("type", std::string("linear")));
+                        }
+                        if (numeric && kf_frames.size() >= 2) {
+                            const auto* ci = app.project().timeline().clip(
+                                gui.selected_clip);
+                            int clip_len = ci ? static_cast<int>(ci->length)
+                                              : 1;
+                            static int kf_selected = -1;
+                            bool touched = false;
+                            draw_keyframe_curve("##curve", kf_frames,
+                                                kf_values, kf_types,
+                                                clip_len, kf_selected,
+                                                touched);
+                            if (touched) {
+                                nlohmann::json out = nlohmann::json::array();
+                                for (size_t i = 0; i < kf_frames.size(); ++i) {
+                                    char buf[32];
+                                    std::snprintf(buf, sizeof(buf), "%g",
+                                                  kf_values[i]);
+                                    out.push_back(
+                                        {{"frame", kf_frames[i]},
+                                         {"value", buf},
+                                         {"type", kf_types[i]}});
+                                }
+                                app.filter_set_param_keyframes(
+                                    gui.selected_clip, af->filter_name, k,
+                                    out);
+                            }
+                        }
+                    }
 
                     // Add keyframe at playhead.
                     int64_t playhead = static_cast<int64_t>(app.position());
