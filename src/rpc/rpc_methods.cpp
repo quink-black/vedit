@@ -532,6 +532,15 @@ void register_methods(Dispatcher& d, AppController& app) {
         return nlohmann::json{{"x", x}, {"y", y}, {"w", w}, {"h", h}};
     });
 
+    d.register_method("clip.get_rotation", [&](const nlohmann::json& params) {
+        ClipId id{params.value("clip_id", 0LL)};
+        if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");
+        double degrees = 0.0;
+        if (!app.clip_get_rotation(id, degrees))
+            throw RpcException(ErrorCode::InvalidParams, "unknown clip_id");
+        return nlohmann::json{{"degrees", degrees}};
+    });
+
     d.register_method("clip.set_rotation", [&](const nlohmann::json& params) {
         ClipId id{params.value("clip_id", 0LL)};
         if (!id.valid()) throw RpcException(ErrorCode::InvalidParams, "missing clip_id");

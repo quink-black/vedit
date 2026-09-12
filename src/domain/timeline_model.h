@@ -169,6 +169,10 @@ public:
     bool clip_set_geometry(ClipId id, double x, double y,
                            double w, double h);
     bool clip_set_rotation(ClipId id, double degrees);
+    // Reads back the rotation written by clip_set_rotation. 0 when the
+    // clip has no affine filter, which is the same default the setter
+    // detaches on.
+    bool clip_get_rotation(ClipId id, double& degrees) const;
     bool clip_get_geometry(ClipId id, double& x, double& y,
                            double& w, double& h) const;
 

@@ -1416,6 +1416,90 @@ static void draw_timeline_panel(vedit::AppController& app, GuiState& gui,
 // Caption editing for the in-process vedit.text filter. Kept separate
 // from the generic filter list because the text parameters need real
 // widgets, not a string field per property.
+// Transform controls for the selected clip. These drive the same
+// AppController methods the RPC handlers call, which is what keeps the
+// two channels in step; the test covers those methods directly.
+static void draw_transform_editor(vedit::AppController& app, GuiState& gui) {
+    if (!gui.selected_clip.valid()) return;
+
+    auto& tl = app.project().timeline();
+    const auto* ci = tl.clip(gui.selected_clip);
+    if (!ci) return;
+
+    static vedit::ClipId edited{0};
+    static float geo[4] = {0, 0, 100, 100};
+    static float rot = 0.0f;
+    static int crop[4] = {0, 0, 0, 0};
+    static int fade[2] = {0, 0};
+
+    if (edited != gui.selected_clip) {
+        edited = gui.selected_clip;
+        double x = 0, y = 0, w = 0, h = 0;
+        app.clip_get_geometry(gui.selected_clip, x, y, w, h);
+        geo[0] = static_cast<float>(x);
+        geo[1] = static_cast<float>(y);
+        geo[2] = static_cast<float>(w);
+        geo[3] = static_cast<float>(h);
+        double deg = 0;
+        app.clip_get_rotation(gui.selected_clip, deg);
+        rot = static_cast<float>(deg);
+        int l = 0, r = 0, t = 0, b = 0;
+        app.clip_get_crop(gui.selected_clip, l, r, t, b);
+        crop[0] = l; crop[1] = r; crop[2] = t; crop[3] = b;
+        // Lengths are not stored on the clip, so fades start from zero
+        // each time the selection changes rather than reading back a
+        // value that does not exist yet.
+        fade[0] = 0;
+        fade[1] = 0;
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Transform");
+
+    bool changed = false;
+    changed |= ImGui::DragFloat4("##geo", geo, 0.5f, -200.0f, 400.0f, "%.1f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("x y w h (%%)");
+    if (changed) {
+        app.clip_set_geometry(gui.selected_clip, geo[0], geo[1], geo[2],
+                              geo[3]);
+    }
+
+    if (ImGui::SliderFloat("##rot", &rot, -180.0f, 180.0f, "%.1f")) {
+        app.clip_set_rotation(gui.selected_clip, rot);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("rotation (deg)");
+
+    if (ImGui::InputInt4("##crop", crop)) {
+        app.clip_set_crop(gui.selected_clip, crop[0], crop[1], crop[2],
+                          crop[3]);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("crop l r t b (px)");
+
+    if (ImGui::InputInt2("##fades", fade)) {
+        if (fade[0] < 0) fade[0] = 0;
+        if (fade[1] < 0) fade[1] = 0;
+        app.clip_set_fade_in(gui.selected_clip, fade[0]);
+        app.clip_set_fade_out(gui.selected_clip, fade[1]);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("fade in/out (frames)");
+
+    if (ImGui::Button("Reset transform")) {
+        app.clip_set_geometry(gui.selected_clip, 0, 0, 100, 100);
+        app.clip_set_rotation(gui.selected_clip, 0);
+        app.clip_set_crop(gui.selected_clip, 0, 0, 0, 0);
+        app.clip_set_fade_in(gui.selected_clip, 0);
+        app.clip_set_fade_out(gui.selected_clip, 0);
+        geo[0] = 0; geo[1] = 0; geo[2] = 100; geo[3] = 100;
+        rot = 0;
+        for (int& v : crop) v = 0;
+        fade[0] = 0; fade[1] = 0;
+    }
+}
+
 static void draw_caption_editor(vedit::AppController& app, GuiState& gui) {
     if (!gui.selected_clip.valid()) return;
     if (!vedit::text_filter_available()) return;
@@ -1528,6 +1612,7 @@ static void draw_filter_panel(vedit::AppController& app, GuiState& gui) {
         return;
     }
 
+    draw_transform_editor(app, gui);
     draw_caption_editor(app, gui);
 
     // Determine whether the active target is video, audio, or both.

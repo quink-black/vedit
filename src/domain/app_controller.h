@@ -89,6 +89,7 @@ public:
     bool clip_set_geometry(ClipId id, double x, double y,
                            double w, double h);
     bool clip_set_rotation(ClipId id, double degrees);
+    bool clip_get_rotation(ClipId id, double& degrees);
     bool clip_get_geometry(ClipId id, double& x, double& y,
                            double& w, double& h) const;
 

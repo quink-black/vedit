@@ -1961,6 +1961,25 @@ bool TimelineModel::clip_set_crop(ClipId id, int left, int right,
     return true;
 }
 
+bool TimelineModel::clip_get_rotation(ClipId id, double& degrees) const {
+    degrees = 0.0;
+    Mlt::Producer* cut = find_cut_producer(id, nullptr);
+    if (!cut) return false;
+    int fidx = find_attached_filter(*cut, "affine");
+    if (fidx < 0) {
+        delete cut;
+        return true;
+    }
+    Mlt::Filter* filter = cut->filter(fidx);
+    if (filter) {
+        double v = filter->get_double("transition.fix_rotate_z");
+        degrees = std::isfinite(v) ? v : 0.0;
+        delete filter;
+    }
+    delete cut;
+    return true;
+}
+
 bool TimelineModel::clip_get_crop(ClipId id, int& left, int& right,
                                    int& top, int& bottom) const {
     left = 0;

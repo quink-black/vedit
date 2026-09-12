@@ -182,6 +182,10 @@ bool AppController::clip_trim(ClipId id, int64_t new_in, int64_t new_out) {
     return ok;
 }
 
+bool AppController::clip_get_rotation(ClipId id, double& degrees) {
+    return project_->timeline().clip_get_rotation(id, degrees);
+}
+
 bool AppController::clip_slip(ClipId id, int64_t new_in, int64_t new_out) {
     bool ok = project_->timeline().slip_clip(id, new_in, new_out);
     player_->refresh();

@@ -2511,6 +2511,51 @@ TEST_CASE("retime keeps audio in step with video on export", "[t18]") {
 // Phase 2: an in-process text filter. MLT's own text filters route
 // through Qt or pango and hang headless in this process, so vedit draws
 // into the RGBA frame itself.
+// 3.1: the transform controls the GUI drives are the same methods the
+// RPC handlers call, so both channels can be checked through one path.
+TEST_CASE("clip transform settings read back what was set", "[t22]") {
+    std::string clip = vedit::test::make_test_clip("transform");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // Rotation needs a non-default geometry to stay attached; the setter
+    // detaches affine when everything returns to defaults.
+    REQUIRE(app.clip_set_geometry(cid, 10.0, 20.0, 80.0, 60.0));
+    double x = 0, y = 0, w = 0, h = 0;
+    REQUIRE(app.clip_get_geometry(cid, x, y, w, h));
+    REQUIRE(x == 10.0);
+    REQUIRE(y == 20.0);
+    REQUIRE(w == 80.0);
+    REQUIRE(h == 60.0);
+
+    REQUIRE(app.clip_set_rotation(cid, 15.0));
+    double deg = -1;
+    REQUIRE(app.clip_get_rotation(cid, deg));
+    REQUIRE(std::abs(deg - 15.0) < 0.01);
+
+    REQUIRE(app.clip_set_rotation(cid, 0.0));
+    REQUIRE(app.clip_get_rotation(cid, deg));
+    REQUIRE(std::abs(deg) < 0.01);
+
+    REQUIRE(app.clip_set_crop(cid, 1, 2, 3, 4));
+    int l = 0, r = 0, t = 0, b = 0;
+    REQUIRE(app.clip_get_crop(cid, l, r, t, b));
+    REQUIRE(l == 1);
+    REQUIRE(r == 2);
+    REQUIRE(t == 3);
+    REQUIRE(b == 4);
+
+    // Fades report success; their effect is a keyframed filter, covered
+    // by the filter tests rather than a value read back here.
+    REQUIRE(app.clip_set_fade_in(cid, 8));
+    REQUIRE(app.clip_set_fade_out(cid, 12));
+}
+
 TEST_CASE("vedit.text draws real glyphs and honours its range", "[text]") {
     std::string clip = vedit::test::make_test_clip("text");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
