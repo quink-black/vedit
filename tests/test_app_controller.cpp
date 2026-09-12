@@ -2504,10 +2504,23 @@ TEST_CASE("retime keeps audio in step with video on export", "[t18]") {
     REQUIRE(video > 0);
     REQUIRE(video < 1.4);
 
-    // KNOWN DEFECT (Phase 0.11): the retimed clip's audio runs long --
-    // measured 1.856 s against 1.0 s of video on this machine, through
-    // the real export path. Skip until fixed; when it is, this skip
-    // stops firing and the check below becomes live.
+    // KNOWN DEFECT (Phase 0.11), mechanism now established:
+    // timewarp scales the frequency it reports for a frame by |speed|
+    // (a 44100 Hz source at 2x reports 88200) and leaves the sample
+    // count alone, expecting a resampler to convert back. Nothing
+    // converts: the avformat consumer writes the buffer at its own
+    // configured rate, so the audio stretches by
+    // (source_rate * speed) / consumer_rate. Measured on a 5 s / 44100
+    // source at 2x through this export: video 2.480 s, audio 4.565 s,
+    // a ratio of 1.826 against the predicted 88200/48000 = 1.8375.
+    //
+    // Setting the consumer's frequency to the scaled rate does produce
+    // matching durations (2.485 s against 2.480 s), but that rate
+    // depends on the speed, so it cannot generalise to a timeline with
+    // several retimed clips at different speeds. melt gets this right
+    // on identical input, and the difference in its setup has not been
+    // found. Skip until a general fix lands; when it does, this stops
+    // firing and the check below becomes live.
     if (std::abs(audio - video) >= 0.35)
         SKIP("retimed audio runs long against the video");
     REQUIRE(std::abs(audio - video) < 0.35);
