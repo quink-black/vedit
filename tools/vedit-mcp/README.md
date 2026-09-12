@@ -28,6 +28,20 @@ prints a snippet you can paste into `~/.codebuddy/mcp.json`.
   first to confirm.
 - **No vedit running** -> tools return a "start vedit first" message.
 
+## End-to-end check
+
+`auto_edit.py` drives a running vedit over JSON-RPC through a full edit
+(import, multi-track timeline, split, trim, save, export) and probes the
+result. It needs sources of at least 60 frames -- the short clips in
+`tests/data` have only 50, so generate longer ones first:
+
+```bash
+SRC_A=/tmp/a.mp4 SRC_B=/tmp/b.mp4 python3 auto_edit.py   # exit 0 = PASS
+```
+
+Last run 2026-09-11: PASS, with a 146877-byte MP4 (h264 640x360 + aac,
+2.453 s) and an 8064-byte project XML.
+
 ## Tools
 
 Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if they drift apart. 51 tools.

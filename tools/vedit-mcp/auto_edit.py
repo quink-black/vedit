@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""End-to-end auto-edit smoke test via vedit JSON-RPC / MCP.
+"""End-to-end auto-edit smoke test, driven over vedit JSON-RPC.
 
-Drives a running vedit instance through the same RPC surface the MCP
-server exposes, exercises the full edit pipeline (import, multi-track
-timeline, split, trim, save, export), and verifies the exported file.
+Drives a running vedit instance directly over the JSON-RPC socket, using
+the same methods the MCP server forwards to. It does not go through the
+MCP server itself -- that would need an MCP client in the loop -- but
+every call here has an MCP tool of the same name.
+
+Exercises the full edit pipeline (import, multi-track timeline, split,
+trim, save, export) and probes the exported file.
+
+Verified 2026-09-11 against a live instance with two 125-frame sources:
+RESULT: PASS, exit 0, 146877-byte MP4 carrying h264 640x360 and aac,
+duration 2.453 s, plus an 8064-byte project XML. The script needs
+sources of at least 60 frames; the short clips in tests/data have only
+50, so generate longer ones before running it.
 
 Scenario:
   1. Reset instance state (remove tracks and library items).

@@ -469,7 +469,15 @@ mean building MLT against movit and giving vedit a GL context to share
 with MLT -- a prerequisite change, not a feature. Recorded rather than
 worked around, per R2.
 
-**M5 agent workflow: DONE as a checked end-to-end scenario.** See below.
+**M5 agent workflow: DONE as a checked end-to-end scenario.** The audit
+flagged `auto_edit.py` as unverified, with a docstring claiming it drove
+"JSON-RPC / MCP" when it only ever spoke RPC. It has now been run
+against a live instance and passes: RESULT: PASS, exit 0, a 146877-byte
+MP4 carrying h264 640x360 and aac at 2.453 s, plus an 8064-byte project
+XML. The docstring now says it speaks RPC rather than MCP, and records
+that the run needs sources of at least 60 frames -- the clips in
+`tests/data` have only 50, which is why the scenario had never been
+exercised. The MCP README documents how to run it and the last result.
 
 ---
 
