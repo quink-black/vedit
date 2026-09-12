@@ -9,7 +9,7 @@ through the same `AppController` seam. Neither channel has a privileged
 code path.
 
 > Status: **Milestone 1 complete** (multi-track editing + composition +
-> export + save/load + RPC control plane). See [docs/](docs/) for the
+> export + save/load + RPC control plane). See [doc/](doc/) for the
 > full design rationale, scope boundary, and task breakdown.
 
 ---
@@ -146,7 +146,8 @@ ctest -C Debug
 On Windows, `test_rpc_server.cpp` is excluded from the build (its raw
 AF_UNIX client is a deferred port); the other ~40 test cases run.
 
-48 test cases across 6 files (smoke, domain, app_controller, rpc, rpc_server).
+125 test cases across 8 files (smoke, domain, app_controller, rpc,
+rpc_server, util, docs, plus the Catch2 main).
 
 ---
 
@@ -158,24 +159,67 @@ vedit exposes a JSON-RPC 2.0 control plane over a Unix domain socket
 
 ### Available Methods
 
-| Method | Params | Returns | Description |
-|---|---|---|---|
-| `state.get` | — | `{"tracks": [...], "clips": [...]}` | Full timeline JSON projection |
-| `library.import` | `{"path": "..."}` | `{"index": N}` | Import a media file |
-| `track.add` | `{"kind": "video"|"audio", "name": "..."}` | `{"track_id": N}` | Add a track |
-| `track.remove` | `{"track_id": N}` | `{"ok": true}` | Remove a track |
-| `clip.append` | `{"track_id": N, "media_index": N, "in": N?, "out": N?}` | `{"clip_id": N}` | Append a clip (optional in/out source range) |
-| `clip.insert` | `{"track_id": N, "media_index": N, "position": N}` | `{"clip_id": N}` | Insert at position |
-| `clip.remove` | `{"clip_id": N}` | `{"ok": true}` | Remove a clip |
-| `clip.move` | `{"clip_id": N, "dest_track_id": N, "position": N}` | `{"ok": true}` | Move clip (cross-track) |
-| `clip.trim` | `{"clip_id": N, "in": N, "out": N}` | `{"ok": true}` | Trim in/out points |
-| `clip.split` | `{"clip_id": N, "at_position": N}` | `{"clip_id": N}` | Split at position (returns new right-half id) |
-| `player.play` | — | `{"ok": true}` | Start playback |
-| `player.pause` | — | `{"ok": true}` | Pause playback |
-| `player.seek` | `{"position": N}` | `{"position": N}` | Seek to frame |
-| `project.save` | `{"path": "..."}` | `{"ok": true}` | Save to MLT XML |
-| `project.open` | `{"path": "..."}` | `{"ok": true}` | Load from MLT XML |
-| `export.start` | `{"path": "..."}` | `{"ok": true}` | Export to H.264/AAC MP4 |
+57 methods. This table is generated from the handlers in `src/rpc/rpc_methods.cpp`; `ctest` fails if it drifts.
+
+| Method | Params | Description |
+|---|---|---|
+| `analysis.track` | `clip_id`, `rect`, `algo`, `steps` | Run OpenCV object tracking over a clip |
+| `app.identity` | — | Identity of this vedit instance |
+| `app.list_instances` | — | Enumerate running vedit instances |
+| `clip.append` | `track_id`, `media_index`, `in`, `out` | Append a clip from the media library |
+| `clip.change_speed` | `clip_id`, `speed` | Retime a clip (timewarp) |
+| `clip.detach_audio` | `clip_id` | Copy a clip's audio onto a new audio track |
+| `clip.get_crop` | `clip_id` | Read a clip's crop margins |
+| `clip.get_geometry` | `clip_id` | Read a clip's position and size |
+| `clip.get_rotation` | `clip_id` | Read a clip's rotation in degrees |
+| `clip.insert` | `track_id`, `media_index`, `position`, `in`, `out` | Insert a clip at a timeline position |
+| `clip.lift` | `clip_id` | Replace a clip with blank, keeping timing |
+| `clip.move` | `clip_id`, `dest_track_id`, `position` | Move a clip, possibly across tracks |
+| `clip.overwrite` | `track_id`, `media_index`, `position`, `in`, `out` | Insert a clip over blank space |
+| `clip.remove` | `clip_id` | Remove a clip (closes the gap behind it) |
+| `clip.set_audio_enabled` | `clip_id`, `enabled` | Enable or mute a clip's audio |
+| `clip.set_crop` | `clip_id`, `left`, `right`, `top`, `bottom` | Crop a clip, in pixels |
+| `clip.set_fade_in` | `clip_id`, `duration` | Fade a clip in over N frames |
+| `clip.set_fade_out` | `clip_id`, `duration` | Fade a clip out over N frames |
+| `clip.set_geometry` | `clip_id`, `x`, `y`, `w`, `h` | Position and size a clip, in percent |
+| `clip.set_rotation` | `clip_id`, `degrees` | Rotate a clip, in degrees |
+| `clip.set_video_enabled` | `clip_id`, `enabled` | Enable or hide a clip's video |
+| `clip.split` | `clip_id`, `at_position` | Split a clip at a position |
+| `clip.trim` | `clip_id`, `in`, `out` | Trim a clip's in/out points |
+| `export.cancel` | `job_id` | Cancel a running export |
+| `export.list_presets` | — | List MLT export presets |
+| `export.load_preset` | `file` | Read a preset as consumer properties |
+| `export.poll` | `job_id` | Poll an export job's state and progress |
+| `export.start` | `path`, `params`, `in`, `out` | Start exporting to a file |
+| `filter.add` | `filter`, `in`, `out`, `track_id`, `clip_id` | Attach a filter to a clip |
+| `filter.get_param` | `filter`, `param`, `track_id`, `clip_id` | Read a filter parameter |
+| `filter.list` | — | List available filters with parameters |
+| `filter.remove` | `filter`, `track_id`, `clip_id` | Detach a filter from a clip |
+| `filter.set_param` | `filter`, `param`, `track_id`, `keyframes`, `clip_id`, `value` | Set a filter parameter |
+| `filter.set_range` | `filter`, `in`, `out`, `clip_id` | Limit a filter to a frame range |
+| `library.import` | `path`, `video_index`, `audio_index` | Import a media file |
+| `library.remove` | `index` | Drop an unused media item |
+| `library.set_stream` | `index`, `video_index`, `audio_index` | Choose which streams a source uses |
+| `player.get_frame` | `position`, `path` | Render one frame to a PNG |
+| `player.pause` | — | Pause playback |
+| `player.play` | — | Start playback |
+| `player.seek` | `position` | Seek the playhead |
+| `project.new` | — | Clear the project |
+| `project.open` | `path` | Load a project from MLT XML |
+| `project.save` | `path` | Save the project to MLT XML |
+| `project.set_profile` | `width`, `height`, `fps` | Set canvas size and frame rate |
+| `redo` | — | Redo the last undone change |
+| `state.get` | — | Full timeline JSON projection |
+| `track.add` | `kind`, `name` | Add a track |
+| `track.get_composite_geometry` | `track_id` | Read a track's canvas placement |
+| `track.remove` | `track_id` | Remove a track and its clips |
+| `track.set_composite_geometry` | `track_id`, `x`, `y`, `w`, `h` | Place a track on the canvas |
+| `track.set_hidden` | `track_id`, `hidden` | Show or hide a track's video |
+| `track.set_muted` | `track_id`, `muted` | Mute or unmute a track |
+| `transition.add` | `track_id`, `clip_index`, `length`, `type` | Add a transition between adjacent clips |
+| `transition.list_types` | — | List available transition types |
+| `undo` | — | Undo the last change |
+| `view.screenshot` | `path` | Render the frame under the playhead |
 
 ### Example (Python)
 
@@ -229,7 +273,8 @@ vedit/
 
 All decisions are evidence-based — measured against the local MLT,
 Shotcut, and idiff source trees. Full rationale in
-[docs/phase1-design.md](docs/phase1-design.md).
+[doc/next-phase-design.md](doc/next-phase-design.md), and the MLT capability audit in
+[doc/mlt-capability-audit.md](doc/mlt-capability-audit.md).
 
 | Decision | Choice | Rationale |
 |---|---|---|
@@ -268,7 +313,7 @@ Shotcut, and idiff source trees. Full rationale in
 
 ## What's Next
 
-See [docs/phase1-scope.md](docs/phase1-scope.md) for the full milestone
+See [doc/next-phase-design.md](doc/next-phase-design.md) for the full milestone
 roadmap. Key future work:
 
 - **M2**: Filters (per-clip/per-track video/audio filters via MLT's

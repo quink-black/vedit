@@ -40,6 +40,14 @@ bool Dispatcher::has_method(const std::string& name) const noexcept {
     return methods_.find(name) != methods_.end();
 }
 
+std::vector<std::string> Dispatcher::method_names() const {
+    std::vector<std::string> names;
+    names.reserve(methods_.size());
+    for (const auto& entry : methods_) names.push_back(entry.first);
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
 json Dispatcher::handle_one(const json& request, bool& is_notification) noexcept {
     is_notification = false;
     if (!request.is_object())

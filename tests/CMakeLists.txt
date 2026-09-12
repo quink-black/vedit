@@ -15,6 +15,7 @@ add_executable(vedit_tests
     test_app_controller.cpp
     test_rpc.cpp
     test_util.cpp
+    test_docs.cpp
 )
 if(VEDIT_RPC_SERVER_TEST)
     target_sources(vedit_tests PRIVATE test_rpc_server.cpp)
@@ -28,6 +29,7 @@ target_link_libraries(vedit_tests PRIVATE
 )
 target_compile_definitions(vedit_tests PRIVATE
     VEDIT_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data"
+    VEDIT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 include(CTest)
 

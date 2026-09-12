@@ -1,10 +1,12 @@
 #ifndef VEDIT_RPC_DISPATCHER_H
 #define VEDIT_RPC_DISPATCHER_H
 
+#include <algorithm>
 #include <functional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -41,6 +43,9 @@ class Dispatcher {
 public:
     void register_method(std::string name, MethodHandler handler);
     bool has_method(const std::string& name) const noexcept;
+    // Every registered name, sorted. Lets tests compare the dispatcher
+    // against documented tables so the docs cannot drift from the code.
+    std::vector<std::string> method_names() const;
     std::string handle_request(const std::string& request_json);
 private:
     nlohmann::json handle_one(const nlohmann::json& request,
