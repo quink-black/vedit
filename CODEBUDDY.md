@@ -9,12 +9,14 @@ Direction, priority and the current phase plan live in
 
 ## Hard Rules
 
-These rules exist because this project accumulated 54 RPC methods and 51
-MCP tools while undo, save fidelity and drag & drop were still missing,
-and because three features were committed as done while being fake
+These rules exist because this project once accumulated 54 RPC methods and
+51 MCP tools -- the counts on the day these rules were written, and neither
+number has held since, which is why no rule below quotes one -- while undo,
+save fidelity and drag & drop were still missing, and because three
+features were committed as done while being fake
 (`change_speed` built a timewarp producer and discarded it;
 `detach_audio` mixed source and timeline frame spaces; `export.cancel`
-had two identical if/else branches). All 105 tests passed the whole time.
+had two identical if/else branches). Every test passed the whole time.
 
 ### R1 Definition of Done
 
@@ -45,9 +47,11 @@ Reject any change containing these shapes:
 ### R3 Basic Before New
 
 Until Phase 0 and Phase 1 of `doc/next-phase-design.md` are complete:
-no new RPC methods, no new MCP tools, and no M3/M4/M5 work (keyframe
-curve editor, movit GPU rendering, workflow integration). New capability
-requires finishing the current phase plus explicit user agreement.
+no new RPC methods, no new MCP tools, and no M4/M5 work (movit GPU
+rendering, workflow integration). A tool or method that gives an already
+registered method its missing route is parity work, not new capability.
+New capability requires finishing the current phase plus explicit user
+agreement.
 
 ### R4 Disprove Before Building
 

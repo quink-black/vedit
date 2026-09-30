@@ -1,6 +1,7 @@
 # vedit: Current-State Audit and Next-Phase Plan
 
-Date: 2026-09-11
+Date: 2026-09-11, sections 0 and 1.2 re-measured on 2026-09-30 (see
+"What has landed since this audit").
 Status: pending review. This document is the single source of truth for
 direction and priority.
 
@@ -16,22 +17,26 @@ Every conclusion below comes from reading the current code, building it,
 and running the tests. Nothing is taken from commit messages or from what
 earlier documents claim was done.
 
-| Check | Command / basis | Result |
+| Check | Command / basis | Result (2026-09-30) |
 |---|---|---|
-| Build | `cmake -B build -G Ninja && cmake --build build` | passes (after clearing a stale CMakeCache, see note) |
-| Tests | `./build/tests/vedit_tests` | 105 cases / 692 assertions, all green |
-| RPC surface | `grep register_method src/rpc/rpc_methods.cpp` | 54 methods |
-| MCP surface | `grep 'name=' tools/vedit-mcp/vedit_mcp_server.py` | 51 tools |
-| Filters | `FilterCatalog` startup log | 438 |
+| Build | `cmake --build build` | passes |
+| Tests | `cd build && ctest -N \| tail -1`, then `VEDIT_AUDIO_CONSUMER=null ctest` | 131 cases, none failing; 4 report skipped (retimed audio on export, three `analysis.track`) |
+| RPC surface | `grep -c register_method src/rpc/rpc_methods.cpp` | 57 methods |
+| MCP surface | `grep -c '^        Tool(' tools/vedit-mcp/vedit_mcp_server.py` | 57 tools, every registered method reachable (enforced by `tests/test_docs.cpp`) |
+| Filters | `FilterCatalog` startup log | 440 |
 
 Note: the checked-in `build/` had a poisoned CMakeCache pointing at
 `/opt/homebrew/Cellar/catch2/3.14.0`, which Homebrew has since replaced
 with 3.15.3. Removing `build/CMakeCache.txt` and `build/CMakeFiles` and
 reconfiguring fixes it. The source is fine; this is a stale build dir.
 
-**Central finding: a green build plus 105 passing tests is not evidence
-that features work.** The test suite is currently the main source of
-false confidence. See 2.4.
+**Central finding: a green build plus every test passing is not evidence
+that features work.** The test suite was the main source of false
+confidence: the cases for change speed, audio detach, export cancel and
+filter and transition behaviour asserted the absence of an error rather than
+a result value, and the features behind them were missing or fake. See 2.4
+for the mechanism and "What has landed" for what has since been pinned to a
+result value.
 
 ---
 
@@ -55,12 +60,42 @@ substituted with "the API surface grew". Fix that first.
 
 ### 1.2 Current attainment
 
-| Goal | Attainment | Blocker |
+Measured 2026-09-30. Each attainment names its denominator, because a
+percentage without one cannot be re-measured (R6).
+
+| Goal | Attainment | Denominator and blocker |
 |---|---|---|
-| G1 editing complete | **~50%** | no text/captions, no ripple, no snapping, no drag & drop; retime and audio detach are broken |
-| G2 lossless persistence | **~30%** | only tracks and clip in/out points are restored; transitions, filters, keyframes, geometry, fades and mute are all dropped |
-| G3 channel equality | **~60%** | 54 RPC methods vs roughly 30 reachable from the GUI; `set_geometry/rotation/crop/fade` have no GUI |
-| G4 undoable | **0%** | no undo/redo code exists anywhere |
+| G1 editing complete | **90%** | 10 steps of a typical chain, 8 fully usable. Partial: speed change (video correct, retimed audio export is the skipped case) and captions (Core Text, so nothing is drawn on other platforms). Still absent: ripple, snapping, drag & drop |
+| G2 lossless persistence | **84%** | 19 state items, 16 survive a save and open. Lost: per-track composite geometry, media library per-item stream selection. Unverified: track hidden flag after load |
+| G3 channel equality | **80% GUI/RPC**, **100% RPC/MCP** | 61 capability methods in `AppController` (public members minus 5 accessors); 49 reachable from both channels, 3 RPC-only, 3 GUI-only, 6 from neither. All 57 registered methods now have a route from MCP |
+| G4 undoable | **90%** | 39 operations change project state, 35 enter history. Outside it: `profile_set`, `clip_analyze_track`, `library_import`, `library_remove`, none of which reach the refresh history is recorded from |
+
+### 1.3 What has landed since this audit
+
+Recorded here so this document can be read on its own instead of together
+with a dated audit note. Each item is a commit on
+`feature/audit-fixes-2026q4`.
+
+- Filter, filter-range, keyframe and composite-geometry writes now enter
+  undo history; they used to return before the refresh that records it, so
+  one undo stepped back over the previous mutation instead.
+- Opening a project goes through `AppController`, so it is undoable and the
+  preview rebinds to the adopted graph.
+- Clip and track ids survive undo, redo, and a save and open: the sidecar
+  beside the XML carries them and the id high-water mark, so a handle keeps
+  addressing the same object and a spent id is not handed out again.
+- Transitions are reported: `state.get` gained a `transitions` array and a
+  `playlist_index` per clip, which is the number `transition.add` is
+  addressed by. A restored mix is recognised as a transition instead of
+  appearing as an extra clip, and its requested type now round-trips.
+- Re-enabling a clip's audio or video works: the original stream selection
+  is read from the source rather than from the cut that was muted.
+- The MCP bridge reaches all 57 registered methods, and `tests/test_docs.cpp`
+  compares the bridge's calls against the dispatcher in both directions.
+- Two claims in this document were measured and are wrong: a filter's active
+  frame range is not lost across a save and open (the document carries it on
+  the filter element), and `analysis.track` does not merely lack tests -- it
+  produces no tracking data at all, which its cases now report as skipped.
 
 ---
 
@@ -86,6 +121,12 @@ substituted with "the API surface grew". Fix that first.
 
 ### 2.2 Claimed done, actually fake (highest priority)
 
+> Historical record from 2026-09-11, kept because the rules in section 4
+> rest on this evidence. Three of the four are implemented for real now
+> (retime, audio detach, export cancel); the drag-to-timeline claim is
+> still open: the GUI text says media can be dragged to the timeline and
+> nothing implements it.
+
 These four are the concrete evidence of "AI said it was done". They share
 a signature: the code looks finished, has comments, returns values, and
 has tests, but the semantics never happen. None of them is caused by an
@@ -100,6 +141,11 @@ one against MLT 7.40.0.
 | **Channel equality on the GUI side** | `main.cpp:302,335` | Status text and a tooltip state media can be dragged to the timeline. There is no `BeginDragDropSource` or `BeginDragDropPayload` anywhere in the tree. Only OS-level file drop exists, and it imports to the library, not the timeline. |
 
 ### 2.3 Basic functionality that is entirely missing
+
+> Historical record from 2026-09-11. Undo and redo, transitions with a
+> reported type, per-clip filters with keyframes, and the track mute and
+> hide flags have all landed since. Ripple, snapping and drag & drop have
+> not.
 
 `grep -iE "undo|redo|ripple|snap"` over `src/` returns only two unrelated
 hits (`PixelSnapH`, and the word "Snapshot" in a comment).
@@ -118,8 +164,8 @@ hits (`PixelSnapH`, and the word "Snapshot" in a comment).
 
 ### 2.4 Why the tests did not catch any of this
 
-105 cases pass, but assertion strength is weakest exactly where the fake
-features live.
+Every case passed, but assertion strength was weakest exactly where the fake
+features lived.
 
 | Test | Location | Problem |
 |---|---|---|

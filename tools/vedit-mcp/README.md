@@ -3,7 +3,8 @@
 MCP server bridging the [vedit](../../) video editor to AI agents.
 
 vedit hosts a JSON-RPC 2.0 server inside every running window, on
-`/tmp/vedit-<pid>.sock` (POSIX). This MCP server discovers those sockets,
+`$TMPDIR/vedit-<pid>.sock` on macOS and `/tmp/vedit-<pid>.sock` on Linux.
+This MCP server discovers those sockets,
 picks the right one, and exposes vedit's RPC methods as MCP tools so an
 agent (CodeBuddy / Claude Desktop / Cursor / ...) can drive vedit from
 a conversation.

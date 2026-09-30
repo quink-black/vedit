@@ -161,7 +161,9 @@ Agent: state_json() → JSON projection (agents never parse XML)
 └────────────────┴──────────────────────────────┘
 ```
 
-Socket path: `/tmp/vedit-<pid>.sock`. The socket is created on startup
+Socket path: `vedit-<pid>.sock` under the directory the platform uses for
+per-user temporary files (`$TMPDIR` on macOS, `/tmp` on Linux). The socket
+is created on startup
 and cleaned up on shutdown. Stale sockets from crashed sessions are
 swept by the next start.
 
