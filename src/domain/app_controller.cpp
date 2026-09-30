@@ -419,9 +419,10 @@ bool AppController::filter_add(ClipId clip_id, const std::string& name,
 bool AppController::filter_set_in_out(ClipId clip_id,
                                        const std::string& filter_name,
                                        int in, int out) {
-    return project_->timeline().set_filter_in_out(
+    bool ok = project_->timeline().set_filter_in_out(
         clip_id, filter_name, in, out);
     player_->refresh();
+    return ok;
 }
 
 bool AppController::filter_remove(ClipId clip_id, const std::string& name) {
@@ -434,9 +435,10 @@ bool AppController::filter_set_param(ClipId clip_id,
                                       const std::string& filter_name,
                                       const std::string& param,
                                       const std::string& value) {
-    return project_->timeline().set_filter_param(
+    bool ok = project_->timeline().set_filter_param(
         clip_id, filter_name, param, value);
     player_->refresh();
+    return ok;
 }
 
 std::string AppController::filter_get_param(ClipId clip_id,
@@ -462,9 +464,10 @@ bool AppController::track_filter_set_param(TrackId track_id,
                                             const std::string& filter_name,
                                             const std::string& param,
                                             const std::string& value) {
-    return project_->timeline().track_set_filter_param(
+    bool ok = project_->timeline().track_set_filter_param(
         track_id, filter_name, param, value);
     player_->refresh();
+    return ok;
 }
 
 std::string AppController::track_filter_get_param(TrackId track_id,
@@ -477,9 +480,10 @@ std::string AppController::track_filter_get_param(TrackId track_id,
 bool AppController::filter_set_param_keyframes(
         ClipId clip_id, const std::string& filter_name,
         const std::string& param, const nlohmann::json& keyframes) {
-    return project_->timeline().set_filter_param_keyframes(
+    bool ok = project_->timeline().set_filter_param_keyframes(
         clip_id, filter_name, param, keyframes);
     player_->refresh();
+    return ok;
 }
 
 nlohmann::json AppController::filter_get_param_keyframes(
@@ -492,9 +496,10 @@ nlohmann::json AppController::filter_get_param_keyframes(
 bool AppController::track_filter_set_param_keyframes(
         TrackId track_id, const std::string& filter_name,
         const std::string& param, const nlohmann::json& keyframes) {
-    return project_->timeline().track_set_filter_param_keyframes(
+    bool ok = project_->timeline().track_set_filter_param_keyframes(
         track_id, filter_name, param, keyframes);
     player_->refresh();
+    return ok;
 }
 
 nlohmann::json AppController::track_filter_get_param_keyframes(
@@ -511,9 +516,10 @@ void AppController::profile_set(int width, int height, double fps) {
 bool AppController::composite_geometry_set(TrackId track_id,
                                             double x, double y,
                                             double w, double h) {
-    return project_->timeline().set_composite_geometry(
+    bool ok = project_->timeline().set_composite_geometry(
         track_id, x, y, w, h);
     player_->refresh();
+    return ok;
 }
 
 bool AppController::composite_geometry_get(TrackId track_id,

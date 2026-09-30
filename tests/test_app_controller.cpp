@@ -2703,6 +2703,75 @@ TEST_CASE("undo and redo restore timeline state", "[t18]") {
     REQUIRE(app.project().timeline().attached_filters().empty());
 }
 
+TEST_CASE("filter parameter changes are individually undoable", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("undo_param");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    // A restore re-mints ids, so the clip is re-resolved by position after
+    // each undo/redo instead of reusing a handle across the restore.
+    auto clip_at = [&]() {
+        const auto ts = app.project().timeline().tracks();
+        REQUIRE(ts.size() == 1);
+        const auto cs = app.project().timeline().clips_on_track(ts[0].id);
+        REQUIRE(cs.size() == 1);
+        return cs[0].id;
+    };
+
+    REQUIRE(app.filter_add(cid, "brightness"));
+    std::string before = app.filter_get_param(cid, "brightness", "level");
+
+    REQUIRE(app.filter_set_param(cid, "brightness", "level", "0.5"));
+    REQUIRE(app.filter_get_param(cid, "brightness", "level") == "0.5");
+
+    // One undo steps back over the parameter write alone: the filter stays
+    // attached and only its value returns to what it was.
+    REQUIRE(app.undo());
+    cid = clip_at();
+    REQUIRE(app.project().timeline().attached_filters().size() == 1);
+    REQUIRE(app.filter_get_param(cid, "brightness", "level") == before);
+
+    REQUIRE(app.redo());
+    cid = clip_at();
+    REQUIRE(app.project().timeline().attached_filters().size() == 1);
+    REQUIRE(app.filter_get_param(cid, "brightness", "level") == "0.5");
+}
+
+TEST_CASE("track filter parameter changes are individually undoable", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("undo_track_param");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    auto track_at = [&]() {
+        const auto ts = app.project().timeline().tracks();
+        REQUIRE(ts.size() == 1);
+        return ts[0].id;
+    };
+
+    REQUIRE(app.track_filter_add(v1, "brightness"));
+    std::string before = app.track_filter_get_param(v1, "brightness", "level");
+
+    REQUIRE(app.track_filter_set_param(v1, "brightness", "level", "0.25"));
+    REQUIRE(app.track_filter_get_param(v1, "brightness", "level") == "0.25");
+
+    REQUIRE(app.undo());
+    v1 = track_at();
+    REQUIRE(app.track_filter_get_param(v1, "brightness", "level") == before);
+
+    REQUIRE(app.redo());
+    v1 = track_at();
+    REQUIRE(app.track_filter_get_param(v1, "brightness", "level") == "0.25");
+}
+
 TEST_CASE("save after load of a project with clips", "[t10]") {
     std::string clip = vedit::test::make_test_clip("resave");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
