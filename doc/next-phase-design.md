@@ -67,7 +67,7 @@ percentage without one cannot be re-measured (R6).
 | Goal | Attainment | Denominator and blocker |
 |---|---|---|
 | G1 editing complete | **90%** | 10 steps of a typical chain, 8 fully usable. Partial: speed change (video correct, retimed audio export is the skipped case) and captions (Core Text, so nothing is drawn on other platforms). Still absent: ripple, snapping, drag & drop |
-| G2 lossless persistence | **84%** | 19 state items, 16 survive a save and open. Lost: per-track composite geometry, media library per-item stream selection. Unverified: track hidden flag after load |
+| G2 lossless persistence | **16 of 19** | 19 state items, 16 survive a save and open. Lost: per-track composite geometry (the document carries the rect and compositing uses it; a reopened project has no handle to its composite transitions, because MLT 7 exports no transition enumeration, and the next track change resets the rect), media library per-item stream selection. Unverified: track hidden flag after load |
 | G3 channel equality | **80% GUI/RPC**, **100% RPC/MCP** | 61 capability methods in `AppController` (public members minus 5 accessors); 49 reachable from both channels, 3 RPC-only, 3 GUI-only, 6 from neither. All 57 registered methods now have a route from MCP |
 | G4 undoable | **90%** | 39 operations change project state, 35 enter history. Outside it: `profile_set`, `clip_analyze_track`, `library_import`, `library_remove`, none of which reach the refresh history is recorded from |
 | G5 two clients on one instance | **2 of 4 conditions** | A write by one client is seen by the other's next `state.get`, and a save publishes either a complete project plus a sidecar that belongs to it or nothing at all. Conditional: an `undo` naming `expected_revision` is refused before it steps over a change it has not seen, an `undo` naming nothing is not. Unmet: no mutation names who made it, so no client can be told whose work a step touches |
@@ -236,9 +236,14 @@ timed, but there is no working text filter to time.
   defaults for a nonexistent clip, silently succeeding
 - `app.list_instances` does a blocking `recv()` with no timeout on the GUI
   thread (`rpc_methods.cpp:104-119`); a stale socket hangs the UI
-- `save_xml` L45 uses the un-normalized `path` (it should use
-  `normalized`); `load_xml` L83 has the same problem, and lines 60 and 83
-  **parse the XML twice**
+- A reopened project cannot read or change a track's composite geometry. The
+  document carries the rect and compositing uses it; `adopt()` clears the
+  process' handles and the loaded graph offers nothing to point at instead,
+  because MLT 7 exports no way to enumerate a tractor's transitions
+  (`nm` on `libmlt-7` shows field plant and disconnect only). The next track
+  change replants composites, and every rect the file carried becomes full
+  frame. Measured in `a reopened project cannot see its composite geometry`,
+  which skips for this reason
 - The GUI's `gui.project_fps` is not updated after `profile_set`
   (`main.cpp:144` vs `1824`), so ruler and timecodes desync after a
   profile change

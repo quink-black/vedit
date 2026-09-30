@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <iterator>
 #include <thread>
 
@@ -3148,6 +3149,47 @@ TEST_CASE("a sidecar that does not belong to its document is skipped", "[t10]") 
     for (const auto& f : reopened.project().timeline().attached_filters())
         if (f.target_type == "clip" && f.filter_name == "brightness") ++brightness;
     REQUIRE(brightness == 1);
+}
+
+TEST_CASE("a reopened project cannot see its composite geometry", "[t19]") {
+    std::string clip = vedit::test::make_test_clip("geometry");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+    REQUIRE(app.clip_append(v2, mi).valid());
+    REQUIRE(app.composite_geometry_set(v2, 10.0, 20.0, 50.0, 40.0));
+
+    const std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "geometry", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    std::ifstream in(path);
+    std::stringstream xml;
+    xml << in.rdbuf();
+    // Measured: the rect is in the document, on the composite transition's
+    // own properties, so MLT composites the reopened project with it. What
+    // the application loses is the ability to read or change it.
+    REQUIRE(xml.str().find("geometry") != std::string::npos);
+
+    // adopt() drops this process' composite handles, and the reopened graph
+    // carries its own, which nothing can point at: mlt_tractor_s exposes only
+    // the producer, and the field offers plant and disconnect but no
+    // iteration, so there is no handle to look the rect up through. A later
+    // track change replants composites, and with it every rect the file
+    // carried silently becomes full frame.
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    REQUIRE(reopened.project().timeline().tracks().size() == 2);
+    double x = 0, y = 0, w = 0, h = 0;
+    REQUIRE_FALSE(reopened.composite_geometry_get(
+        reopened.project().timeline().tracks()[1].id, x, y, w, h));
+    SKIP("a reopened project exposes no handle to its composite transitions "
+         "(MLT 7 has no transition enumeration); until that changes the rect "
+         "cannot be read back, and the next track change resets it");
 }
 
 TEST_CASE("save/load keeps filters and mute flags", "[t10]") {

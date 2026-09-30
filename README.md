@@ -343,7 +343,11 @@ remaining backlog:
 - **Retimed audio on export**: a clip's speed change reaches the video, but
   the exported audio runs long against it, so the case is reported skipped.
 - **Two persistence losses**: per-track composite geometry and the media
-  library's per-item stream selection do not survive a save and open.
+  library's per-item stream selection do not survive a save and open. The
+  geometry is in the document and is used while compositing, but a reopened
+  project gives no handle to its composite transitions -- MLT 7 exports no
+  way to enumerate a tractor's transitions -- so the rect cannot be read or
+  changed, and the next track change replants composites and resets it.
 - **Four operations outside undo history**: `profile_set`,
   `clip_analyze_track`, `library_import` and `library_remove` never reach
   the refresh that history is recorded from.
