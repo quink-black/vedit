@@ -703,8 +703,8 @@ void register_methods(Dispatcher& d, AppController& app) {
     // ---- undo / redo ----
     //
     // Same history the GUI drives, because both go through AppController.
-    // A restore re-mints clip and track ids, so the caller must re-read
-    // state.get before addressing clips again.
+    // A restore puts back the clip and track ids the snapshot recorded, so
+    // a handle the caller holds stays valid across the step.
     d.register_method("undo", [&](const nlohmann::json&) {
         if (!app.undo())
             throw RpcException(ErrorCode::ApplicationError, "nothing to undo");

@@ -1152,7 +1152,7 @@ TEST_CASE("app.list_instances over RPC dispatcher", "[t16]") {
 // on playlist producers and cut producers. ClipId/TrackId preservation
 // across save/load requires a companion JSON file or custom serializer;
 // this is a known M1 limitation tracked in the alignment doc.
-TEST_CASE("save/load round-trip mints new ids (known limitation)", "[t16]") {
+TEST_CASE("save/load round-trip preserves ids", "[t16]") {
     std::string clip = vedit::test::make_test_clip("id_limitation");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
@@ -1182,21 +1182,27 @@ TEST_CASE("save/load round-trip mints new ids (known limitation)", "[t16]") {
     REQUIRE(app.track_count() == orig_track_count);
     REQUIRE(app.project().timeline().clip_count() == orig_clip_count);
 
-    // But ids are NOT preserved — MLT consumer_xml drops custom
-    // properties on playlist/cut producers. New ids are minted.
-    // This test pins the CURRENT behavior; changing it is a feature,
-    // not a regression.
+    // Ids come back too. MLT's consumer_xml drops the underscore-prefixed
+    // properties the ids are stamped in, so the sidecar beside the document
+    // carries them.
     const auto* t = app.project().timeline().track(
         vedit::TrackId{orig_track_id});
-    REQUIRE(t == nullptr);  // old id is gone
+    REQUIRE(t != nullptr);
 
     const auto* clip1 = app.project().timeline().clip(
         vedit::ClipId{orig_clip1_id});
-    REQUIRE(clip1 == nullptr);  // old id is gone
+    REQUIRE(clip1 != nullptr);
 
     const auto* clip2 = app.project().timeline().clip(
         vedit::ClipId{orig_clip2_id});
-    REQUIRE(clip2 == nullptr);  // old id is gone
+    REQUIRE(clip2 != nullptr);
+
+    // An addition after the load still gets an id of its own rather than one
+    // the restored project already uses.
+    auto c3 = app.clip_append(v1, mi);
+    REQUIRE(c3.valid());
+    REQUIRE(c3.value != orig_clip1_id);
+    REQUIRE(c3.value != orig_clip2_id);
 }
 
 TEST_CASE("filter.add / filter.remove / filter.set_param / filter.get_param over RPC", "[t17]") {
@@ -2681,14 +2687,17 @@ TEST_CASE("undo and redo restore timeline state", "[t18]") {
     REQUIRE(app.project().timeline().clip_count() == 0);
     REQUIRE(app.can_redo());
 
-    // Redo brings it back, with fresh ids because a restore re-mints.
+    // Redo brings the clip back under the id it had before: a restore puts
+    // the recorded ids back rather than minting new ones.
     REQUIRE(app.redo());
     REQUIRE(app.project().timeline().clip_count() == 1);
     const auto restored_tracks = app.project().timeline().tracks();
     REQUIRE(restored_tracks.size() == 1);
+    REQUIRE(restored_tracks[0].id == v1);
     const auto restored =
         app.project().timeline().clips_on_track(restored_tracks[0].id);
     REQUIRE(restored.size() == 1);
+    REQUIRE(restored[0].id == cid);
     cid = restored[0].id;
 
     // A filter change is undoable too: the snapshots carry a sidecar
@@ -2713,16 +2722,6 @@ TEST_CASE("filter parameter changes are individually undoable", "[t18]") {
     auto cid = app.clip_append(v1, mi);
     REQUIRE(cid.valid());
 
-    // A restore re-mints ids, so the clip is re-resolved by position after
-    // each undo/redo instead of reusing a handle across the restore.
-    auto clip_at = [&]() {
-        const auto ts = app.project().timeline().tracks();
-        REQUIRE(ts.size() == 1);
-        const auto cs = app.project().timeline().clips_on_track(ts[0].id);
-        REQUIRE(cs.size() == 1);
-        return cs[0].id;
-    };
-
     REQUIRE(app.filter_add(cid, "brightness"));
     std::string before = app.filter_get_param(cid, "brightness", "level");
 
@@ -2732,12 +2731,10 @@ TEST_CASE("filter parameter changes are individually undoable", "[t18]") {
     // One undo steps back over the parameter write alone: the filter stays
     // attached and only its value returns to what it was.
     REQUIRE(app.undo());
-    cid = clip_at();
     REQUIRE(app.project().timeline().attached_filters().size() == 1);
     REQUIRE(app.filter_get_param(cid, "brightness", "level") == before);
 
     REQUIRE(app.redo());
-    cid = clip_at();
     REQUIRE(app.project().timeline().attached_filters().size() == 1);
     REQUIRE(app.filter_get_param(cid, "brightness", "level") == "0.5");
 }
@@ -2751,12 +2748,6 @@ TEST_CASE("track filter parameter changes are individually undoable", "[t18]") {
     auto v1 = app.track_add(vedit::TrackKind::Video);
     REQUIRE(app.clip_append(v1, mi).valid());
 
-    auto track_at = [&]() {
-        const auto ts = app.project().timeline().tracks();
-        REQUIRE(ts.size() == 1);
-        return ts[0].id;
-    };
-
     REQUIRE(app.track_filter_add(v1, "brightness"));
     std::string before = app.track_filter_get_param(v1, "brightness", "level");
 
@@ -2764,11 +2755,9 @@ TEST_CASE("track filter parameter changes are individually undoable", "[t18]") {
     REQUIRE(app.track_filter_get_param(v1, "brightness", "level") == "0.25");
 
     REQUIRE(app.undo());
-    v1 = track_at();
     REQUIRE(app.track_filter_get_param(v1, "brightness", "level") == before);
 
     REQUIRE(app.redo());
-    v1 = track_at();
     REQUIRE(app.track_filter_get_param(v1, "brightness", "level") == "0.25");
 }
 
@@ -2822,6 +2811,40 @@ TEST_CASE("project.open is recorded as a mutation", "[t10]") {
     { std::ofstream out(junk); out << "not a project file"; }
     REQUIRE(open(junk).contains("error"));
     REQUIRE(app.project().timeline().clip_count() == 2);
+}
+
+TEST_CASE("clip and track ids survive undo, redo and a round trip", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("ids_stable");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.filter_add(cid, "brightness"));
+    REQUIRE(app.filter_set_param(cid, "brightness", "level", "0.5"));
+
+    // The handles taken before any of this keep addressing the same clip
+    // and track across both directions of the history walk.
+    REQUIRE(app.undo());
+    REQUIRE(app.filter_get_param(cid, "brightness", "level") != "0.5");
+    REQUIRE(app.project().timeline().clip(cid) != nullptr);
+    REQUIRE(app.project().timeline().clips_on_track(v1).size() == 1);
+
+    REQUIRE(app.redo());
+    REQUIRE(app.filter_get_param(cid, "brightness", "level") == "0.5");
+    REQUIRE(app.project().timeline().clip(cid) != nullptr);
+    REQUIRE(app.project().timeline().clips_on_track(v1).size() == 1);
+
+    std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "ids_stable", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+    REQUIRE(app.project_open(path));
+    REQUIRE(app.project().timeline().clip(cid) != nullptr);
+    REQUIRE(app.project().timeline().clips_on_track(v1).size() == 1);
+    REQUIRE(app.filter_get_param(cid, "brightness", "level") == "0.5");
 }
 
 TEST_CASE("save after load of a project with clips", "[t10]") {

@@ -22,6 +22,14 @@
 namespace vedit {
 
 namespace {
+// A saved project or snapshot is two files: the XML and the sidecar beside
+// it. Dropping one without the other leaves a sidecar whose filters and ids
+// would be read back by anything that later loads that name.
+void remove_snapshot(const std::string& path) {
+    std::remove(path.c_str());
+    std::remove(ProjectSaveLoad::sidecar_path(path).c_str());
+}
+
 inline int current_pid() {
 #ifdef _WIN32
     return ::_getpid();
@@ -581,7 +589,7 @@ void AppController::record_history() {
         if (a && b && std::equal(std::istreambuf_iterator<char>(a),
                                  std::istreambuf_iterator<char>(),
                                  std::istreambuf_iterator<char>(b))) {
-            std::remove(path.c_str());
+            remove_snapshot(path);
             return;
         }
     }
@@ -589,12 +597,12 @@ void AppController::record_history() {
     // Anything after the current position is a redo tail; a new mutation
     // discards it.
     for (int i = history_pos_ + 1; i < (int)history_.size(); ++i)
-        std::remove(history_[i].c_str());
+        remove_snapshot(history_[i]);
     history_.resize(history_pos_ + 1);
 
     constexpr size_t kMaxHistory = 50;
     if (history_.size() >= kMaxHistory) {
-        std::remove(history_.front().c_str());
+        remove_snapshot(history_.front());
         history_.erase(history_.begin());
         --history_pos_;
     }
@@ -603,7 +611,7 @@ void AppController::record_history() {
 }
 
 void AppController::clear_history() {
-    for (auto& p : history_) std::remove(p.c_str());
+    for (auto& p : history_) remove_snapshot(p);
     history_.clear();
     history_pos_ = -1;
 }

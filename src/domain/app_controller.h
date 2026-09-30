@@ -177,8 +177,8 @@ public:
     // identical to the current entry is dropped, which is what makes a
     // failed mutation a no-op without needing guards in every method.
     // Both channels (GUI and RPC) go through AppController, so both get
-    // the same history. A restore re-mints clip and track ids, so
-    // callers must re-read state.get before addressing them again.
+    // the same history. A restore puts back the clip and track ids the
+    // snapshot recorded, so a handle stays usable across undo and redo.
     bool can_undo() const;
     bool can_redo() const;
     bool undo();

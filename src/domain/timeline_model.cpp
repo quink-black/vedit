@@ -16,7 +16,10 @@ namespace {
 
 // Property name stamped on each cut producer to carry our stable
 // ClipId across playlist reindexing. Underscore prefix keeps MLT from
-// serializing it to XML (we serialize our own ids in T10).
+// serializing it, which is why the ids of a saved project travel in the
+// sidecar beside the XML instead: cuts of one source share a single
+// <producer> element, so a property written on a cut is written once and
+// read back by every cut of that source.
 constexpr const char* kClipIdProp = "_vedit_clip_id";
 constexpr const char* kTrackIdProp = "_vedit_track_id";
 constexpr const char* kMediaIdxProp = "_vedit_media_idx";
@@ -988,6 +991,54 @@ bool TimelineModel::adopt(Mlt::Producer& loaded) {
     tracks_ = std::move(adopted);
     rebuild_clip_view();
     return true;
+}
+
+bool TimelineModel::assign_track_id(TrackId current, TrackId wanted) {
+    if (!wanted.valid()) return false;
+    for (const auto& ts : tracks_)
+        if (ts.info.id == wanted) return false;
+    for (auto& ts : tracks_) {
+        if (ts.info.id != current) continue;
+        ts.info.id = wanted;
+        ts.playlist->set(kTrackIdProp, static_cast<int>(wanted.value));
+        // The clip view copies the track id into every ClipInfo it holds,
+        // so the entries have to follow or clip lookups stop finding their
+        // own track.
+        for (auto& [_, info] : clips_)
+            if (info.track_id == current) info.track_id = wanted;
+        if (wanted.value >= next_track_id_) next_track_id_ = wanted.value + 1;
+        return true;
+    }
+    return false;
+}
+
+bool TimelineModel::assign_clip_id(ClipId current, ClipId wanted) {
+    if (!wanted.valid()) return false;
+    if (clips_.count(wanted.value)) return false;
+    auto it = clips_.find(current.value);
+    if (it == clips_.end()) return false;
+
+    // The cut has to be found through the view entry that is still keyed
+    // by the old id, and re-stamped before that entry moves: everything
+    // downstream -- filter addressing, the JSON view, an RPC caller that
+    // kept the handle -- resolves the clip through this stamp.
+    Mlt::Producer* cut = find_cut_producer(current, nullptr);
+    if (!cut) return false;
+    stamp_clip_id(*cut, wanted.value);
+    delete cut;
+
+    ClipInfo info = it->second;
+    clips_.erase(it);
+    info.id = wanted;
+    clips_[wanted.value] = info;
+    if (wanted.value >= next_clip_id_) next_clip_id_ = wanted.value + 1;
+    return true;
+}
+
+void TimelineModel::reserve_ids(const IdWatermark& watermark) {
+    if (watermark.next_clip > next_clip_id_) next_clip_id_ = watermark.next_clip;
+    if (watermark.next_track > next_track_id_)
+        next_track_id_ = watermark.next_track;
 }
 
 void TimelineModel::rebuild_clip_view() {

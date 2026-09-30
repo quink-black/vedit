@@ -125,6 +125,29 @@ public:
     // must be a tractor. Returns false if it is not one.
     bool adopt(Mlt::Producer& loaded);
 
+    // Give back an id that adopt minted anew. Adopt mints fresh ids for
+    // every track and cut, so each ClipId and TrackId handed out before a
+    // save, an open, or an undo stops addressing anything the moment the
+    // restore finishes. The sidecar records the id every position carried,
+    // and these put it back: the object is re-stamped, the clip view is
+    // re-keyed, and the id counters are raised past the restored value.
+    // Both take the id adopt just minted and the id to restore, and refuse
+    // a target that is already taken. Main thread only, before any id-keyed
+    // query.
+    bool assign_track_id(TrackId current, TrackId wanted);
+    bool assign_clip_id(ClipId current, ClipId wanted);
+
+    // Keep the first unused ids at or above the given values. A restored
+    // project is smaller than the one it replaced, so without this the
+    // counters fall back and a later addition reuses an id that something
+    // outside the model may still be holding.
+    struct IdWatermark {
+        int64_t next_clip = 0;
+        int64_t next_track = 0;
+    };
+    IdWatermark id_watermark() const { return {next_clip_id_, next_track_id_}; }
+    void reserve_ids(const IdWatermark& watermark);
+
     bool remove_clip(ClipId id);
     bool move_clip(ClipId id, TrackId dest_track, int64_t dest_position);
     bool trim_clip(ClipId id, int64_t new_in, int64_t new_out);

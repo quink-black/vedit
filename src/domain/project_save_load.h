@@ -22,11 +22,17 @@ public:
     // success. The XML includes all tracks, clips, and transitions.
     static bool save_xml(ProjectModel& project, const std::string& path);
 
-    // Load an MLT XML file into an existing ProjectModel. The model
-    // must have an empty timeline (0 tracks). After loading, the
-    // TimelineModel is rebuilt with stable clip ids from the XML.
-    // Returns true on success.
+    // Load an MLT XML file into an existing ProjectModel, replacing what is
+    // open: the parsed graph is adopted in place of the current one, and the
+    // timeline keeps the ids the file carried. Returns true on success; a
+    // file that cannot be parsed leaves the open project untouched.
     static bool load_xml(ProjectModel& project, const std::string& path);
+
+    // Path of the file that travels beside the XML and carries what the
+    // document cannot: per-clip filters with their parameters and keyframes,
+    // and the ids the timeline held. Anything that deletes a saved project
+    // or snapshot deletes this alongside it.
+    static std::string sidecar_path(const std::string& xml_path);
 
     // Build a JSON string describing the current timeline state.
     // Format: {"tracks": [{"name": "...", "kind": "video"|"audio",

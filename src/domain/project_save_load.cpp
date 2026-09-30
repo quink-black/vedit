@@ -7,6 +7,8 @@
 #include "timeline_model.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <vector>
 #include "util/logger.h"
 
 #include <nlohmann/json.hpp>
@@ -28,19 +30,18 @@ namespace {
 // filters migrate to the shared source producer across a round trip.
 // They are recorded beside the document, keyed by track and clip index
 // (document order, which adopt preserves), and re-attached on load.
-std::string sidecar_path(const std::string& xml_path) {
-    return xml_path + ".vedit";
-}
-
 nlohmann::json sidecar_for(const TimelineModel& tl) {
     nlohmann::json entries = nlohmann::json::array();
+    nlohmann::json track_ids = nlohmann::json::array();
     const auto tracks = tl.tracks();
     for (size_t t = 0; t < tracks.size(); ++t) {
+        track_ids.push_back(tracks[t].id.value);
         const auto clips = tl.clips_on_track(tracks[t].id);
         for (size_t c = 0; c < clips.size(); ++c) {
             nlohmann::json entry;
             entry["track"] = t;
             entry["clip"] = c;
+            entry["clip_id"] = clips[c].id.value;
             nlohmann::json filters = nlohmann::json::array();
             for (const auto& f : tl.attached_filters()) {
                 if (f.target_type != "clip" || f.target_id != clips[c].id.value)
@@ -61,7 +62,74 @@ nlohmann::json sidecar_for(const TimelineModel& tl) {
     nlohmann::json doc;
     doc["vedit_sidecar"] = 1;
     doc["clips"] = entries;
+    doc["track_ids"] = track_ids;
+    // The counters go with them: a project restored from this document is
+    // smaller than the one it replaces, and an id that was spent before the
+    // save must not be handed out again afterwards.
+    doc["next_clip_id"] = tl.id_watermark().next_clip;
+    doc["next_track_id"] = tl.id_watermark().next_track;
     return doc;
+}
+
+// Adopt mints ids from one upwards in document order, which is not the
+// numbering the saved document carried: every handle handed out before the
+// save or the undo would address the wrong object, or nothing at all.
+// Ids are restored before filters are re-attached, because filter
+// addressing goes through them.
+void restore_ids(const nlohmann::json& doc, TimelineModel& tl) {
+    // Park first, then move into place. Two clips that trade ids would each
+    // find the other's id already taken, so every id that changes hands is
+    // first lifted above the watermark, where no live object can be.
+    auto reassign = [&](std::vector<std::pair<int64_t, int64_t>>& pending,
+                        int64_t saved_watermark, bool clip) {
+        int64_t scratch = std::max(saved_watermark, clip ? tl.id_watermark().next_clip
+                                                    : tl.id_watermark().next_track);
+        std::vector<std::pair<int64_t, int64_t>> parked;
+        for (const auto& [current, wanted] : pending) {
+            if (current == wanted) continue;
+            int64_t temp = ++scratch;
+            bool ok = clip ? tl.assign_clip_id(ClipId{current}, ClipId{temp})
+                           : tl.assign_track_id(TrackId{current}, TrackId{temp});
+            if (ok) parked.push_back({temp, wanted});
+        }
+        for (const auto& [temp, wanted] : parked) {
+            if (clip) tl.assign_clip_id(ClipId{temp}, ClipId{wanted});
+            else tl.assign_track_id(TrackId{temp}, TrackId{wanted});
+        }
+    };
+
+    std::vector<std::pair<int64_t, int64_t>> tracks_pending;
+    if (doc.contains("track_ids")) {
+        const auto tracks = tl.tracks();
+        const auto& ids = doc["track_ids"];
+        for (size_t t = 0; t < tracks.size() && t < ids.size(); ++t) {
+            int64_t wanted = ids[t].get<int64_t>();
+            if (wanted > 0) tracks_pending.push_back({tracks[t].id.value, wanted});
+        }
+    }
+
+    std::vector<std::pair<int64_t, int64_t>> clips_pending;
+    if (doc.contains("clips")) {
+        for (const auto& entry : doc["clips"]) {
+            int t = entry.value("track", -1);
+            int c = entry.value("clip", -1);
+            int64_t wanted = entry.value("clip_id", (int64_t)0);
+            if (t < 0 || c < 0 || wanted <= 0) continue;
+            const auto tracks = tl.tracks();
+            if (t >= static_cast<int>(tracks.size())) continue;
+            const auto clips = tl.clips_on_track(tracks[t].id);
+            if (c >= static_cast<int>(clips.size())) continue;
+            clips_pending.push_back({clips[c].id.value, wanted});
+        }
+    }
+
+    reassign(tracks_pending, doc.value("next_track_id", (int64_t)0), false);
+    reassign(clips_pending, doc.value("next_clip_id", (int64_t)0), true);
+
+    TimelineModel::IdWatermark saved;
+    saved.next_clip = doc.value("next_clip_id", (int64_t)0);
+    saved.next_track = doc.value("next_track_id", (int64_t)0);
+    tl.reserve_ids(saved);
 }
 
 void apply_sidecar(const std::string& path, TimelineModel& tl) {
@@ -76,6 +144,7 @@ void apply_sidecar(const std::string& path, TimelineModel& tl) {
         return;
     }
     if (!doc.contains("clips")) return;
+    restore_ids(doc, tl);
     const auto tracks = tl.tracks();
     for (const auto& entry : doc["clips"]) {
         int t = entry.value("track", -1);
@@ -120,6 +189,10 @@ void apply_sidecar(const std::string& path, TimelineModel& tl) {
 
 } // namespace
 
+std::string ProjectSaveLoad::sidecar_path(const std::string& xml_path) {
+    return xml_path + ".vedit";
+}
+
 bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     Mlt::Producer* producer = project.producer();
     if (!producer || !producer->is_valid()) {
@@ -147,9 +220,15 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     // Record what MLT cannot carry, then clean up stale sidecars.
     std::remove(sidecar_path(normalized).c_str());
     nlohmann::json sidecar = sidecar_for(project.timeline());
-    if (!sidecar["clips"].empty()) {
+    if (!sidecar["clips"].empty() || !sidecar["track_ids"].empty()) {
         std::ofstream out(sidecar_path(normalized));
         if (out) out << sidecar.dump(2);
+    } else {
+        // Nothing to carry now, but a sidecar left from an earlier save to
+        // the same path would re-attach filters and ids this project does
+        // not have.
+        std::error_code ec;
+        std::filesystem::remove(sidecar_path(normalized), ec);
     }
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: saved XML");
