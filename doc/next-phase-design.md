@@ -49,7 +49,7 @@ local GUI and a JSON-RPC agent drive the same state through the same
 The goal is right, but it never said what "done" means, so it got
 substituted with "the API surface grew". Fix that first.
 
-### 1.1 Four verifiable properties
+### 1.1 Five verifiable properties
 
 | # | Property | Falsifiable criterion |
 |---|---|---|
@@ -57,6 +57,7 @@ substituted with "the API surface grew". Fix that first.
 | G2 | **Persistence is lossless** | After `project.save` then `project.open`, timeline structure and every effect parameter compare equal field by field |
 | G3 | **Channels are equal** | Every `AppController` capability is reachable from both GUI and RPC |
 | G4 | **Everything is undoable** | Every timeline-mutating operation can be undone and redone, including ones issued over RPC |
+| G5 | **Two clients can work on one instance** | With two RPC clients on one instance: a mutation by B is visible to A's next `state.get` without either reconnecting; every mutation names who made it, in the response or in the history entry; an `undo` from A never steps back over a change B made after A's own last change; and two instances saving the same path cannot leave a half-written project or a project carrying a sidecar from a different write |
 
 ### 1.2 Current attainment
 
@@ -69,6 +70,7 @@ percentage without one cannot be re-measured (R6).
 | G2 lossless persistence | **84%** | 19 state items, 16 survive a save and open. Lost: per-track composite geometry, media library per-item stream selection. Unverified: track hidden flag after load |
 | G3 channel equality | **80% GUI/RPC**, **100% RPC/MCP** | 61 capability methods in `AppController` (public members minus 5 accessors); 49 reachable from both channels, 3 RPC-only, 3 GUI-only, 6 from neither. All 57 registered methods now have a route from MCP |
 | G4 undoable | **90%** | 39 operations change project state, 35 enter history. Outside it: `profile_set`, `clip_analyze_track`, `library_import`, `library_remove`, none of which reach the refresh history is recorded from |
+| G5 two clients on one instance | **0%** | Four conditions in 1.1, none met. The history is one instance-wide chain that records no author, so `undo` from either client steps back over whichever mutation came last; a second connection is accepted, but nothing tells the first that the state it read has moved; saving writes its target in place, with no lock and no atomic rename |
 
 ### 1.3 What has landed since this audit
 

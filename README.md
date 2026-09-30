@@ -337,7 +337,7 @@ Shotcut, and idiff source trees. Full rationale in
 ## What's Next
 
 See [doc/next-phase-design.md](doc/next-phase-design.md) for the full milestone
-roadmap and for the G1-G4 attainment each item is measured against. The
+roadmap and for the G1-G5 attainment each item is measured against. The
 remaining backlog:
 
 - **Retimed audio on export**: a clip's speed change reaches the video, but
@@ -349,9 +349,11 @@ remaining backlog:
   the refresh that history is recorded from.
 - **Caption drawing**: `vedit.text` renders through Core Text, so on other
   platforms the filter attaches and reports success while drawing nothing.
-- **A goal with no criterion**: the project is described as collaborative,
-  and no verifiable property of that has been written down, so nothing in
-  the roadmap measures it.
+- **G5, two clients on one instance**: the goal describes the project as
+  collaborative, and G5 now states that as four checkable conditions. None
+  is met: the undo history is instance-wide and names no author, nothing
+  tells one client that the state it read has moved, and saving rewrites its
+  target in place. The blockers are listed with the attainment.
 
 ---
 
