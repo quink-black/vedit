@@ -2847,6 +2847,47 @@ TEST_CASE("clip and track ids survive undo, redo and a round trip", "[t10]") {
     REQUIRE(app.filter_get_param(cid, "brightness", "level") == "0.5");
 }
 
+TEST_CASE("filter range survives save and open", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("filter_range");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+
+    REQUIRE(app.filter_add(cid, "brightness"));
+    REQUIRE(app.filter_set_in_out(cid, "brightness", 3, 8));
+    REQUIRE(app.filter_get_param(cid, "brightness", "in") == "3");
+    REQUIRE(app.filter_get_param(cid, "brightness", "out") == "8");
+
+    std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "filter_range", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    // The range is carried by the document itself, on the filter element.
+    // The sidecar beside it records the same span among the filter's
+    // parameters, so nothing depends on MLT keeping the attributes, but a
+    // consumer that stops writing them would be caught here.
+    {
+        std::ifstream xml(path);
+        std::string line;
+        bool ranged = false;
+        while (std::getline(xml, line)) {
+            if (line.find("<filter") != std::string::npos &&
+                line.find("in=\"3\"") != std::string::npos &&
+                line.find("out=\"8\"") != std::string::npos)
+                ranged = true;
+        }
+        REQUIRE(ranged);
+    }
+
+    REQUIRE(app.project_open(path));
+    REQUIRE(app.filter_get_param(cid, "brightness", "in") == "3");
+    REQUIRE(app.filter_get_param(cid, "brightness", "out") == "8");
+}
+
 TEST_CASE("save after load of a project with clips", "[t10]") {
     std::string clip = vedit::test::make_test_clip("resave");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
