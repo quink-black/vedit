@@ -111,6 +111,14 @@ public:
                                       const std::string& algo = "KCF",
                                       int steps = 5);
 
+    // Whether the tracker is present at all. It ships as an MLT module, so
+    // the loaded repository is the only authority; without it
+    // clip_analyze_track returns an empty result, which is otherwise
+    // indistinguishable from a clip that never moves.
+    bool analysis_available() const {
+        return filter_catalog().find("opencv.tracker") != nullptr;
+    }
+
     // --- filters (M2) ---
     const FilterCatalog& filter_catalog() const { return *filter_catalog_; }
     bool filter_add(ClipId clip_id, const std::string& name,
