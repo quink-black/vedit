@@ -68,6 +68,19 @@ nlohmann::json sidecar_for(const TimelineModel& tl) {
     // save must not be handed out again afterwards.
     doc["next_clip_id"] = tl.id_watermark().next_clip;
     doc["next_track_id"] = tl.id_watermark().next_track;
+
+    // MLT keeps the mix across a round trip but not the type that was asked
+    // for, so the transitions are recorded by position.
+    nlohmann::json transitions = nlohmann::json::array();
+    for (const auto& u : tl.transitions()) {
+        for (size_t t = 0; t < tracks.size(); ++t) {
+            if (!(tracks[t].id == u.track_id)) continue;
+            transitions.push_back({{"track", t},
+                                   {"index", u.clip_index},
+                                   {"type", u.type}});
+        }
+    }
+    doc["transitions"] = transitions;
     return doc;
 }
 
@@ -145,6 +158,20 @@ void apply_sidecar(const std::string& path, TimelineModel& tl) {
     }
     if (!doc.contains("clips")) return;
     restore_ids(doc, tl);
+
+    // Re-mark the restored mixes with the type they were planted with.
+    if (doc.contains("transitions")) {
+        const auto restored_tracks = tl.tracks();
+        for (const auto& entry : doc["transitions"]) {
+            int t = entry.value("track", -1);
+            int index = entry.value("index", -1);
+            std::string type = entry.value("type", "");
+            if (t < 0 || index < 0 || type.empty()) continue;
+            if (t >= static_cast<int>(restored_tracks.size())) continue;
+            tl.set_transition_type(restored_tracks[t].id, index, type);
+        }
+    }
+
     const auto tracks = tl.tracks();
     for (const auto& entry : doc["clips"]) {
         int t = entry.value("track", -1);
@@ -363,12 +390,29 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
             cj["length"] = c.length;
             cj["in"] = c.in_point;
             cj["out"] = c.out_point;
+            cj["playlist_index"] = c.playlist_index;
             clips.push_back(std::move(cj));
         }
         tj["clips"] = std::move(clips);
         tracks.push_back(std::move(tj));
     }
     doc["tracks"] = std::move(tracks);
+
+    // Transitions occupy a playlist slot of their own but are not clips,
+    // so they get their own list. clip_index is the slot the mix sits in,
+    // which is what transition.add reports as clip_index + 1 for its right
+    // neighbour. The type is whatever was requested at planting time; a
+    // project saved before the tag existed reports an empty string.
+    nlohmann::json transitions = nlohmann::json::array();
+    for (const auto& tr : tl.transitions()) {
+        nlohmann::json uj;
+        uj["track_id"] = tr.track_id.value;
+        uj["clip_index"] = tr.clip_index;
+        uj["length"] = tr.length;
+        uj["type"] = tr.type;
+        transitions.push_back(std::move(uj));
+    }
+    doc["transitions"] = std::move(transitions);
 
     // ---- Filters (M2: populated) ----
     //

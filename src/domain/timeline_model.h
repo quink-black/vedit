@@ -38,6 +38,20 @@ struct ClipInfo {
     int64_t out_point = 0;    // source out (frames, exclusive of length)
     int64_t start = 0;        // timeline position (frames)
     int64_t length = 0;       // frames on timeline
+    // Slot in the track's playlist, blanks included. transition.add
+    // addresses its left neighbour by this index, so it has to be readable
+    // wherever clips are.
+    int playlist_index = -1;
+};
+
+// A planted transition between two neighbouring clips. Reported alongside
+// the clips because it occupies a playlist slot of its own and takes space
+// on the timeline, but is not a clip and cannot be addressed by ClipId.
+struct TransitionInfo {
+    TrackId track_id;
+    int clip_index = -1;      // playlist index of the mix entry
+    int64_t length = 0;       // frames the dissolve spans
+    std::string type;         // as requested; empty if the file predates the tag
 };
 
 // Wraps an MLT tractor + multitrack + per-track playlists. Exposes a
@@ -230,6 +244,16 @@ public:
     int clip_count() const;
     const ClipInfo* clip(ClipId id) const;
     std::vector<ClipInfo> clips_on_track(TrackId track) const;
+
+    // Record which transition was planted at a playlist slot. MLT keeps a
+    // mix but not the requested type, and the type tag is underscore-prefixed
+    // so the document drops it; the sidecar carries it and a restored project
+    // is re-marked from there.
+    bool set_transition_type(TrackId track, int playlist_index,
+                             const std::string& type);
+
+    // The planted transitions, in track then playlist order.
+    std::vector<TransitionInfo> transitions() const;
     int64_t duration() const;  // total timeline length in frames
 
     // --- composition ---

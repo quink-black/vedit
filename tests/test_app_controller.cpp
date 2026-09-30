@@ -1906,10 +1906,37 @@ TEST_CASE("transition.add plants a typed transition", "[t18]") {
     // Adjacent clips are playlist indices 0 and 1; mix uses the first.
     REQUIRE(app.clip_add_transition(v1, 0, 15, "luma"));
 
-    // The mix inserts a tractor between the two clips, so the timeline
-    // now reports one more clip-ish entry than before.
-    int after = app.project().timeline().clip_count();
-    REQUIRE(after >= before);
+    // The mix takes a playlist slot of its own. It is reported as a
+    // transition and not as a third clip, and the type that was asked for is
+    // readable back.
+    auto mixes = app.project().timeline().transitions();
+    REQUIRE(mixes.size() == 1);
+    REQUIRE(mixes[0].track_id == v1);
+    REQUIRE(mixes[0].clip_index == 1);
+    REQUIRE(mixes[0].length == 15);
+    REQUIRE(mixes[0].type == "luma");
+    REQUIRE(app.project().timeline().clip_count() == before);
+
+    // The same facts in the view an agent reads: the transition list, and the
+    // playlist index on each clip that transition.add is addressed by.
+    auto state = nlohmann::json::parse(
+        vedit::ProjectSaveLoad::state_json(app.project()));
+    REQUIRE(state["transitions"].size() == 1);
+    REQUIRE(state["transitions"][0]["type"] == "luma");
+    REQUIRE(state["transitions"][0]["clip_index"] == 1);
+    REQUIRE(state["tracks"][0]["clips"][0]["playlist_index"] == 0);
+    REQUIRE(state["tracks"][0]["clips"][1]["playlist_index"] == 2);
+
+    // And across a save and open: the mix is still a transition -- not an
+    // extra clip in the timeline -- with the type it was planted with.
+    std::string saved = vedit::test::unique_temp_path(
+        "vedit-test", "transition_type", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), saved));
+    REQUIRE(app.project_open(saved));
+    mixes = app.project().timeline().transitions();
+    REQUIRE(mixes.size() == 1);
+    REQUIRE(mixes[0].type == "luma");
+    REQUIRE(app.project().timeline().clip_count() == before);
 
     // The composed timeline must still render a frame in the mix region.
     std::string png = vedit::test::unique_temp_path(
@@ -3304,8 +3331,8 @@ TEST_CASE("analysis.track runs and returns keyframes", "[t24]") {
 
     // Measured with the module installed: the pass runs and the results
     // parameter comes back empty ({"value":""}), so there is no keyframe to
-    // assert on. The tracker following nothing is a defect rather than a
-    // passing case, so it is recorded instead of asserted.
+    // assert on. The tracker following nothing is a defect, not a passing
+    // case, so it is recorded instead of asserted.
     printf("PROBE analysis.track result: %s\n", result.dump().c_str());
     fflush(stdout);
     SKIP("analysis.track produces no keyframes: the results parameter is "
@@ -3338,10 +3365,11 @@ TEST_CASE("analysis.track over RPC dispatcher", "[t24]") {
     auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
     REQUIRE_FALSE(resp.contains("error"));
     REQUIRE(resp["result"].contains("keyframes"));
+    const auto& keyframes = resp["result"]["keyframes"];
     printf("PROBE analysis.track rpc: %s\n", resp["result"].dump().c_str());
     fflush(stdout);
     // Same measurement as the direct case: the wire shape is there, the data
-    // is not.
+    // is not. Recorded rather than asserted.
     SKIP("analysis.track produces no keyframes: the results parameter is "
          "empty after the pass");
 }
@@ -3366,6 +3394,7 @@ TEST_CASE("analysis.track results can be bound to filter param", "[t25]") {
     if (!app.analysis_available())
         SKIP("MLT OpenCV tracker module is not installed");
     auto track_result = app.clip_analyze_track(cid, "50 50 80 80", "KCF", 10);
+    REQUIRE_FALSE(track_result.is_null());
     if (track_result.dump() == "{\"value\":\"\"}")
         SKIP("no tracker data to bind: analysis.track returns an empty result");
 
@@ -3389,7 +3418,11 @@ TEST_CASE("analysis.track results can be bound to filter param", "[t25]") {
 
     // Step 4: verify the keyframes were written.
     auto readback = app.filter_get_param_keyframes(cid, "brightness", "level");
-    REQUIRE_FALSE(readback.is_null());
-    // Either keyframes or value (both mean data was written).
-    REQUIRE((readback.contains("keyframes") || readback.contains("value")));
+    // The copied animation has to come back as keyframes carrying frame and
+    // value fields. A non-null object on its own would also be what a stub
+    // that wrote nothing at all returns.
+    REQUIRE(readback.contains("keyframes"));
+    REQUIRE_FALSE(readback["keyframes"].empty());
+    REQUIRE(readback["keyframes"][0].contains("frame"));
+    REQUIRE(readback["keyframes"][0].contains("value"));
 }

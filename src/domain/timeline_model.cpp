@@ -44,6 +44,33 @@ constexpr const char* kUserFilterProp = "_vedit_user_filter";
 // with the internal "mlt_mix" data property, which does not carry type.
 constexpr const char* kTransitionTypeProp = "_vedit_transition_type";
 
+// Whether a playlist entry is a planted transition rather than a clip.
+// While the session is alive MLT says so itself. A saved document does not
+// carry that marking: the mix comes back as a plain entry that references a
+// tractor, and vedit has no other reason to put a tractor inside a track
+// playlist, so a tractor entry is the restored form of a mix.
+// A planted transition is a mix tractor held as a playlist entry. Identify
+// it by MLT's own marker rather than by absence from the clip view: adopt
+// stamps ids on every entry, so an entry that happens to be missing from the
+// view is not evidence of anything.
+bool is_transition_entry(Mlt::Playlist& pl, int index) {
+    if (mlt_playlist_clip_is_mix(MLT_PLAYLIST(pl.get_producer()), index))
+        return true;
+    Mlt::Producer* entry = pl.get_clip(index);
+    if (!entry) return false;
+    // A saved mix comes back as an entry whose parent is the tractor the
+    // document wrote for it: the consumer serialises a mix as
+    // <entry producer="tractorN">, and nothing else puts a tractor behind a
+    // cut in a vedit track playlist. The cut itself reports mlt_producer for
+    // every entry, so the class has to be read from the parent.
+    Mlt::Producer parent = entry->parent();
+    bool tractor =
+        mlt_service_identify(MLT_SERVICE(parent.get_producer())) ==
+        mlt_service_tractor_type;
+    delete entry;
+    return tractor;
+}
+
 // Marks a clip whose audio is silenced by detach_audio, so the muting
 // filter is attached once rather than stacked on every call. No
 // underscore prefix: it has to survive the XML round trip.
@@ -700,9 +727,9 @@ bool TimelineModel::set_clip_audio_enabled(ClipId id, bool enabled) {
     if (!cut) return false;
     if (enabled) {
         // Restore the original audio_index from the parent producer. The cut
-        // has to be asked through parent(): its own audio_index is the -1
-        // that muted the stream, so reading the cut returned the mute and a
-        // re-enabled clip stayed silent.
+        // itself has to be asked through parent(): its own audio_index is the
+        // -1 that muted the stream, so reading the cut returned the mute and
+        // a re-enabled clip stayed silent.
         Mlt::Producer parent = cut->parent();
         if (parent.is_valid()) {
             int orig = parent.get_int("audio_index");
@@ -836,6 +863,63 @@ std::vector<ClipInfo> TimelineModel::clips_on_track(TrackId track) const {
     return result;
 }
 
+bool TimelineModel::set_transition_type(TrackId track, int playlist_index,
+                                        const std::string& type) {
+    int tidx = track_index(track);
+    if (tidx < 0) return false;
+    auto& pl = tracks_[tidx].playlist;
+    if (!pl) return false;
+    if (!is_transition_entry(*pl, playlist_index)) return false;
+
+    Mlt::Producer* entry = pl->get_clip(playlist_index);
+    if (!entry) return false;
+    // The tag lives on the mix tractor rather than on the cut, which is where
+    // clip_add_transition puts it too.
+    Mlt::Producer parent = entry->parent();
+    parent.set(kTransitionTypeProp, type.c_str());
+    delete entry;
+    return true;
+}
+
+// Transitions are mix tractors planted into a track's playlist, so they
+// live inside tracks_ rather than in a list of their own.
+std::vector<TransitionInfo> TimelineModel::transitions() const {
+    std::vector<TransitionInfo> result;
+    for (const auto& ts : tracks_) {
+        if (!ts.playlist) continue;
+        Mlt::Playlist& pl = *ts.playlist;
+        for (int i = 0; i < pl.count(); ++i) {
+            if (!is_transition_entry(pl, i)) continue;
+            Mlt::ClipInfo* ci = pl.clip_info(i);
+            TransitionInfo tr;
+            tr.track_id = ts.info.id;
+            tr.clip_index = i;
+            tr.length = ci ? ci->frame_count : 0;
+            if (ci) Mlt::Playlist::delete_clip_info(ci);
+
+            // The type tag was written on the mix's parent producer when the
+            // transition was planted, and a loaded entry may carry it on
+            // either side, so read both.
+            Mlt::Producer* entry = pl.get_clip(i);
+            if (entry) {
+                std::string tag;
+                const char* on_entry = entry->get(kTransitionTypeProp);
+                if (on_entry && *on_entry) {
+                    tag = on_entry;
+                } else {
+                    Mlt::Producer parent = entry->parent();
+                    const char* on_parent = parent.get(kTransitionTypeProp);
+                    if (on_parent) tag = on_parent;
+                }
+                tr.type = tag;
+                delete entry;
+            }
+            result.push_back(std::move(tr));
+        }
+    }
+    return result;
+}
+
 int64_t TimelineModel::duration() const {
     int64_t max_end = 0;
     for (const auto& kv : clips_) {
@@ -950,6 +1034,11 @@ bool TimelineModel::adopt(Mlt::Producer& loaded) {
         Mlt::Playlist& pl = *ts.playlist;
         for (int i = 0; i < pl.count(); ++i) {
             if (pl.is_blank(i)) continue;
+            // A restored mix is a transition, not a clip. Stamping an id on
+            // it would put it in the clip view, where a caller would try to
+            // trim or move something that is addressed through its two
+            // neighbouring clips.
+            if (is_transition_entry(pl, i)) continue;
             Mlt::Producer* clip = pl.get_clip(i);
             if (!clip) continue;
             ClipId id = next_clip_id();
@@ -1051,6 +1140,7 @@ void TimelineModel::rebuild_clip_view() {
         auto& pl = tracks_[t].playlist;
         if (!pl) continue;
         for (int i = 0; i < pl->count(); ++i) {
+            if (is_transition_entry(*pl, i)) continue;
             Mlt::ClipInfo* ci = pl->clip_info(i);
             if (!ci) continue;
             Mlt::Producer* cut = pl->get_clip(i);
@@ -1064,6 +1154,7 @@ void TimelineModel::rebuild_clip_view() {
                 info.start = ci->start;
                 info.length = ci->frame_count;
                 info.media_index = cut ? read_media_index(*cut) : -1;
+                info.playlist_index = i;
                 clips_[cid] = info;
             }
             if (cut) delete cut;
