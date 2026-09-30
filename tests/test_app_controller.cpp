@@ -1963,14 +1963,51 @@ TEST_CASE("clip.set_audio_enabled and clip.set_video_enabled over RPC", "[t19]")
         return resp["result"];
     };
 
+    // Turning a stream off is a stream selection on the cut, and the model
+    // has no per-clip stream getter, so the readback goes to the MLT object
+    // the call writes.
+    auto cut_property = [&](vedit::ClipId id, const char* prop) {
+        Mlt::Tractor tractor(*app.project().producer());
+        Mlt::Multitrack* mt = tractor.multitrack();
+        int value = -12345;  // distinct from any stream index or the -1 mute
+        for (int t = 0; mt && t < mt->count() && value == -12345; ++t) {
+            Mlt::Producer* entry = mt->track(t);
+            if (!entry) continue;
+            if (mlt_service_identify(MLT_SERVICE(entry->get_producer())) !=
+                mlt_service_playlist_type) {
+                delete entry;
+                continue;
+            }
+            Mlt::Playlist pl(MLT_PLAYLIST(entry->get_producer()));
+            delete entry;
+            for (int i = 0; i < pl.count(); ++i) {
+                Mlt::Producer* cut = pl.get_clip(i);
+                if (!cut) continue;
+                if (cut->get_int("_vedit_clip_id") == id.value) {
+                    value = cut->get_int(prop);
+                    delete cut;
+                    break;
+                }
+                delete cut;
+            }
+        }
+        delete mt;
+        return value;
+    };
+
     // Disable audio.
     call("clip.set_audio_enabled", {{"clip_id", cid.value}, {"enabled", false}});
-    // Re-enable audio.
+    REQUIRE(cut_property(cid, "audio_index") == -1);
+    // Re-enable audio: the index goes back to a real stream, not to a fixed
+    // number, because the clip's source decides which one it is.
     call("clip.set_audio_enabled", {{"clip_id", cid.value}, {"enabled", true}});
+    REQUIRE(cut_property(cid, "audio_index") >= 0);
     // Disable video.
     call("clip.set_video_enabled", {{"clip_id", cid.value}, {"enabled", false}});
+    REQUIRE(cut_property(cid, "video_index") == -1);
     // Re-enable video.
     call("clip.set_video_enabled", {{"clip_id", cid.value}, {"enabled", true}});
+    REQUIRE(cut_property(cid, "video_index") >= 0);
 
     // Disabled video should still render (blank frames but no crash).
     call("clip.set_video_enabled", {{"clip_id", cid.value}, {"enabled", false}});

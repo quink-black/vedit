@@ -699,8 +699,11 @@ bool TimelineModel::set_clip_audio_enabled(ClipId id, bool enabled) {
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
     if (enabled) {
-        // Restore the original audio_index from the parent producer.
-        Mlt::Producer parent(cut->get_producer());
+        // Restore the original audio_index from the parent producer. The cut
+        // has to be asked through parent(): its own audio_index is the -1
+        // that muted the stream, so reading the cut returned the mute and a
+        // re-enabled clip stayed silent.
+        Mlt::Producer parent = cut->parent();
         if (parent.is_valid()) {
             int orig = parent.get_int("audio_index");
             cut->set("audio_index", orig);
@@ -716,7 +719,8 @@ bool TimelineModel::set_clip_video_enabled(ClipId id, bool enabled) {
     Mlt::Producer* cut = find_cut_producer(id, nullptr);
     if (!cut) return false;
     if (enabled) {
-        Mlt::Producer parent(cut->get_producer());
+        // Same parent lookup as the audio path, for the same reason.
+        Mlt::Producer parent = cut->parent();
         if (parent.is_valid()) {
             int orig = parent.get_int("video_index");
             cut->set("video_index", orig);
