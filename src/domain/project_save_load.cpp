@@ -143,7 +143,8 @@ void restore_ids(const nlohmann::json& doc, TimelineModel& tl) {
     tl.reserve_ids(saved);
 }
 
-void apply_sidecar(const std::string& path, TimelineModel& tl) {
+void apply_sidecar(const std::string& path, const std::string& xml_path,
+                   TimelineModel& tl) {
     std::ifstream in(path);
     if (!in) return;
     nlohmann::json doc;
@@ -155,6 +156,24 @@ void apply_sidecar(const std::string& path, TimelineModel& tl) {
         return;
     }
     if (!doc.contains("clips")) return;
+
+    // The sidecar says how long the document it was written for was, because
+    // the two files are published one after the other and a second instance
+    // saving the same path can leave this sidecar beside that document. Its
+    // entries are positions, so grafting them onto a different timeline
+    // would put another project's filters on these clips; a mismatch loses
+    // the filters instead, which is loss the editor can see rather than
+    // corruption it cannot.
+    if (doc.contains("xml_bytes")) {
+        std::error_code ec;
+        const auto bytes = std::filesystem::file_size(xml_path, ec);
+        if (ec || bytes != doc["xml_bytes"].get<uintmax_t>()) {
+            Logger::log(Logger::Level::Warn,
+                        "ProjectSaveLoad: sidecar does not belong to this "
+                        "document, filters and saved ids skipped");
+            return;
+        }
+    }
     restore_ids(doc, tl);
 
     // Re-mark the restored mixes with the type they were planted with.
@@ -232,28 +251,80 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     std::string normalized = path;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
 
-    Mlt::Consumer consumer(project.profile(), "xml", normalized.c_str());
+    // MLT writes to whichever file it is pointed at and reports nothing when
+    // it fails, so it is pointed at a staging name in the same directory and
+    // the result is moved into place once it is on disk. Pointing it at the
+    // final name meant an interrupted save left a half written project under
+    // the name the user saved, with the previous version already truncated,
+    // and that a project.save answered ok whatever had happened.
+    const std::string staged = normalized + ".tmp";
+    Mlt::Consumer consumer(project.profile(), "xml", staged.c_str());
     if (!consumer.is_valid()) {
         Logger::log(Logger::Level::Error, "ProjectSaveLoad: xml consumer unavailable");
         return false;
     }
-    consumer.set("resource", normalized.c_str());
+    consumer.set("resource", staged.c_str());
     consumer.set("no_root", 0);
     consumer.connect(*producer);
     consumer.run();
 
-    // Record what MLT cannot carry, then clean up stale sidecars.
-    std::remove(sidecar_path(normalized).c_str());
+    // Nothing comes back from run() to check, so the staged file is the
+    // evidence: no file or an empty one means the save did not happen.
+    std::error_code ec;
+    const auto xml_bytes = std::filesystem::file_size(staged, ec);
+    if (ec || xml_bytes == 0) {
+        std::filesystem::remove(staged, ec);
+        Logger::log(Logger::Level::Error,
+                    "ProjectSaveLoad: staged write produced nothing, "
+                    "previous project kept");
+        return false;
+    }
+
+    std::filesystem::rename(staged, normalized, ec);
+    if (ec) {
+        std::filesystem::remove(staged, ec);
+        const std::string msg =
+            "ProjectSaveLoad: cannot put the new project in place: " + ec.message();
+        Logger::log(Logger::Level::Error, msg.c_str());
+        return false;
+    }
+
+    // Record what MLT cannot carry. The sidecar is staged the same way and
+    // carries the size of the document it belongs to, which is what lets a
+    // later load notice it is beside some other save's document.
+    std::filesystem::remove(sidecar_path(normalized), ec);
     nlohmann::json sidecar = sidecar_for(project.timeline());
-    if (!sidecar["clips"].empty() || !sidecar["track_ids"].empty()) {
-        std::ofstream out(sidecar_path(normalized));
+    if (sidecar["clips"].empty() && sidecar["track_ids"].empty()) {
+        // Nothing to carry now, and a sidecar left from an earlier save to
+        // the same path would re-attach filters and ids this project does not
+        // have.
+        Logger::log(Logger::Level::Info, "ProjectSaveLoad: saved XML");
+        return true;
+    }
+    sidecar["xml_bytes"] = xml_bytes;
+
+    const std::string staged_sidecar = sidecar_path(normalized) + ".tmp";
+    bool written = false;
+    {
+        std::ofstream out(staged_sidecar);
         if (out) out << sidecar.dump(2);
-    } else {
-        // Nothing to carry now, but a sidecar left from an earlier save to
-        // the same path would re-attach filters and ids this project does
-        // not have.
-        std::error_code ec;
-        std::filesystem::remove(sidecar_path(normalized), ec);
+        written = static_cast<bool>(out);
+    }
+    const auto sidecar_bytes = std::filesystem::file_size(staged_sidecar, ec);
+    if (!written || ec || sidecar_bytes == 0) {
+        std::filesystem::remove(staged_sidecar, ec);
+        Logger::log(Logger::Level::Error,
+                    "ProjectSaveLoad: sidecar not written, filters and saved "
+                    "ids will not come back");
+        return false;
+    }
+    std::filesystem::rename(staged_sidecar, sidecar_path(normalized), ec);
+    if (ec) {
+        std::filesystem::remove(staged_sidecar, ec);
+        const std::string msg =
+            "ProjectSaveLoad: cannot put the sidecar in place: " + ec.message();
+        Logger::log(Logger::Level::Error, msg.c_str());
+        return false;
     }
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: saved XML");
@@ -281,7 +352,7 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
         return false;
     }
 
-    apply_sidecar(sidecar_path(normalized), project.timeline());
+    apply_sidecar(sidecar_path(normalized), normalized, project.timeline());
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: loaded XML");
     return true;

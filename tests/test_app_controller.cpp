@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <thread>
@@ -3064,6 +3065,89 @@ TEST_CASE("save after load of a project with clips", "[t10]") {
     std::string no_clips2 = vedit::test::unique_temp_path(
         "vedit-test", "no_clips2", ".xml");
     REQUIRE(vedit::ProjectSaveLoad::save_xml(empty_track.project(), no_clips2));
+}
+
+TEST_CASE("a save that cannot write says so", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("save_fail");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    // A directory that does not exist: the document cannot be written, and
+    // nothing here may answer ok.
+    const std::string bad = "/vedit-test-no-such-directory/project.xml";
+    REQUIRE_FALSE(vedit::ProjectSaveLoad::save_xml(app.project(), bad));
+
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+    nlohmann::json req = {{"jsonrpc","2.0"},{"method","project.save"},{"id",1},
+                          {"params",{{"path", bad}}}};
+    auto resp = nlohmann::json::parse(d.handle_request(req.dump()));
+    REQUIRE(resp.contains("error"));
+
+    // A save that works leaves no staging file beside the project: the
+    // staged names are moved, not copied.
+    const std::string good = vedit::test::unique_temp_path(
+        "vedit-test", "save_staged", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), good));
+    std::error_code ec;
+    REQUIRE_FALSE(std::filesystem::exists(good + ".tmp", ec));
+    REQUIRE_FALSE(std::filesystem::exists(
+        vedit::ProjectSaveLoad::sidecar_path(good) + ".tmp", ec));
+}
+
+TEST_CASE("a sidecar that does not belong to its document is skipped", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("stale_sidecar");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    // Push the id counter up first, so the id recorded in the sidecar cannot
+    // be mistaken for the one a load assigns from scratch.
+    for (int i = 0; i < 20; ++i) app.clip_remove(app.clip_append(v1, mi));
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+    REQUIRE(app.filter_add(cid, "brightness"));
+
+    const std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "stale_sidecar", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    auto single_clip_id = [](vedit::AppController& a) {
+        auto& tl = a.project().timeline();
+        for (const auto& t : tl.tracks()) {
+            const auto clips = tl.clips_on_track(t.id);
+            if (!clips.empty()) return clips[0].id.value;
+        }
+        return (int64_t)0;
+    };
+
+    // Untouched, the document and its sidecar agree and the id comes back.
+    REQUIRE(app.project_open(path));
+    REQUIRE(single_clip_id(app) == cid.value);
+
+    // Trailing text is allowed after the document element, so this changes
+    // the size without changing what the document means -- which is exactly
+    // what another save would do.
+    {
+        std::ofstream trailing(path, std::ios::app);
+        trailing << "\n<!-- saved over -->\n";
+    }
+
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    REQUIRE(reopened.project().timeline().clip_count() == 1);
+    // The sidecar was not grafted onto this document.
+    REQUIRE(single_clip_id(reopened) != cid.value);
+    // And the filter the document carries itself is still there, once.
+    int brightness = 0;
+    for (const auto& f : reopened.project().timeline().attached_filters())
+        if (f.target_type == "clip" && f.filter_name == "brightness") ++brightness;
+    REQUIRE(brightness == 1);
 }
 
 TEST_CASE("save/load keeps filters and mute flags", "[t10]") {
