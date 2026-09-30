@@ -737,7 +737,7 @@ void register_methods(Dispatcher& d, AppController& app) {
     d.register_method("project.open", [&](const nlohmann::json& params) {
         std::string path = params.value("path", "");
         if (path.empty()) throw RpcException(ErrorCode::InvalidParams, "missing path");
-        if (!ProjectSaveLoad::load_xml(app.project(), path))
+        if (!app.project_open(path))
             throw RpcException(ErrorCode::ApplicationError, "open failed");
         return nlohmann::json{{"ok", true}};
     });

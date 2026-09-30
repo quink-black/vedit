@@ -165,6 +165,12 @@ public:
     // Clear the timeline and library for a new project.
     void project_new();
 
+    // Adopt the project stored at path, replacing the open one. Goes through
+    // the same history and preview hook as every other mutation, so undo
+    // returns to the project that was open before. Returns false and changes
+    // nothing when the file cannot be parsed.
+    bool project_open(const std::string& path);
+
     // --- undo/redo (G4) ---
     // History is recorded from a single hook: every mutator already ends
     // with player_->refresh(), and that listener lands here. A snapshot

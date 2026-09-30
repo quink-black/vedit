@@ -2772,6 +2772,58 @@ TEST_CASE("track filter parameter changes are individually undoable", "[t18]") {
     REQUIRE(app.track_filter_get_param(v1, "brightness", "level") == "0.25");
 }
 
+TEST_CASE("project.open is recorded as a mutation", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("open_undo");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "open_undo", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    // Two clips are open now, the saved file holds one.
+    REQUIRE(app.clip_append(v1, mi).valid());
+    REQUIRE(app.project().timeline().clip_count() == 2);
+
+    // Open through the dispatcher, so the RPC route is covered too: an
+    // earlier revision reached past the controller and wrote the model
+    // directly, which left the change out of history.
+    vedit::rpc::Dispatcher d;
+    vedit::rpc::register_methods(d, app);
+    auto open = [&](const std::string& p) {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method","project.open"},{"id",1},
+                              {"params", {{"path", p}}}};
+        return nlohmann::json::parse(d.handle_request(req.dump()));
+    };
+
+    auto resp = open(path);
+    REQUIRE_FALSE(resp.contains("error"));
+    REQUIRE(app.project().timeline().clip_count() == 1);
+
+    // Opening replaced the project, so undo goes back to the two-clip
+    // timeline that was open before the file was read.
+    REQUIRE(app.undo());
+    REQUIRE(app.project().timeline().clip_count() == 2);
+
+    // The JSON view describes the same timeline the model holds.
+    auto state = nlohmann::json::parse(
+        vedit::ProjectSaveLoad::state_json(app.project()));
+    int viewed = 0;
+    for (const auto& t : state["tracks"]) viewed += t["clips"].size();
+    REQUIRE(viewed == (int)app.project().timeline().clip_count());
+
+    // A file that cannot be parsed leaves the open project alone.
+    std::string junk = vedit::test::unique_temp_path(
+        "vedit-test", "open_undo_junk", ".xml");
+    { std::ofstream out(junk); out << "not a project file"; }
+    REQUIRE(open(junk).contains("error"));
+    REQUIRE(app.project().timeline().clip_count() == 2);
+}
+
 TEST_CASE("save after load of a project with clips", "[t10]") {
     std::string clip = vedit::test::make_test_clip("resave");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

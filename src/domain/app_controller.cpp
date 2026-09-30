@@ -649,4 +649,17 @@ void AppController::project_new() {
     player_->refresh();
 }
 
+bool AppController::project_open(const std::string& path) {
+    // The realtime consumer holds a pointer to the tractor that is about to
+    // be replaced, so stop playback before the adopt inside load_xml swaps
+    // the graph out from under it.
+    pause();
+    if (!ProjectSaveLoad::load_xml(*project_, path)) return false;
+    // The opened project is one mutation like any other: the refresh records
+    // it, which is what lets undo go back to the previously open project,
+    // and repaints the freeze frame from the adopted producer.
+    player_->refresh();
+    return true;
+}
+
 } // namespace vedit

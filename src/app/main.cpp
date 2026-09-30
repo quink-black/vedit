@@ -2459,8 +2459,14 @@ int main(int, char**) {
                 if (ImGui::MenuItem("Open project...")) {
                     std::string path = open_project_dialog();
                     if (!path.empty()) {
-                        if (vedit::ProjectSaveLoad::load_xml(
-                                app.project(), path)) {
+                        if (app.project_open(path)) {
+                            // Ids from the previous project no longer address
+                            // anything, so drop every selection that refers to
+                            // it rather than letting the panels act on a stale
+                            // handle.
+                            gui.selected_media = -1;
+                            gui.selected_clip = vedit::ClipId{0};
+                            gui.active_track = vedit::TrackId{0};
                             gui.status = "Opened " + basename_of(path);
                         } else {
                             gui.status = "Failed to open " + path;
