@@ -230,7 +230,7 @@ resolved by `vedit::default_socket_path()` in
 | `project.save` | `path` | Save the project to MLT XML |
 | `project.set_profile` | `width`, `height`, `fps` | Set canvas size and frame rate |
 | `redo` | — | Redo the last undone change |
-| `state.get` | — | Full timeline JSON projection |
+| `state.get` | — | Project view: profile, library, tracks, clips, transitions, attached filters |
 | `track.add` | `kind`, `name` | Add a track |
 | `track.get_composite_geometry` | `track_id` | Read a track's canvas placement |
 | `track.remove` | `track_id` | Remove a track and its clips |

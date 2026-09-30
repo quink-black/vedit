@@ -307,9 +307,7 @@ void register_methods(Dispatcher& d, AppController& app) {
 
     // ---- state.get ----
     d.register_method("state.get", [&](const nlohmann::json&) {
-        return nlohmann::json::parse(
-            ProjectSaveLoad::state_json(app.project(),
-                                        app.filter_catalog()));
+        return nlohmann::json::parse(ProjectSaveLoad::state_json(app.project()));
     });
 
     // ---- library.import ----

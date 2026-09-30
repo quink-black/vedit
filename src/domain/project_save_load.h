@@ -34,16 +34,15 @@ public:
     // or snapshot deletes this alongside it.
     static std::string sidecar_path(const std::string& xml_path);
 
-    // Build a JSON string describing the current timeline state.
-    // Format: {"tracks": [{"name": "...", "kind": "video"|"audio",
-    //   "clips": [{"start": 0, "length": 125, "in": 0, "out": 124,
-    //              "media": "path/to/file.mp4"}]}]}
-    // This is the state.get projection for agents.
+    // Build the state.get projection: the project as an agent sees it.
+    // Format: {"profile": ..., "library": [...], "tracks": [...],
+    // "transitions": [...], "filters": {"attached": [...]}}.
+    //
+    // Two catalogues used to ride along: the filter list, which runs to
+    // about 44 kB and never changes while editing, and the export preset
+    // list. They live in filter.list and export.list_presets now, because an
+    // observation of the timeline should cost what the timeline costs.
     static std::string state_json(ProjectModel& project);
-    // Overload with filter catalog — populates filters.available from
-    // the catalog and filters.attached from the timeline.
-    static std::string state_json(ProjectModel& project,
-                                   const FilterCatalog& catalog);
 };
 
 } // namespace vedit

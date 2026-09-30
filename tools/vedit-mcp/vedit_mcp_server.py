@@ -192,11 +192,14 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_state",
             description=(
-                "Snapshot the active vedit instance: identity, library "
-                "(imported media with width/height/frames), tracks, and "
-                "clips per track. Always start here before issuing any "
+                "Snapshot the active vedit instance: identity, profile, "
+                "library (imported media with width/height/frames), tracks, "
+                "clips per track, transitions, and the filters attached to "
+                "clips and tracks. Always start here before issuing any "
                 "modifying call -- clip ids and track ids come from this "
-                "snapshot and change as the user edits."
+                "snapshot. The filter catalogue and the export presets are "
+                "not part of it; call list_filters and "
+                "export_list_presets."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),

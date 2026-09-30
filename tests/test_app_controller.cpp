@@ -1092,7 +1092,7 @@ TEST_CASE("library.set_stream over RPC dispatcher", "[t15]") {
     REQUIRE(app.project().library().item(mi)->audio_index == other);
 }
 
-TEST_CASE("state.get includes P1/P2 filter placeholder schema", "[t16]") {
+TEST_CASE("state.get reports attached filters, filter.list the catalogue", "[t16]") {
     std::string clip = vedit::test::make_test_clip("p1p2_placeholder");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
 
@@ -1111,19 +1111,29 @@ TEST_CASE("state.get includes P1/P2 filter placeholder schema", "[t16]") {
 
     const auto& result = resp["result"];
     REQUIRE(result.contains("filters"));
-    REQUIRE(result["filters"].contains("available"));
-    REQUIRE(result["filters"]["available"].is_array());
-    // M2 populates available from the MLT filter catalog. Verify at
-    // least the "brightness" filter is present (a core MLT filter).
-    REQUIRE_FALSE(result["filters"]["available"].empty());
-    bool has_brightness = false;
-    for (const auto& f : result["filters"]["available"]) {
-        if (f["id"] == "brightness") has_brightness = true;
-    }
-    REQUIRE(has_brightness);
     REQUIRE(result["filters"].contains("attached"));
     REQUIRE(result["filters"]["attached"].is_array());
     REQUIRE(result["filters"]["attached"].empty());
+
+    // The catalogue is no longer part of the project view: it is about 44 kB
+    // that no edit changes, so an observation of a five clip project used to
+    // spend nearly all of its size on it. filter.list answers that question
+    // when it is asked. Verify at least the "brightness" filter is present
+    // (a core MLT filter).
+    REQUIRE_FALSE(result.contains("export_presets"));
+
+    nlohmann::json list_req = {{"jsonrpc","2.0"},{"method","filter.list"},{"id",2}};
+    nlohmann::json list_resp =
+        nlohmann::json::parse(d.handle_request(list_req.dump()));
+    REQUIRE_FALSE(list_resp.contains("error"));
+    const auto& available = list_resp["result"];
+    REQUIRE(available.is_array());
+    REQUIRE_FALSE(available.empty());
+    bool has_brightness = false;
+    for (const auto& f : available) {
+        if (f["id"] == "brightness") has_brightness = true;
+    }
+    REQUIRE(has_brightness);
 }
 
 TEST_CASE("app.list_instances over RPC dispatcher", "[t16]") {

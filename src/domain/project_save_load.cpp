@@ -1,7 +1,5 @@
 #include "project_save_load.h"
 
-#include "export_service.h"
-#include "filter_catalog.h"
 #include "media_library.h"
 #include "project_model.h"
 #include "timeline_model.h"
@@ -290,20 +288,16 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
 }
 
 std::string ProjectSaveLoad::state_json(ProjectModel& project) {
-    // Default: no catalog. filters.available will be empty.
-    return state_json(project, FilterCatalog{});
-}
-
-std::string ProjectSaveLoad::state_json(ProjectModel& project,
-                                         const FilterCatalog& catalog) {
     TimelineModel& tl = project.timeline();
     MediaLibrary& lib = project.library();
 
     // Built with nlohmann-json (not hand-rolled) so the schema is
-    // exact and escaping is correct. The shape is the stable contract
-    // an agent reads to discover media, streams, tracks, and clips —
-    // changing it breaks MCP consumers. Add fields, do not rename or
-    // remove existing ones.
+    // exact and escaping is correct. The shape is the contract an agent
+    // reads to discover media, streams, tracks, clips and transitions.
+    // Add fields freely; renaming or removing one needs the callers
+    // changed in the same commit, which is how filters.available and
+    // export_presets left this view for filter.list and
+    // export.list_presets.
     nlohmann::json doc;
     doc["project"] = "vedit";
 
@@ -414,31 +408,9 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
     }
     doc["transitions"] = std::move(transitions);
 
-    // ---- Filters (M2: populated) ----
-    //
-    // P1 (generic, yml-driven): available from MLT repository.
-    // P2 (keyframe-aware): params accept {value}|{keyframes}.
-    // attached lists all filters currently on clips/tracks.
-    nlohmann::json available = nlohmann::json::array();
-    for (const auto& f : catalog.filters()) {
-        nlohmann::json fj;
-        fj["id"] = f.id;
-        fj["title"] = f.title;
-        fj["is_audio"] = f.is_audio;
-        fj["is_video"] = f.is_video;
-        nlohmann::json fparams = nlohmann::json::array();
-        for (const auto& p : f.params) {
-            nlohmann::json pj;
-            pj["identifier"] = p.identifier;
-            pj["type"] = p.type;
-            pj["default"] = p.default_value;
-            if (p.animation) pj["animation"] = true;
-            fparams.push_back(std::move(pj));
-        }
-        fj["params"] = std::move(fparams);
-        available.push_back(std::move(fj));
-    }
-
+    // The filters in place on clips and tracks. What can be attached is a
+    // question for filter.list, and which presets exist is a question for
+    // export.list_presets; neither belongs in an observation of the project.
     nlohmann::json attached = nlohmann::json::array();
     for (const auto& af : tl.attached_filters()) {
         nlohmann::json afj;
@@ -453,24 +425,7 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project,
         attached.push_back(std::move(afj));
     }
 
-    doc["filters"] = nlohmann::json{
-        {"available", std::move(available)},
-        {"attached",  std::move(attached)}
-    };
-
-    // Export presets.
-    {
-        auto presets = ExportService::list_presets();
-        nlohmann::json export_presets = nlohmann::json::array();
-        for (const auto& p : presets) {
-            nlohmann::json pj;
-            pj["name"] = p.name;
-            pj["extension"] = p.extension;
-            pj["description"] = p.description;
-            export_presets.push_back(std::move(pj));
-        }
-        doc["export_presets"] = std::move(export_presets);
-    }
+    doc["filters"] = nlohmann::json{{"attached", std::move(attached)}};
 
     return doc.dump();
 }
