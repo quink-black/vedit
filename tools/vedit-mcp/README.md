@@ -44,7 +44,7 @@ Last run 2026-09-11: PASS, with a 146877-byte MP4 (h264 640x360 + aac,
 
 ## Tools
 
-Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if they drift apart. 51 tools.
+Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if they drift apart. 57 tools.
 
 | Tool | What it does |
 |---|---|
@@ -65,12 +65,14 @@ Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if t
 | `get_filter_param` | Get a filter parameter value (including keyframes). Returns the current value or animation data. |
 | `get_frame` | Render a single composed frame at a specific position and save it as a PNG file. Returns the file path and frame position. |
 | `get_geometry` | Get the current per-clip geometry: position and size as percentages (0-100). Returns defaults (0/0/100/100) when no geometry has been set on the clip. |
+| `get_instance_identity` | Report which vedit window the bridge is talking to: name, pid, socket path, and label. It repeats the handshake that discovery uses, so it confirms the target socket is a live vedit and shows whether VEDIT_PID took effect. Takes no parameters. |
+| `get_rotation` | Get the current per-clip rotation in degrees (clockwise). Returns degrees, and 0.0 when no rotation has been set on the clip. clip_id comes from get_state.tracks[].clips[].id. |
 | `get_state` | Snapshot the active vedit instance: identity, library (imported media with width/height/frames), tracks, and clips per track. Always start here before issuing any modifying call -- clip ids and track ids come from this snapshot and change as the user edits. |
 | `import_media` | Import one media file (video/audio/image) into the project library. Same code path as the GUI File > Import. Returns the media index to use in later clip.append / clip.insert calls. |
 | `insert_clip` | Insert a clip at a specific timeline position on a track, padding with blank if past the current end. Returns the new clip_id. |
 | `lift_clip` | Remove a clip and close the gap (ripple delete). Shifts later clips left to fill the space. |
 | `list_filters` | List all available MLT filters with their parameter metadata. Use this to discover what filters can be applied and what parameters they accept. |
-| `list_instances` | List every live vedit window currently running on this machine. Use this when the user mentions multiple vedit windows, when a tool returned an ambiguous-instance error, or to confirm VEDIT_PID points at the intended window. Returns label, pid, and socket path for each. |
+| `list_instances` | List every live vedit window currently running on this machine. Use this when the user mentions multiple vedit windows, when a tool returned an ambiguous-instance error, or to confirm VEDIT_PID points at the intended window. Merges the sockets found locally with what each live instance reports seeing, so a window whose socket our own scan missed still appears; an instance too old to answer is dropped rather than failing the call. Takes no parameters. Returns label, pid, and socket path for each, sorted by pid. |
 | `list_transition_types` | List the transition types add_transition can apply. Each entry has id, title, and description. Only these ids produce a visible result. |
 | `move_clip` | Move a clip to a new position, optionally on a different track. The clip id is preserved. |
 | `open_project` | Open a previously saved MLT XML project file, replacing the current timeline. |
@@ -78,6 +80,7 @@ Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if t
 | `pause` | Pause playback. |
 | `play` | Start playback from the current position. |
 | `project_new` | Clear the current timeline and media library to start a fresh project. All clips, tracks, and imports are discarded. Call this before building a new timeline from scratch. |
+| `redo` | Redo the last undone change. This drives the instance's whole undo history -- the same one the GUI Edit menu walks -- not a history kept per MCP client, so a step can also return an edit the user made in the window. Fails when there is nothing to redo. Takes no parameters. |
 | `remove_clip` | Remove a clip from the timeline. clip_id comes from get_state.tracks[].clips[].id. |
 | `remove_filter` | Remove a filter from a clip or track. |
 | `remove_media` | Remove a media item from the library. Refuses if any clip on the timeline still references it. |
@@ -91,7 +94,9 @@ Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if t
 | `set_fade_in` | Add or remove a fade-in on a clip. Duration is in frames. The fade animates brightness (video) and volume (audio) from 0 to normal over the given duration. Set duration=0 to remove the fade. |
 | `set_fade_out` | Add or remove a fade-out on a clip. Duration is in frames. The fade animates brightness (video) and volume (audio) from normal to 0 at the clip end. Set duration=0 to remove the fade. |
 | `set_filter_param` | Set a filter parameter value. target_type/target_id select the clip or track. filter_name is the filter identifier. param is the parameter name (from list_filters). value is a string. For animated (keyframe) values, pass keyframes as a JSON array of {frame, value, type} objects. |
+| `set_filter_range` | Set the active frame range on a filter that is already attached to a clip, replacing the range it was added with. clip_id and filter (from list_filters) select the filter; in and out are clip-relative frame numbers, and the range covering the whole clip runs from 0 to the clip's last frame. |
 | `set_geometry` | Set per-clip position and size on the canvas. x, y, w, h are percentages (0-100) of the profile resolution. Omitted params keep their current value. Use this for picture-in-picture, split-screen, or zoom/pan. |
+| `set_media_stream` | Choose which streams of an imported source the project decodes. index is the media index from get_state.library[].index; video_index and audio_index are container stream indices taken from that item's streams[]. Pass -1 for none of that type, and audio_index=-2 to decode every audio stream. Refuses while any clip on the timeline still references the source, so remove those clips first. |
 | `set_profile` | Set the output canvas resolution and framerate. Call before placing clips; the profile determines render dimensions. |
 | `set_rotation` | Set per-clip rotation in degrees (clockwise). The clip rotates around its center. Set to 0 to remove rotation. |
 | `set_track_hidden` | Show or hide the video on a track. When hidden, the track's video is invisible in preview and export (the audio still plays). Does not remove or change clips on the track. |
@@ -99,6 +104,7 @@ Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if t
 | `set_video_enabled` | Enable or disable the video stream on a clip. When disabled the clip shows black in preview and export but stays in the timeline. |
 | `split_clip` | Split a clip at a timeline position, producing two clips. The original clip becomes the left half; returns the new (right) clip_id. |
 | `trim_clip` | Set a clip's in and out points (frames). Both are source-frame numbers, not timeline positions. |
+| `undo` | Undo the last change. This drives the instance's whole undo history -- the same one the GUI Edit menu walks -- not a history kept per MCP client, so it can also step back an edit the user made in the window. The step restores the clip and track ids its snapshot recorded, so a handle already held stays valid. Fails when the history is empty. Takes no parameters. |
 
 ## Pinning a specific instance
 

@@ -179,6 +179,17 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
+            name="get_instance_identity",
+            description=(
+                "Report which vedit window this bridge is talking to: "
+                "name, pid, socket path, and label. It is the same "
+                "handshake discovery uses, so calling it confirms the "
+                "target socket is a live vedit and shows whether "
+                "VEDIT_PID took effect."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
             name="get_state",
             description=(
                 "Snapshot the active vedit instance: identity, library "
@@ -590,6 +601,33 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="set_filter_range",
+            description=(
+                "Set the active frame range on a filter that is already "
+                "attached to a clip, replacing the range it was added "
+                "with. in and out are clip-relative frame numbers, and "
+                "the range that covers the whole clip runs from 0 to the "
+                "clip's last frame. filter_name comes from list_filters, "
+                "clip_id from get_state.tracks[].clips[].id."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                    "filter": {"type": "string"},
+                    "in": {
+                        "type": "integer",
+                        "description": "Start frame (clip-relative)",
+                    },
+                    "out": {
+                        "type": "integer",
+                        "description": "End frame (clip-relative)",
+                    },
+                },
+                "required": ["clip_id", "filter", "in", "out"],
+            },
+        ),
+        Tool(
             name="set_filter_param",
             description=(
                 "Set a filter parameter value. target_type/target_id "
@@ -653,6 +691,37 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["index"],
+            },
+        ),
+        Tool(
+            name="set_media_stream",
+            description=(
+                "Choose which streams of an imported source the project "
+                "decodes. index is the media index from "
+                "get_state.library[].index; video_index and audio_index "
+                "are container stream indices taken from that item's "
+                "streams[]. Pass -1 for none of that type; audio_index "
+                "-2 decodes every audio stream. Refuses while any clip "
+                "on the timeline still references the source, so remove "
+                "those clips first."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "Media index from get_state.library[].index",
+                    },
+                    "video_index": {
+                        "type": "integer",
+                        "description": "Container stream index of the video stream (-1 for none)",
+                    },
+                    "audio_index": {
+                        "type": "integer",
+                        "description": "Container stream index of the audio stream (-1 none, -2 all)",
+                    },
+                },
+                "required": ["index", "video_index", "audio_index"],
             },
         ),
         # ---- Composite geometry ----
@@ -761,6 +830,21 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["clip_id", "degrees"],
+            },
+        ),
+        Tool(
+            name="get_rotation",
+            description=(
+                "Get the current per-clip rotation in degrees "
+                "(clockwise). Returns degrees, and 0.0 when no rotation "
+                "has been set on the clip."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "clip_id": {"type": "integer"},
+                },
+                "required": ["clip_id"],
             },
         ),
         Tool(
@@ -1098,6 +1182,30 @@ async def list_tools() -> list[Tool]:
                 "required": ["width", "height", "fps"],
             },
         ),
+        # ---- Undo / redo ----
+        Tool(
+            name="undo",
+            description=(
+                "Undo the last change in the active vedit instance. This "
+                "walks the instance's whole undo history -- the same one "
+                "the GUI Edit menu walks -- not a history kept per MCP "
+                "client, so it also steps back edits the user made in "
+                "the window. Returns ok; errors when the history is "
+                "empty. Clip and track ids restored by the step are the "
+                "ones the snapshot recorded."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="redo",
+            description=(
+                "Redo the last undone change in the active vedit "
+                "instance. Like undo, this drives the instance's whole "
+                "undo history rather than a history kept per MCP client. "
+                "Returns ok; errors when there is nothing to redo."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
         # ---- Export management ----
         Tool(
             name="export_poll",
@@ -1169,17 +1277,40 @@ async def call_tool(
     if name == "list_instances":
         instances = discover_instances()
         pinned = _pin_pid()
-        return _ok({
-            "instances": [
-                {
-                    "pid": i.pid,
-                    "label": i.label,
-                    "socket": i.socket_path,
+
+        # Our own glob only sees this process's temp directory, so each
+        # peer's app.list_instances answer is merged in for the sockets it
+        # can reach and we cannot.  Entries we probed ourselves win; a peer
+        # that predates the method raises and simply contributes nothing.
+        by_pid = {
+            i.pid: {"pid": i.pid, "label": i.label, "socket": i.socket_path}
+            for i in instances
+        }
+        for instance in instances:
+            try:
+                peers = _call(instance, "app.list_instances")
+            except RuntimeError as ex:
+                log.info("%s does not answer app.list_instances: %s",
+                         instance, ex)
+                continue
+            if not isinstance(peers, list):
+                continue
+            for peer in peers:
+                if not isinstance(peer, dict):
+                    continue
+                pid = peer.get("pid")
+                if not isinstance(pid, int) or pid in by_pid:
+                    continue
+                by_pid[pid] = {
+                    "pid": pid,
+                    "label": str(peer.get("label") or f"vedit:{pid}"),
+                    "socket": str(peer.get("socket") or ""),
                 }
-                for i in instances
-            ],
+
+        return _ok({
+            "instances": [by_pid[pid] for pid in sorted(by_pid)],
             "pinned_pid": pinned,
-            "count": len(instances),
+            "count": len(by_pid),
         })
 
     instance, err, _all = _resolve()
@@ -1188,6 +1319,9 @@ async def call_tool(
     assert instance is not None
 
     try:
+        if name == "get_instance_identity":
+            return _ok(_call(instance, "app.identity"))
+
         if name == "get_state":
             return _ok(_call(instance, "state.get"))
 
@@ -1318,6 +1452,14 @@ async def call_tool(
                 return _ok(_call(instance, "filter.remove",
                                  {"clip_id": target_id, "filter": filter_name}))
 
+        if name == "set_filter_range":
+            return _ok(_call(instance, "filter.set_range", {
+                "clip_id": int(arguments["clip_id"]),
+                "filter": str(arguments["filter"]),
+                "in": int(arguments["in"]),
+                "out": int(arguments["out"]),
+            }))
+
         if name == "set_filter_param":
             target_type = str(arguments["target_type"])
             filter_name = str(arguments["filter_name"])
@@ -1347,6 +1489,13 @@ async def call_tool(
         if name == "remove_media":
             return _ok(_call(instance, "library.remove",
                              {"index": int(arguments["index"])}))
+
+        if name == "set_media_stream":
+            return _ok(_call(instance, "library.set_stream", {
+                "index": int(arguments["index"]),
+                "video_index": int(arguments["video_index"]),
+                "audio_index": int(arguments["audio_index"]),
+            }))
 
         # ---- Composite geometry ----
         if name == "set_composite_geometry":
@@ -1382,6 +1531,10 @@ async def call_tool(
                 "clip_id": int(arguments["clip_id"]),
                 "degrees": float(arguments["degrees"]),
             }))
+
+        if name == "get_rotation":
+            return _ok(_call(instance, "clip.get_rotation",
+                             {"clip_id": int(arguments["clip_id"])}))
 
         # ---- Per-clip crop ----
         if name == "set_crop":
@@ -1494,6 +1647,13 @@ async def call_tool(
                 "height": int(arguments["height"]),
                 "fps": float(arguments["fps"]),
             }))
+
+        # ---- Undo / redo ----
+        if name == "undo":
+            return _ok(_call(instance, "undo"))
+
+        if name == "redo":
+            return _ok(_call(instance, "redo"))
 
         # ---- Export management ----
         if name == "export_poll":
