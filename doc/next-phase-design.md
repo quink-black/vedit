@@ -70,7 +70,7 @@ percentage without one cannot be re-measured (R6).
 | G2 lossless persistence | **84%** | 19 state items, 16 survive a save and open. Lost: per-track composite geometry, media library per-item stream selection. Unverified: track hidden flag after load |
 | G3 channel equality | **80% GUI/RPC**, **100% RPC/MCP** | 61 capability methods in `AppController` (public members minus 5 accessors); 49 reachable from both channels, 3 RPC-only, 3 GUI-only, 6 from neither. All 57 registered methods now have a route from MCP |
 | G4 undoable | **90%** | 39 operations change project state, 35 enter history. Outside it: `profile_set`, `clip_analyze_track`, `library_import`, `library_remove`, none of which reach the refresh history is recorded from |
-| G5 two clients on one instance | **0%** | Four conditions in 1.1, none met. The history is one instance-wide chain that records no author, so `undo` from either client steps back over whichever mutation came last; a second connection is accepted, but nothing tells the first that the state it read has moved; saving writes its target in place, with no lock and no atomic rename |
+| G5 two clients on one instance | **2 of 4 conditions** | A write by one client is seen by the other's next `state.get`, and a save publishes either a complete project plus a sidecar that belongs to it or nothing at all. Conditional: an `undo` naming `expected_revision` is refused before it steps over a change it has not seen, an `undo` naming nothing is not. Unmet: no mutation names who made it, so no client can be told whose work a step touches |
 
 ### 1.3 What has landed since this audit
 
@@ -98,6 +98,20 @@ with a dated audit note. Each item is a commit on
   frame range is not lost across a save and open (the document carries it on
   the filter element), and `analysis.track` does not merely lack tests -- it
   produces no tracking data at all, which its cases now report as skipped.
+- `state.get` no longer carries the filter catalogue or the export preset
+  list, which were 44095 of its 45916 bytes; the two have `filter.list` and
+  `export.list_presets`. A five clip project now costs 1465 bytes and an
+  empty one 151.
+- The project counts its changes and `state.get` publishes the count. `undo`
+  and `redo` take it back as `expected_revision` and refuse a step whose
+  revision no longer matches, reporting the current one so the caller
+  re-reads instead of guessing.
+- A save writes its document and its sidecar beside their final names and
+  moves them into place, and reports failure instead of answering ok: an
+  interrupted save leaves the previous project alone. The sidecar records the
+  size of the document it was written for, and a load that finds a different
+  document beside it skips the sidecar rather than grafting another write's
+  filters and ids onto these clips.
 
 ---
 

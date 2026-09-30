@@ -350,10 +350,13 @@ remaining backlog:
 - **Caption drawing**: `vedit.text` renders through Core Text, so on other
   platforms the filter attaches and reports success while drawing nothing.
 - **G5, two clients on one instance**: the goal describes the project as
-  collaborative, and G5 now states that as four checkable conditions. None
-  is met: the undo history is instance-wide and names no author, nothing
-  tells one client that the state it read has moved, and saving rewrites its
-  target in place. The blockers are listed with the attainment.
+  collaborative, and G5 states that as four checkable conditions. One
+  client's mutation is already visible to the other's next read, and saving
+  no longer publishes a half-written project or a project beside a sidecar
+  from a different write. A client that names the revision it read is
+  refused before stepping over a change it has not seen; one that names
+  nothing still can. Nothing records who made a change, so no client can be
+  told whose work an undo would touch.
 
 ---
 
