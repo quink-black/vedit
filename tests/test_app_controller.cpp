@@ -3274,6 +3274,8 @@ TEST_CASE("clip.set_fade_in and fade_out over RPC", "[t23]") {
     // Verify keyframes exist.
     auto result = app.filter_get_param_keyframes(cid, "brightness", "level");
     REQUIRE(result.contains("keyframes"));
+    size_t after_fade_in = result["keyframes"].size();
+    REQUIRE(after_fade_in >= 2);
 
     // Fade out via RPC.
     req = nlohmann::json{{"jsonrpc","2.0"},{"method","clip.set_fade_out"},
@@ -3282,6 +3284,12 @@ TEST_CASE("clip.set_fade_in and fade_out over RPC", "[t23]") {
                                       {"duration", 8}}}};
     resp = nlohmann::json::parse(d.handle_request(req.dump()));
     REQUIRE_FALSE(resp.contains("error"));
+
+    // The fade-out adds keyframes of its own at the tail, so the parameter
+    // now carries both fades rather than only the first.
+    result = app.filter_get_param_keyframes(cid, "brightness", "level");
+    REQUIRE(result.contains("keyframes"));
+    REQUIRE(result["keyframes"].size() > after_fade_in);
 }
 
 TEST_CASE("fade filters appear in state.get attached filters", "[t23]") {
