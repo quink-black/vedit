@@ -204,6 +204,37 @@ TEST_CASE("AppController library_remove reindexes remaining sources", "[t8]") {
     REQUIRE(app.project().library().item(0)->path == clipB);
 }
 
+TEST_CASE("a render of an empty timeline says so", "[t9][export]") {
+    std::string clip = make_test_clip("export_nothing");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    // An empty timeline used to hang: the consumer was run with nothing to
+    // encode and never returned (measured: over two minutes without
+    // finishing). It now answers before the consumer is pointed at anything.
+    vedit::AppController empty;
+    empty.library_import(clip);
+    empty.track_add(vedit::TrackKind::Video);
+    const std::string out_empty = unique_temp_path("vedit-test", "export_empty", ".mp4");
+    vedit::ExportService svc;
+    REQUIRE_FALSE(svc.render(*empty.project().producer(), empty.profile(), out_empty));
+}
+
+TEST_CASE("a render to an unopenable target says so", "[t9][export]") {
+    std::string clip = make_test_clip("export_nowrite");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    app.clip_append(v1, mi);
+
+    // A target that cannot be opened: frames may render, but there is no
+    // file to hand over, and the caller must not be told the export finished.
+    vedit::ExportService svc;
+    REQUIRE_FALSE(svc.render(*app.project().producer(), app.profile(),
+                             "/vedit-test-no-such-directory/out.mp4"));
+}
+
 TEST_CASE("ExportService renders a single-track timeline to MP4", "[t9][export]") {
     std::string clip = make_test_clip("export");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

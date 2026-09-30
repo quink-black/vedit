@@ -22,6 +22,10 @@ struct ExportProgressData {
     ExportService::ProgressFn* fn;
     ExportService::CancelFn* cancel;
     mlt_consumer consumer;
+    // Frames the encoder reported as rendered. Whether anything came out at
+    // all is the only part of a render's outcome MLT leaves accessible: the
+    // consumer reports no error to its caller.
+    int frames_rendered = 0;
 };
 
 // Static callback for the consumer-frame-show event during export.
@@ -37,9 +41,11 @@ void on_export_frame(mlt_consumer, void* ud, mlt_event_data data) {
         return;
     }
 
-    if (!pd->fn || !*pd->fn) return;
     Mlt::Frame frame = Mlt::EventData(data).to_frame();
     if (!frame.is_valid() || !frame.get_int("rendered")) return;
+    ++pd->frames_rendered;
+
+    if (!pd->fn || !*pd->fn) return;
     int pos = frame.get_position() - pd->start_frame;
     int total = pd->total;
     if (total > 0) {
@@ -54,6 +60,16 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
                            const nlohmann::json& params,
                            int64_t in_point, int64_t out_point,
                            CancelFn on_cancel) {
+    // Nothing to encode: running the consumer over an empty timeline never
+    // returns, so this is settled before the consumer exists. Measured on the
+    // code that lacked the check: get_playtime() and get_length() were both
+    // zero and the call sat for over two minutes.
+    if (producer.get_playtime() <= 0) {
+        Logger::log(Logger::Level::Error,
+                    "ExportService: the timeline has no frames to render");
+        return false;
+    }
+
     // Consumer ctor: profile, "avformat", output_path.
     Mlt::Consumer consumer(profile, "avformat", output_path.c_str());
     if (!consumer.is_valid()) {
@@ -123,16 +139,16 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     // Progress reporting via consumer-frame-show.
     // Re-read total in case producer.set("out", ...) changed it.
     int total2 = producer.get_length();
-    // The listener drives both progress reporting and cancellation, so
-    // it has to be attached whenever either callback was supplied.
+    // The listener counts rendered frames, reports progress and honours
+    // cancellation, so it is attached whether or not the caller asked to be
+    // told. Without it a render that emitted nothing looks like a success.
     ExportProgressData progress_data{total2, static_cast<int>(start_frame),
                                      &on_progress,
                                      on_cancel ? &on_cancel : nullptr,
-                                     consumer.get_consumer()};
-    if (on_progress || on_cancel) {
-        consumer.listen("consumer-frame-show", &progress_data,
-                        reinterpret_cast<mlt_listener>(on_export_frame));
-    }
+                                     consumer.get_consumer(),
+                                     0};
+    consumer.listen("consumer-frame-show", &progress_data,
+                    reinterpret_cast<mlt_listener>(on_export_frame));
 
     consumer.run();
     // run() returns when terminate_on_pause fires, but the avformat
@@ -142,6 +158,25 @@ bool ExportService::render(Mlt::Producer& producer, Mlt::Profile& profile,
     consumer.stop();
     // Restore the original out point if we modified it.
     if (orig_out >= 0) producer.set("out", orig_out);
+
+    // Nothing came back from the consumer to check, so the evidence is that
+    // frames were rendered and a file was left behind. A consumer that
+    // stopped early used to answer true and leave the caller with a short or
+    // empty file it believed was the finished export.
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(output_path, ec);
+    if (progress_data.frames_rendered == 0) {
+        Logger::log(Logger::Level::Error,
+                    "ExportService: no frame was rendered; the output is not "
+                    "an export");
+        return false;
+    }
+    if (ec || bytes == 0) {
+        Logger::log(Logger::Level::Error,
+                    "ExportService: frames were rendered but no output file "
+                    "is there to show for it");
+        return false;
+    }
     return true;
 }
 
@@ -194,6 +229,15 @@ bool ExportService::get_frame(Mlt::Producer& producer, Mlt::Profile& profile,
     consumer.run();
     consumer.stop();
     delete frame_cut;
+
+    // Same evidence as render(): the consumer says nothing, so the file has
+    // to be there.
+    std::error_code ec;
+    if (std::filesystem::file_size(image_path, ec) == 0 || ec) {
+        Logger::log(Logger::Level::Error,
+                    "ExportService: get_frame wrote no image");
+        return false;
+    }
     return true;
 }
 

@@ -379,7 +379,9 @@ int64_t AppController::export_start(const std::string& output_path,
             job->fraction.store(1.0);
         } else {
             std::lock_guard<std::mutex> lk(job->mu);
-            if (job->error.empty()) job->error = "render returned false";
+            if (job->error.empty())
+                job->error =
+                    "the exporter produced no usable output; see the vedit log";
             job->state.store(ExportService::JobState::Failed);
         }
     });

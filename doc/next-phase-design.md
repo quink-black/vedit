@@ -112,6 +112,14 @@ with a dated audit note. Each item is a commit on
   size of the document it was written for, and a load that finds a different
   document beside it skips the sidecar rather than grafting another write's
   filters and ids onto these clips.
+- A render is judged by what it produced. `render()` and `get_frame()` ended
+  in `return true` whatever happened, because the avformat consumer tells its
+  caller nothing: an export that stopped early, or wrote to a target it could
+  not open, came back done, and the window and `export.run` believed it. A
+  render now has to show frames the encoder reported and a non-empty file.
+  Exporting an empty timeline, which used to never return (measured: over two
+  minutes, with `get_playtime()` and `get_length()` both zero), is refused
+  before the consumer exists.
 
 ---
 
