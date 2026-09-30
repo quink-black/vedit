@@ -189,8 +189,29 @@ public:
     // snapshot recorded, so a handle stays usable across undo and redo.
     bool can_undo() const;
     bool can_redo() const;
-    bool undo();
-    bool redo();
+
+    // The project's change counter, published in state.get and passed back
+    // to step_back/step_forward. See ProjectModel::revision().
+    int64_t revision() const { return project_->revision(); }
+
+    // What a history step did. conflict means the caller named the revision
+    // it had read and the project has moved since, so the step was refused
+    // instead of silently stepping back over the change that moved it.
+    enum class HistoryStep { ok, nothing_to_do, conflict };
+
+    // Revision an expectation can be waived with.
+    static constexpr int64_t kAnyRevision = -1;
+
+    // Step back to, or forward to, the neighbouring snapshot. An
+    // expected_revision other than kAnyRevision is refused with conflict
+    // when it no longer matches the project.
+    HistoryStep step_back(int64_t expected_revision = kAnyRevision);
+    HistoryStep step_forward(int64_t expected_revision = kAnyRevision);
+
+    // Unchecked steps, as the GUI menu and any caller without a revision to
+    // name use them.
+    bool undo() { return step_back() == HistoryStep::ok; }
+    bool redo() { return step_forward() == HistoryStep::ok; }
 
 private:
     void record_history();

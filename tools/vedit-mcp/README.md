@@ -68,7 +68,7 @@ Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if t
 | `get_geometry` | Get the current per-clip geometry: position and size as percentages (0-100). Returns defaults (0/0/100/100) when no geometry has been set on the clip. |
 | `get_instance_identity` | Report which vedit window the bridge is talking to: name, pid, socket path, and label. It repeats the handshake that discovery uses, so it confirms the target socket is a live vedit and shows whether VEDIT_PID took effect. Takes no parameters. |
 | `get_rotation` | Get the current per-clip rotation in degrees (clockwise). Returns degrees, and 0.0 when no rotation has been set on the clip. clip_id comes from get_state.tracks[].clips[].id. |
-| `get_state` | Snapshot the active vedit instance: identity, profile, library (imported media with width/height/frames), tracks, clips per track, transitions, and the filters attached to clips and tracks. Always start here before issuing any modifying call -- clip ids and track ids come from this snapshot. The filter catalogue and the export presets are not part of it; call list_filters and export_list_presets. |
+| `get_state` | Snapshot the active vedit instance: identity, revision, profile, library (imported media with width/height/frames), tracks, clips per track, transitions, and the filters attached to clips and tracks. Always start here before issuing any modifying call -- clip ids and track ids come from this snapshot, and the revision goes to undo and redo as expected_revision. The filter catalogue and the export presets are not part of it; call list_filters and export_list_presets. |
 | `import_media` | Import one media file (video/audio/image) into the project library. Same code path as the GUI File > Import. Returns the media index to use in later clip.append / clip.insert calls. |
 | `insert_clip` | Insert a clip at a specific timeline position on a track, padding with blank if past the current end. Returns the new clip_id. |
 | `lift_clip` | Remove a clip and close the gap (ripple delete). Shifts later clips left to fill the space. |
@@ -81,7 +81,7 @@ Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if t
 | `pause` | Pause playback. |
 | `play` | Start playback from the current position. |
 | `project_new` | Clear the current timeline and media library to start a fresh project. All clips, tracks, and imports are discarded. Call this before building a new timeline from scratch. |
-| `redo` | Redo the last undone change. This drives the instance's whole undo history -- the same one the GUI Edit menu walks -- not a history kept per MCP client, so a step can also return an edit the user made in the window. Fails when there is nothing to redo. Takes no parameters. |
+| `redo` | Redo the last undone change. This drives the instance's whole undo history -- the same one the GUI Edit menu walks -- not a history kept per MCP client, so a step can also return an edit the user made in the window. Fails when there is nothing to redo. Optional expected_revision (the revision from get_state) refuses the step when the project changed since that read. |
 | `remove_clip` | Remove a clip from the timeline. clip_id comes from get_state.tracks[].clips[].id. |
 | `remove_filter` | Remove a filter from a clip or track. |
 | `remove_media` | Remove a media item from the library. Refuses if any clip on the timeline still references it. |
@@ -105,7 +105,7 @@ Generated from the tool definitions in `vedit_mcp_server.py`; `ctest` fails if t
 | `set_video_enabled` | Enable or disable the video stream on a clip. When disabled the clip shows black in preview and export but stays in the timeline. |
 | `split_clip` | Split a clip at a timeline position, producing two clips. The original clip becomes the left half; returns the new (right) clip_id. |
 | `trim_clip` | Set a clip's in and out points (frames). Both are source-frame numbers, not timeline positions. |
-| `undo` | Undo the last change. This drives the instance's whole undo history -- the same one the GUI Edit menu walks -- not a history kept per MCP client, so it can also step back an edit the user made in the window. The step restores the clip and track ids its snapshot recorded, so a handle already held stays valid. Fails when the history is empty. Takes no parameters. |
+| `undo` | Undo the last change. This drives the instance's whole undo history -- the same one the GUI Edit menu walks -- not a history kept per MCP client, so it can also step back an edit the user made in the window. The step restores the clip and track ids its snapshot recorded, so a handle already held stays valid. Fails when the history is empty. Optional expected_revision (the revision from get_state) refuses the step when the project changed since that read; the error then reports the current revision. |
 
 ## Pinning a specific instance
 

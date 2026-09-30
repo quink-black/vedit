@@ -192,14 +192,15 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_state",
             description=(
-                "Snapshot the active vedit instance: identity, profile, "
-                "library (imported media with width/height/frames), tracks, "
-                "clips per track, transitions, and the filters attached to "
-                "clips and tracks. Always start here before issuing any "
-                "modifying call -- clip ids and track ids come from this "
-                "snapshot. The filter catalogue and the export presets are "
-                "not part of it; call list_filters and "
-                "export_list_presets."
+                "Snapshot the active vedit instance: identity, revision, "
+                "profile, library (imported media with width/height/" 
+                "frames), tracks, clips per track, transitions, and the "
+                "filters attached to clips and tracks. Always start here "
+                "before issuing any modifying call -- clip ids and track "
+                "ids come from this snapshot, and the revision goes to "
+                "undo and redo as expected_revision. The filter "
+                "catalogue and the export presets are not part of it; "
+                "call list_filters and export_list_presets."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
@@ -1193,11 +1194,25 @@ async def list_tools() -> list[Tool]:
                 "walks the instance's whole undo history -- the same one "
                 "the GUI Edit menu walks -- not a history kept per MCP "
                 "client, so it also steps back edits the user made in "
-                "the window. Returns ok; errors when the history is "
-                "empty. Clip and track ids restored by the step are the "
-                "ones the snapshot recorded."
+                "the window. Returns ok and the new revision; errors "
+                "when the history is empty. Clip and track ids restored "
+                "by the step are the ones the snapshot recorded. Pass "
+                "the revision read from get_state as expected_revision "
+                "to refuse the step when the project changed since that "
+                "read; the error then carries the current revision."
             ),
-            inputSchema={"type": "object", "properties": {}},
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "expected_revision": {
+                        "type": "integer",
+                        "description": (
+                            "Revision from get_state. Refuses the step "
+                            "if the project changed since."
+                        ),
+                    },
+                },
+            },
         ),
         Tool(
             name="redo",
@@ -1205,9 +1220,23 @@ async def list_tools() -> list[Tool]:
                 "Redo the last undone change in the active vedit "
                 "instance. Like undo, this drives the instance's whole "
                 "undo history rather than a history kept per MCP client. "
-                "Returns ok; errors when there is nothing to redo."
+                "Returns ok and the new revision; errors when there is "
+                "nothing to redo. Like undo, accepts expected_revision "
+                "to refuse the step when the project changed since the "
+                "state was read."
             ),
-            inputSchema={"type": "object", "properties": {}},
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "expected_revision": {
+                        "type": "integer",
+                        "description": (
+                            "Revision from get_state. Refuses the step "
+                            "if the project changed since."
+                        ),
+                    },
+                },
+            },
         ),
         # ---- Export management ----
         Tool(

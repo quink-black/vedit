@@ -20,6 +20,16 @@ public:
     ~ProjectModel();
 
     Mlt::Profile& profile() { return profile_; }
+
+    // How many times the project has changed, counting a restore as a
+    // change. A second client reads it with state.get and passes it back to
+    // undo or redo, which is how it finds out that someone else moved the
+    // project out from under it instead of silently stepping over that
+    // work. It is not a version number for the file on disk and says nothing
+    // about who made the change.
+    int64_t revision() const { return revision_; }
+    void bump_revision() { ++revision_; }
+    void set_revision(int64_t value) { revision_ = value; }
     MediaLibrary& library() { return *library_; }
     TimelineModel& timeline() { return *timeline_; }
     PlayerController& player() { return *player_; }
@@ -41,6 +51,7 @@ public:
 
 private:
     Mlt::Profile profile_;
+    int64_t revision_ = 0;
     bool profile_user_set_ = false;
     std::unique_ptr<MediaLibrary> library_;
     std::unique_ptr<TimelineModel> timeline_;

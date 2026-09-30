@@ -28,6 +28,35 @@
 
 namespace vedit::rpc {
 
+namespace {
+
+// One step along the shared history, applying the revision check the caller
+// asked for. A free function because a registered handler outlives
+// register_methods, so it must not point at anything declared inside it.
+nlohmann::json history_step(vedit::AppController& app, bool forward,
+                            const nlohmann::json& params) {
+    int64_t expected = vedit::AppController::kAnyRevision;
+    if (params.contains("expected_revision")) {
+        if (!params["expected_revision"].is_number_integer())
+            throw RpcException(ErrorCode::InvalidParams,
+                               "expected_revision must be an integer");
+        expected = params["expected_revision"].get<int64_t>();
+    }
+    auto step = forward ? app.step_forward(expected) : app.step_back(expected);
+    if (step == vedit::AppController::HistoryStep::conflict)
+        throw RpcException(ErrorCode::ApplicationError,
+                           "project changed since the revision given; "
+                           "re-read state.get",
+                           nlohmann::json{{"revision", app.revision()},
+                                          {"expected", expected}});
+    if (step == vedit::AppController::HistoryStep::nothing_to_do)
+        throw RpcException(ErrorCode::ApplicationError,
+                           forward ? "nothing to redo" : "nothing to undo");
+    return nlohmann::json{{"ok", true}, {"revision", app.revision()}};
+}
+
+}  // namespace
+
 void register_methods(Dispatcher& d, AppController& app) {
     // ---- app.identity ----
     //
@@ -703,16 +732,19 @@ void register_methods(Dispatcher& d, AppController& app) {
     // Same history the GUI drives, because both go through AppController.
     // A restore puts back the clip and track ids the snapshot recorded, so
     // a handle the caller holds stays valid across the step.
-    d.register_method("undo", [&](const nlohmann::json&) {
-        if (!app.undo())
-            throw RpcException(ErrorCode::ApplicationError, "nothing to undo");
-        return nlohmann::json{{"ok", true}};
+    //
+    // The history is one chain for the whole instance, so a step taken here
+    // also steps back what the user did in the window and what any other
+    // client did. A caller that knows which revision it read can pass it as
+    // expected_revision: if the project has moved since, the step is refused
+    // and the current revision comes back in the error data, which is the
+    // caller's cue to re-read instead of guessing.
+    d.register_method("undo", [&](const nlohmann::json& params) {
+        return history_step(app, false, params);
     });
 
-    d.register_method("redo", [&](const nlohmann::json&) {
-        if (!app.redo())
-            throw RpcException(ErrorCode::ApplicationError, "nothing to redo");
-        return nlohmann::json{{"ok", true}};
+    d.register_method("redo", [&](const nlohmann::json& params) {
+        return history_step(app, true, params);
     });
 
     // ---- project.new / project.save / project.open ----

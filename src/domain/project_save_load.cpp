@@ -301,6 +301,11 @@ std::string ProjectSaveLoad::state_json(ProjectModel& project) {
     nlohmann::json doc;
     doc["project"] = "vedit";
 
+    // Changes and history steps move this. A client that read the state
+    // passes it back as expected_revision to undo/redo, which is how a
+    // second client learns its view is stale instead of overwriting work.
+    doc["revision"] = project.revision();
+
     // Profile (canvas dimensions). Agent needs this to know the
     // current output resolution before positioning clips.
     doc["profile"] = nlohmann::json{

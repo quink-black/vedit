@@ -229,8 +229,8 @@ resolved by `vedit::default_socket_path()` in
 | `project.open` | `path` | Load a project from MLT XML |
 | `project.save` | `path` | Save the project to MLT XML |
 | `project.set_profile` | `width`, `height`, `fps` | Set canvas size and frame rate |
-| `redo` | — | Redo the last undone change |
-| `state.get` | — | Project view: profile, library, tracks, clips, transitions, attached filters |
+| `redo` | `expected_revision?` | Redo the last undone change |
+| `state.get` | — | Project view: revision, profile, library, tracks, clips, transitions, attached filters |
 | `track.add` | `kind`, `name` | Add a track |
 | `track.get_composite_geometry` | `track_id` | Read a track's canvas placement |
 | `track.remove` | `track_id` | Remove a track and its clips |
@@ -239,7 +239,7 @@ resolved by `vedit::default_socket_path()` in
 | `track.set_muted` | `track_id`, `muted` | Mute or unmute a track |
 | `transition.add` | `track_id`, `clip_index`, `length`, `type` | Add a transition between adjacent clips |
 | `transition.list_types` | — | List available transition types |
-| `undo` | — | Undo the last change |
+| `undo` | `expected_revision?` | Undo the last change; refuses if the project moved past the revision given |
 | `view.screenshot` | `path` | Render the frame under the playhead |
 
 ### Example (Python)

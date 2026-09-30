@@ -2742,6 +2742,62 @@ TEST_CASE("vedit.text draws real glyphs and honours its range", "[text]") {
     REQUIRE(inside != blank);
 }
 
+TEST_CASE("undo refuses to step over a change it has not seen", "[t18]") {
+    std::string clip = vedit::test::make_test_clip("undo_revision");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    // Two connections on one instance, which is the shape of a user in the
+    // window and an agent on RPC editing the same project.
+    vedit::rpc::Dispatcher a, b;
+    vedit::rpc::register_methods(a, app);
+    vedit::rpc::register_methods(b, app);
+    auto call = [](vedit::rpc::Dispatcher& d, const char* method,
+                   nlohmann::json params) {
+        nlohmann::json req = {{"jsonrpc","2.0"},{"method",method},{"id",1},
+                              {"params",std::move(params)}};
+        return nlohmann::json::parse(d.handle_request(req.dump()));
+    };
+    auto clips = [&]() { return app.project().timeline().clip_count(); };
+
+    const int64_t seen_by_a = app.revision();
+    call(a, "clip.append", {{"track_id", v1.value}, {"media_index", mi},
+                            {"in", 0}, {"out", 10}});
+    REQUIRE(clips() == 2);
+
+    // B changes the project after A read it.
+    call(b, "clip.append", {{"track_id", v1.value}, {"media_index", mi},
+                            {"in", 0}, {"out", 10}});
+    REQUIRE(clips() == 3);
+
+    // A steps back naming the revision it read: refused, because the project
+    // has moved, and the refusal carries the revision to re-read at.
+    auto stale = call(a, "undo", {{"expected_revision", seen_by_a}});
+    REQUIRE(stale.contains("error"));
+    REQUIRE(stale["error"]["data"]["revision"].get<int64_t>() == app.revision());
+    REQUIRE(stale["error"]["data"]["expected"].get<int64_t>() == seen_by_a);
+    REQUIRE(clips() == 3);
+
+    // Having re-read, A's step goes through. Note which change it steps
+    // over: the history records no author, so the guard makes the caller look
+    // before it acts, and naming who made each change is still open.
+    auto state = call(a, "state.get", nlohmann::json::object());
+    const int64_t now = state["result"]["revision"].get<int64_t>();
+    auto fresh = call(a, "undo", {{"expected_revision", now}});
+    REQUIRE_FALSE(fresh.contains("error"));
+    REQUIRE(fresh["result"]["revision"].get<int64_t>() == app.revision());
+    REQUIRE(clips() == 2);
+
+    // A caller that names no revision is not refused, so the GUI menu and
+    // any single client keep behaving as before.
+    REQUIRE(app.undo());
+    REQUIRE(clips() == 1);
+}
+
 TEST_CASE("undo and redo restore timeline state", "[t18]") {
     std::string clip = vedit::test::make_test_clip("undo");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

@@ -608,6 +608,7 @@ void AppController::record_history() {
     }
     history_.push_back(std::move(path));
     history_pos_ = static_cast<int>(history_.size()) - 1;
+    project_->bump_revision();
 }
 
 void AppController::clear_history() {
@@ -624,8 +625,11 @@ bool AppController::can_redo() const {
     return !restoring_ && history_pos_ < static_cast<int>(history_.size()) - 1;
 }
 
-bool AppController::undo() {
-    if (!can_undo()) return false;
+AppController::HistoryStep AppController::step_back(int64_t expected_revision) {
+    if (expected_revision != kAnyRevision &&
+        expected_revision != project_->revision())
+        return HistoryStep::conflict;
+    if (!can_undo()) return HistoryStep::nothing_to_do;
     restoring_ = true;
     --history_pos_;
     bool ok = restore_snapshot(history_[history_pos_]);
@@ -634,18 +638,27 @@ bool AppController::undo() {
     // the preview, not to record the restored state as a new mutation.
     player_->refresh();
     restoring_ = false;
-    return ok;
+    if (!ok) return HistoryStep::nothing_to_do;
+    // The step is itself a change other clients must see, and it has to
+    // invalidate the revision every one of them read before it.
+    project_->bump_revision();
+    return HistoryStep::ok;
 }
 
-bool AppController::redo() {
-    if (!can_redo()) return false;
+AppController::HistoryStep AppController::step_forward(int64_t expected_revision) {
+    if (expected_revision != kAnyRevision &&
+        expected_revision != project_->revision())
+        return HistoryStep::conflict;
+    if (!can_redo()) return HistoryStep::nothing_to_do;
     restoring_ = true;
     ++history_pos_;
     bool ok = restore_snapshot(history_[history_pos_]);
     if (!ok) --history_pos_;
     player_->refresh();
     restoring_ = false;
-    return ok;
+    if (!ok) return HistoryStep::nothing_to_do;
+    project_->bump_revision();
+    return HistoryStep::ok;
 }
 
 void AppController::project_new() {
