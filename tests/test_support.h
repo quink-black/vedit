@@ -112,9 +112,8 @@ inline std::string make_test_clip_sized(const std::string& tag,
 
 // Build a clip with one video + two audio streams (stereo sine + 5.1
 // sine). Used by multi-stream selection tests. Returns "" on failure.
-// Falls back to a system sample if VEDIT_MULTI_STREAM_SAMPLE is set
-// (e.g. pointing at /home/quink/minipc/quink/video/bunny.mp4 for
-// interactive verification).
+// Set VEDIT_MULTI_STREAM_SAMPLE to a file with more than one audio stream
+// to run these cases against real material instead of the generated clip.
 inline std::string make_test_clip_multistream(const std::string& tag) {
     const char* sample = std::getenv("VEDIT_MULTI_STREAM_SAMPLE");
     if (sample && sample[0]) {
