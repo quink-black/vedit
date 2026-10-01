@@ -204,6 +204,44 @@ TEST_CASE("AppController library_remove reindexes remaining sources", "[t8]") {
     REQUIRE(app.project().library().item(0)->path == clipB);
 }
 
+TEST_CASE("a save that cannot write its record publishes nothing", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("publish");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, mi);
+    REQUIRE(cid.valid());
+    REQUIRE(app.filter_add(cid, "brightness"));
+
+    const std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "publish", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    // Fault: the record's staging name is a directory, so the record cannot be
+    // written at all.
+    const std::string blocked =
+        vedit::ProjectSaveLoad::sidecar_path(path) + ".tmp";
+    std::error_code ec;
+    REQUIRE(std::filesystem::create_directories(blocked, ec));
+
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(v2.valid());
+    REQUIRE_FALSE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+    std::filesystem::remove_all(blocked, ec);
+
+    // What is on disk is still the first save: the second one neither replaced
+    // the document nor deleted the record that belonged to it.
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    REQUIRE(reopened.project().timeline().track_count() == 1);
+    int brightness = 0;
+    for (const auto& f : reopened.project().timeline().attached_filters())
+        if (f.filter_name == "brightness") ++brightness;
+    REQUIRE(brightness == 1);
+}
+
 TEST_CASE("an opened project keeps the media it had imported but not placed", "[t10]") {
     std::string a = make_test_clip("carry_a");
     std::string b = make_test_clip("carry_b");

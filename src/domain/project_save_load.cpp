@@ -297,20 +297,11 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
                     "previous project kept");
         return false;
     }
-
-    std::filesystem::rename(staged, normalized, ec);
-    if (ec) {
-        std::filesystem::remove(staged, ec);
-        const std::string msg =
-            "ProjectSaveLoad: cannot put the new project in place: " + ec.message();
-        Logger::log(Logger::Level::Error, msg.c_str());
-        return false;
-    }
-
-    // Record what MLT cannot carry. The sidecar is staged the same way and
-    // carries the size of the document it belongs to, which is what lets a
-    // later load notice it is beside some other save's document.
-    std::filesystem::remove(sidecar_path(normalized), ec);
+    // Record what MLT cannot carry, and stage it before anything is published.
+    // Publishing the document first used to mean that a sidecar which could not
+    // be written left the new project on disk with the old sidecar already
+    // deleted: the save lost the filters and ids of the project that was open,
+    // and still reported the project as saved one rename later.
     nlohmann::json sidecar = sidecar_for(project.timeline());
 
     // What the project has imported, not only what it has placed. Media with no
@@ -327,44 +318,65 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     }
     sidecar["library"] = std::move(media);
 
-    if (sidecar["clips"].empty() && sidecar["track_ids"].empty() &&
-        sidecar["library"].empty()) {
-        // Nothing to carry now, and a sidecar left from an earlier save to
-        // the same path would re-attach filters and ids this project does not
-        // have.
-        Logger::log(Logger::Level::Info, "ProjectSaveLoad: saved XML");
-        return true;
-    }
+    // A project with no clips, no ids to keep and no media has nothing to carry
+    // beside its document.
+    const bool carries =
+        !sidecar["clips"].empty() || !sidecar["track_ids"].empty() ||
+        !sidecar["library"].empty();
     sidecar["xml_bytes"] = xml_bytes;
 
     const std::string staged_sidecar = sidecar_path(normalized) + ".tmp";
-    bool written = false;
-    {
-        std::ofstream out(staged_sidecar);
-        if (out) out << sidecar.dump(2);
-        written = static_cast<bool>(out);
+    if (carries) {
+        bool written = false;
+        {
+            std::ofstream out(staged_sidecar);
+            if (out) out << sidecar.dump(2);
+            written = static_cast<bool>(out);
+        }
+        std::error_code sec;
+        const auto sidecar_bytes = std::filesystem::file_size(staged_sidecar, sec);
+        if (!written || sec || sidecar_bytes == 0) {
+            std::filesystem::remove(staged_sidecar, sec);
+            std::filesystem::remove(staged, ec);
+            Logger::log(Logger::Level::Error,
+                        "ProjectSaveLoad: sidecar not written, nothing was "
+                        "published and the previous project is intact");
+            return false;
+        }
     }
-    const auto sidecar_bytes = std::filesystem::file_size(staged_sidecar, ec);
-    if (!written || ec || sidecar_bytes == 0) {
-        std::filesystem::remove(staged_sidecar, ec);
-        Logger::log(Logger::Level::Error,
-                    "ProjectSaveLoad: sidecar not written, filters and saved "
-                    "ids will not come back");
-        return false;
-    }
-    std::filesystem::rename(staged_sidecar, sidecar_path(normalized), ec);
+
+    // Both files are complete on disk. Publish them. A crash between these two
+    // renames leaves the new document beside the previous sidecar, which the
+    // recorded size catches and the load then skips, losing the carried
+    // entries rather than misattaching another save's.
+    std::filesystem::rename(staged, normalized, ec);
     if (ec) {
+        std::filesystem::remove(staged, ec);
         std::filesystem::remove(staged_sidecar, ec);
         const std::string msg =
-            "ProjectSaveLoad: cannot put the sidecar in place: " + ec.message();
+            "ProjectSaveLoad: cannot put the new project in place: " + ec.message();
         Logger::log(Logger::Level::Error, msg.c_str());
         return false;
+    }
+
+    if (carries) {
+        std::filesystem::rename(staged_sidecar, sidecar_path(normalized), ec);
+        if (ec) {
+            std::filesystem::remove(staged_sidecar, ec);
+            const std::string msg =
+                "ProjectSaveLoad: cannot put the sidecar in place: " + ec.message();
+            Logger::log(Logger::Level::Error, msg.c_str());
+            return false;
+        }
+    } else {
+        // Nothing to carry, but a sidecar left from an earlier save to the same
+        // path would re-attach filters and ids this project does not have.
+        std::filesystem::remove(sidecar_path(normalized), ec);
     }
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: saved XML");
     return true;
 }
-
 bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
     // Normalize to forward slashes (see save_xml above).
     std::string normalized = path;
@@ -376,6 +388,7 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
         Logger::log(Logger::Level::Error, "ProjectSaveLoad: invalid XML file");
         return false;
     }
+
 
     // Adopt the loaded graph as-is. Rebuilding the tracks from the
     // library instead kept only clip in/out points and dropped every
