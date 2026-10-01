@@ -252,6 +252,28 @@ void apply_sidecar(const nlohmann::json& doc, TimelineModel& tl) {
     }
 }
 
+// Imports the sources the record lists, in the order it lists them, into a
+// library that is expected to be empty. A clip names its source by its position
+// in the library, so the order is the state, not an arrangement: importing what
+// a clip plays while adopting the graph and the rest afterwards puts the placed
+// sources first and moves the positions the clips name. Import deduplicates by
+// path, so the graph adopted next finds each of its sources already in the slot
+// the project had given it.
+void import_recorded_library(ProjectModel& project,
+                            const nlohmann::json& sidecar) {
+    if (!sidecar.contains("library")) return;
+    for (const auto& entry : sidecar["library"]) {
+        const std::string path = entry.value("path", "");
+        if (path.empty()) continue;
+        if (project.library().import(path, entry.value("video_index", -1),
+                                    entry.value("audio_index", -1)) < 0) {
+            Logger::log(Logger::Level::Warn,
+                        "ProjectSaveLoad: a media item the project had "
+                        "imported could not be imported again");
+        }
+    }
+}
+
 } // namespace
 
 std::string ProjectSaveLoad::sidecar_path(const std::string& xml_path) {
@@ -290,15 +312,29 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     consumer.run();
 
     // Nothing comes back from run() to check, so the staged file is the
-    // evidence: no file or an empty one means the save did not happen.
+    // evidence: no file or an empty one means the save did not happen -- unless
+    // the project has no tracks, which is the one state MLT writes no document
+    // for. That state is real and has to be reachable again, so it is written as
+    // an empty document and the record beside it carries what the project held.
     std::error_code ec;
-    const auto xml_bytes = std::filesystem::file_size(staged, ec);
-    if (ec || xml_bytes == 0) {
+    const bool trackless = project.timeline().track_count() == 0;
+    auto xml_bytes = std::filesystem::file_size(staged, ec);
+    if (ec || (xml_bytes == 0 && !trackless)) {
         std::filesystem::remove(staged, ec);
         Logger::log(Logger::Level::Error,
                     "ProjectSaveLoad: staged write produced nothing, "
                     "previous project kept");
         return false;
+    }
+    if (xml_bytes == 0) {
+        std::filesystem::remove(staged, ec);
+        std::ofstream empty(staged, std::ios::binary);
+        if (!empty) {
+            Logger::log(Logger::Level::Error,
+                        "ProjectSaveLoad: cannot stage an empty project");
+            return false;
+        }
+        empty.close();
     }
     // Record what MLT cannot carry, and stage it before anything is published.
     // Publishing the document first used to mean that a sidecar which could not
@@ -386,6 +422,27 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
 
     // Deserialize the XML into a temporary producer.
+    std::error_code size_ec;
+    const std::uintmax_t document_bytes =
+        std::filesystem::file_size(normalized, size_ec);
+    if (!size_ec && document_bytes == 0) {
+        // An empty document is a saved project with no tracks -- its content is
+        // the record beside it. An empty file with no record to go with it is a
+        // write that stopped early, and that is reported as what it is.
+        const nlohmann::json record =
+            read_sidecar(sidecar_path(normalized), normalized);
+        if (record.empty()) {
+            Logger::log(Logger::Level::Error,
+                        "ProjectSaveLoad: empty document with no record beside "
+                        "it, cannot tell an empty project from a truncated one");
+            return false;
+        }
+        restore_empty(project, normalized);
+        Logger::log(Logger::Level::Info,
+                    "ProjectSaveLoad: loaded an empty timeline");
+        return true;
+    }
+
     Mlt::Producer loaded(project.profile(), "xml", normalized.c_str());
     if (!loaded.is_valid()) {
         Logger::log(Logger::Level::Error, "ProjectSaveLoad: invalid XML file");
@@ -411,28 +468,11 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
     }
     project.library().clear();
 
-    // The record lists the sources in the order the project held them, and a
-    // clip names its source by that order, so the list is imported before the
-    // graph: import deduplicates by path, so what is adopted below finds each of
-    // its sources already in the slot the project had given it. Adding them
-    // after the adoption, which is what a load used to do, put the placed
-    // sources first and moved the positions the clips name -- a clip then
-    // carried the path it plays but reported the position of another source.
+    // The record lists the sources in the order the project held them, so it is
+    // read and imported before the graph; see import_recorded_library.
     const nlohmann::json sidecar =
         read_sidecar(sidecar_path(normalized), normalized);
-    if (sidecar.contains("library")) {
-        for (const auto& entry : sidecar["library"]) {
-            const std::string media_path = entry.value("path", "");
-            if (media_path.empty()) continue;
-            if (project.library().import(
-                    media_path, entry.value("video_index", -1),
-                    entry.value("audio_index", -1)) < 0) {
-                Logger::log(Logger::Level::Warn,
-                            "ProjectSaveLoad: a media item the project had "
-                            "imported could not be imported again");
-            }
-        }
-    }
+    import_recorded_library(project, sidecar);
 
     // Adopt the loaded graph as-is. Rebuilding the tracks from the
     // library instead kept only clip in/out points and dropped every
@@ -447,6 +487,21 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: loaded XML");
     return true;
+}
+
+void ProjectSaveLoad::restore_empty(ProjectModel& project,
+                                    const std::string& path) {
+    // MLT's XML consumer writes no document at all for a tractor with no tracks,
+    // so a snapshot with nothing in the timeline is a missing or empty file. What
+    // that state held is not nothing: sources may have been imported and left
+    // unplaced, and the record beside the document is the only place they are
+    // written down. Restoring the state therefore empties the timeline, empties
+    // the library, and puts back what the record lists.
+    auto& tl = project.timeline();
+    while (tl.track_count() > 0) tl.remove_track(tl.tracks()[0].id);
+    project.library().clear();
+    import_recorded_library(project,
+                            read_sidecar(sidecar_path(path), path));
 }
 
 std::string ProjectSaveLoad::state_json(ProjectModel& project) {

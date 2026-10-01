@@ -29,6 +29,12 @@ public:
     // leaves the open project untouched, library included.
     static bool load_xml(ProjectModel& project, const std::string& path);
 
+    // Restore a state whose document is empty because the project had no
+    // tracks: the timeline is emptied and the library is rebuilt from the record
+    // beside the document, which is the only place the sources imported at that
+    // point are written down.
+    static void restore_empty(ProjectModel& project, const std::string& path);
+
     // Path of the file that travels beside the XML and carries what the
     // document cannot: per-clip filters with their parameters and keyframes,
     // the ids the timeline held, and the media the project had imported. The
