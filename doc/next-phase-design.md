@@ -130,6 +130,16 @@ with a dated audit note. Each item is a commit on
   in the document, so a reopened project could not place it at all without a
   path the caller had to supply; the sidecar now records what the library
   holds, and a load adds those items to the index the document rebuilt.
+- The end-to-end scenario `tools/vedit-mcp/auto_edit.py` was run against a live
+  instance at the head of this work and passes: import, two tracks, split,
+  trim, save, export, probe.
+- Four operations stay outside undo history for a reason now measured rather
+  than assumed: `library_import` and `library_remove` change only the library,
+  and a restore adds to the index without removing from it, so an undo of a
+  removal could not be honoured as things stand; `profile_set` reaches no
+  refresh, and history is recorded from the refresh -- the profile itself does
+  survive a save and open, measured, so recording the step is what is missing,
+  not the means to restore it; `clip_analyze_track` also reaches no refresh.
 
 ---
 
@@ -556,10 +566,11 @@ worked around, per R2.
 
 **M5 agent workflow: DONE as a checked end-to-end scenario.** The audit
 flagged `auto_edit.py` as unverified, with a docstring claiming it drove
-"JSON-RPC / MCP" when it only ever spoke RPC. It has now been run
-against a live instance and passes: RESULT: PASS, exit 0, a 146877-byte
-MP4 carrying h264 640x360 and aac at 2.453 s, plus an 8064-byte project
-XML. The docstring now says it speaks RPC rather than MCP, and records
+"JSON-RPC / MCP" when it only ever spoke RPC. It has been run against a live
+instance and passes: RESULT: PASS, exit 0, an MP4 carrying h264 640x360 and
+aac at 2.453 s, plus a project XML. No byte count is quoted, because the
+exported size follows the sources and a quoted figure cannot be re-measured
+without them. The docstring says it speaks RPC rather than MCP, and records
 that the run needs sources of at least 60 frames -- the clips in
 `tests/data` have only 50, which is why the scenario had never been
 exercised. The MCP README documents how to run it and the last result.

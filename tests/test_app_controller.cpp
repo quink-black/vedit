@@ -234,6 +234,30 @@ TEST_CASE("an opened project keeps the media it had imported but not placed", "[
     REQUIRE(ia == 0);
 }
 
+TEST_CASE("the output profile survives a save and open", "[t10]") {
+    std::string clip = make_test_clip("profile_roundtrip");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, 0).valid());
+    app.profile_set(1280, 720, 30.0);
+
+    const std::string path = unique_temp_path("vedit-test", "profile", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    // Measured on its own, in a process that has opened nothing else: a project
+    // constructed before the file is opened reports MLT's default 720x576@25,
+    // so the values below can only come from the document.
+
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    REQUIRE(reopened.profile().width() == 1280);
+    REQUIRE(reopened.profile().height() == 720);
+    REQUIRE(reopened.profile().fps() == 30.0);
+}
+
 TEST_CASE("a render of an empty timeline says so", "[t9][export]") {
     std::string clip = make_test_clip("export_nothing");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }

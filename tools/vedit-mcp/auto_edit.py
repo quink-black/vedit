@@ -9,10 +9,11 @@ every call here has an MCP tool of the same name.
 Exercises the full edit pipeline (import, multi-track timeline, split,
 trim, save, export) and probes the exported file.
 
-Verified 2026-09-11 against a live instance with two 125-frame sources:
-RESULT: PASS, exit 0, 146877-byte MP4 carrying h264 640x360 and aac,
-duration 2.453 s, plus an 8064-byte project XML. The script needs
-sources of at least 60 frames; the short clips in tests/data have only
+Verified 2026-10-01 against a live instance: RESULT: PASS, exit 0, an
+MP4 carrying h264 640x360 and aac at 2.453 s, plus a project XML. The
+exported size depends on the sources, so nothing here pins a byte count --
+the script probes the container and reports the size it got. The script
+needs sources of at least 60 frames; the short clips in tests/data have only
 50, so generate longer ones before running it.
 
 Scenario:
