@@ -104,8 +104,19 @@ void restore_ids(const nlohmann::json& doc, TimelineModel& tl) {
             if (ok) parked.push_back({temp, wanted});
         }
         for (const auto& [temp, wanted] : parked) {
-            if (clip) tl.assign_clip_id(ClipId{temp}, ClipId{wanted});
-            else tl.assign_track_id(TrackId{temp}, TrackId{wanted});
+            const bool placed =
+                clip ? tl.assign_clip_id(ClipId{temp}, ClipId{wanted})
+                     : tl.assign_track_id(TrackId{temp}, TrackId{wanted});
+            if (placed) continue;
+            // The entry keeps the id it was parked under, above the high-water
+            // mark, so it is visible as an unexpected id rather than pointing at
+            // something else: the filters addressed by the recorded id find no
+            // clip. Reachable only when a record lists one id twice.
+            const std::string msg =
+                std::string("ProjectSaveLoad: cannot put back the ") +
+                (clip ? "clip" : "track") + " id " + std::to_string(wanted) +
+                "; it stays at " + std::to_string(temp);
+            Logger::log(Logger::Level::Warn, msg.c_str());
         }
     };
 

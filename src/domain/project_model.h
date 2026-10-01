@@ -29,7 +29,6 @@ public:
     // about who made the change.
     int64_t revision() const { return revision_; }
     void bump_revision() { ++revision_; }
-    void set_revision(int64_t value) { revision_ = value; }
     MediaLibrary& library() { return *library_; }
     TimelineModel& timeline() { return *timeline_; }
     PlayerController& player() { return *player_; }
