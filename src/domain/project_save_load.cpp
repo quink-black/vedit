@@ -154,27 +154,28 @@ void restore_ids(const nlohmann::json& doc, TimelineModel& tl) {
     tl.reserve_ids(saved);
 }
 
-void apply_sidecar(const std::string& path, const std::string& xml_path,
-                   TimelineModel& tl, MediaLibrary& library) {
+// Reads the record that travels beside a document, or an empty object when
+// there is nothing usable in it. The record states the size of the document it
+// was written for: the two files are published one after the other, and a second
+// instance saving the same path can leave this record beside that other
+// document. Its entries are positions, so grafting them onto a timeline they
+// were not written for would put another project's filters on these clips; a
+// mismatch loses the record, which is loss the editor can see rather than
+// corruption it cannot.
+nlohmann::json read_sidecar(const std::string& path,
+                            const std::string& xml_path) {
     std::ifstream in(path);
-    if (!in) return;
+    if (!in) return {};
     nlohmann::json doc;
     try {
         in >> doc;
     } catch (const std::exception&) {
         Logger::log(Logger::Level::Warn,
                     "ProjectSaveLoad: unreadable sidecar, filters skipped");
-        return;
+        return {};
     }
-    if (!doc.contains("clips")) return;
+    if (!doc.contains("clips")) return {};
 
-    // The sidecar says how long the document it was written for was, because
-    // the two files are published one after the other and a second instance
-    // saving the same path can leave this sidecar beside that document. Its
-    // entries are positions, so grafting them onto a different timeline
-    // would put another project's filters on these clips; a mismatch loses
-    // the filters instead, which is loss the editor can see rather than
-    // corruption it cannot.
     if (doc.contains("xml_bytes")) {
         std::error_code ec;
         const auto bytes = std::filesystem::file_size(xml_path, ec);
@@ -182,28 +183,19 @@ void apply_sidecar(const std::string& path, const std::string& xml_path,
             Logger::log(Logger::Level::Warn,
                         "ProjectSaveLoad: sidecar does not belong to this "
                         "document, filters and saved ids skipped");
-            return;
+            return {};
         }
     }
-    restore_ids(doc, tl);
+    return doc;
+}
 
-    // Adopt already rebuilt the index from what is placed on the timeline, and
-    // each clip carries the position that import stamped into it, so this only
-    // adds the sources the project had imported but not yet used. Rebuilding
-    // the index in the order this record lists them would move the positions
-    // those clips point at.
-    if (doc.contains("library")) {
-        for (const auto& entry : doc["library"]) {
-            const std::string media_path = entry.value("path", "");
-            if (media_path.empty()) continue;
-            if (library.import(media_path, entry.value("video_index", -1),
-                               entry.value("audio_index", -1)) < 0) {
-                Logger::log(Logger::Level::Warn,
-                            "ProjectSaveLoad: a media item the project had "
-                            "imported could not be imported again");
-            }
-        }
-    }
+// Puts back what the document cannot carry: the ids the timeline held, the type
+// each transition was planted with, and the filters with their parameters and
+// keyframes. The sources the record lists are imported before the graph is
+// adopted, not here -- see ProjectSaveLoad::load_xml.
+void apply_sidecar(const nlohmann::json& doc, TimelineModel& tl) {
+    if (doc.empty()) return;
+    restore_ids(doc, tl);
 
     // Re-mark the restored mixes with the type they were planted with.
     if (doc.contains("transitions")) {
@@ -418,6 +410,30 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
         return false;
     }
     project.library().clear();
+
+    // The record lists the sources in the order the project held them, and a
+    // clip names its source by that order, so the list is imported before the
+    // graph: import deduplicates by path, so what is adopted below finds each of
+    // its sources already in the slot the project had given it. Adding them
+    // after the adoption, which is what a load used to do, put the placed
+    // sources first and moved the positions the clips name -- a clip then
+    // carried the path it plays but reported the position of another source.
+    const nlohmann::json sidecar =
+        read_sidecar(sidecar_path(normalized), normalized);
+    if (sidecar.contains("library")) {
+        for (const auto& entry : sidecar["library"]) {
+            const std::string media_path = entry.value("path", "");
+            if (media_path.empty()) continue;
+            if (project.library().import(
+                    media_path, entry.value("video_index", -1),
+                    entry.value("audio_index", -1)) < 0) {
+                Logger::log(Logger::Level::Warn,
+                            "ProjectSaveLoad: a media item the project had "
+                            "imported could not be imported again");
+            }
+        }
+    }
+
     // Adopt the loaded graph as-is. Rebuilding the tracks from the
     // library instead kept only clip in/out points and dropped every
     // filter, transition, keyframe, per-clip effect and blank.
@@ -427,8 +443,7 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
         return false;
     }
 
-    apply_sidecar(sidecar_path(normalized), normalized, project.timeline(),
-                  project.library());
+    apply_sidecar(sidecar, project.timeline());
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: loaded XML");
     return true;

@@ -334,6 +334,39 @@ TEST_CASE("the output profile survives a save and open", "[t10]") {
     REQUIRE(reopened.profile().fps() == 30.0);
 }
 
+TEST_CASE("a reopened project keeps the position each source had", "[t10]") {
+    // A placed source and an unplaced one, in an order where the unplaced one
+    // comes first. The position a clip names has to be the position that source
+    // had when the project was saved, not the position a reopen happens to
+    // import it at -- the document stamps the source's path, not its slot.
+    std::string first = vedit::test::make_test_clip("order_first");
+    std::string second = vedit::test::make_test_clip("order_second");
+    if (first.empty() || second.empty()) { FAIL("could not generate clips"); return; }
+
+    vedit::AppController app;
+    int unplaced = app.library_import(first);
+    int placed = app.library_import(second);
+    REQUIRE(unplaced == 0);
+    REQUIRE(placed == 1);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto cid = app.clip_append(v1, placed);
+    REQUIRE(cid.valid());
+
+    const std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "order", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    REQUIRE(reopened.library_count() == 2);
+    REQUIRE(reopened.library_item_path(0) == first);
+    REQUIRE(reopened.library_item_path(1) == second);
+
+    const auto* clip = reopened.project().timeline().clip(cid);
+    REQUIRE(clip != nullptr);
+    REQUIRE(clip->media_index == 1);
+}
+
 TEST_CASE("a render of an empty timeline says so", "[t9][export]") {
     std::string clip = make_test_clip("export_nothing");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
