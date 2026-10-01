@@ -67,7 +67,7 @@ percentage without one cannot be re-measured (R6).
 | Goal | Attainment | Denominator and blocker |
 |---|---|---|
 | G1 editing complete | **90%** | 10 steps of a typical chain, 8 fully usable. Partial: speed change (video correct, retimed audio export is the skipped case) and captions (Core Text, so nothing is drawn on other platforms). Still absent: ripple, snapping, drag & drop |
-| G2 lossless persistence | **16 of 19** | 19 state items, 16 survive a save and open. Lost: per-track composite geometry (the document carries the rect and compositing uses it; a reopened project has no handle to its composite transitions, because MLT 7 exports no transition enumeration, and the next track change resets the rect), media library per-item stream selection. Unverified: track hidden flag after load |
+| G2 lossless persistence | **18 of 19** | 19 state items, 18 survive a save and open and are pinned by cases in `tests/test_app_controller.cpp` -- including the media library's per-item stream selection and the track hidden flag, which shares its property with muted. Lost: per-track composite geometry (the document carries the rect and compositing uses it; a reopened project has no handle to its composite transitions, because MLT 7 exports no transition enumeration, and the next track change resets the rect) |
 | G3 channel equality | **80% GUI/RPC**, **100% RPC/MCP** | 61 capability methods in `AppController` (public members minus 5 accessors); 49 reachable from both channels, 3 RPC-only, 3 GUI-only, 6 from neither. All 57 registered methods now have a route from MCP |
 | G4 undoable | **90%** | 39 operations change project state, 35 enter history. Outside it: `profile_set`, `clip_analyze_track`, `library_import`, `library_remove`, none of which reach the refresh history is recorded from |
 | G5 two clients on one instance | **2 of 4 conditions** | A write by one client is seen by the other's next `state.get`, and a save publishes either a complete project plus a sidecar that belongs to it or nothing at all. Conditional: an `undo` naming `expected_revision` is refused before it steps over a change it has not seen, an `undo` naming nothing is not. Unmet: no mutation names who made it, so no client can be told whose work a step touches |
@@ -120,6 +120,12 @@ with a dated audit note. Each item is a commit on
   Exporting an empty timeline, which used to never return (measured: over two
   minutes, with `get_playtime()` and `get_length()` both zero), is refused
   before the consumer exists.
+- A reopened project reports the stream its media plays: the selection is read
+  back from the source producer instead of being left to MLT's default, so
+  `state.get` tells the truth about a multi-stream file and a clip appended
+  afterwards plays the same stream as the ones already placed. Whether a track
+  is hidden, and the muted flag that shares its property, are pinned by cases
+  too.
 
 ---
 
