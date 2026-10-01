@@ -2809,6 +2809,37 @@ TEST_CASE("vedit.text draws real glyphs and honours its range", "[text]") {
     REQUIRE(inside != blank);
 }
 
+TEST_CASE("a hidden track stays hidden across a save and open", "[t10]") {
+    std::string clip = vedit::test::make_test_clip("hidden_track");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    auto v2 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+    REQUIRE(app.clip_append(v2, mi).valid());
+    REQUIRE(app.track_set_hidden(v2, true));
+    REQUIRE(app.track_set_muted(v1, true));
+
+    const std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "hidden_track", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    const auto tracks = reopened.project().timeline().tracks();
+    REQUIRE(tracks.size() == 2);
+    // Hidden and muted are separate bits of the same property, so one must
+    // not come back as the other.
+    INFO("track 0 muted=" << tracks[0].muted << " hidden=" << tracks[0].hidden);
+    INFO("track 1 muted=" << tracks[1].muted << " hidden=" << tracks[1].hidden);
+    REQUIRE(tracks[0].muted);
+    REQUIRE_FALSE(tracks[0].hidden);
+    REQUIRE(tracks[1].hidden);
+    REQUIRE_FALSE(tracks[1].muted);
+}
+
 TEST_CASE("undo refuses to step over a change it has not seen", "[t18]") {
     std::string clip = vedit::test::make_test_clip("undo_revision");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
