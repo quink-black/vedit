@@ -1681,11 +1681,22 @@ async def call_tool(
             }))
 
         # ---- Undo / redo ----
+        #
+        # expected_revision is optional and has to reach the handler: the whole
+        # point of it is that the server compares the revision the client read
+        # against the project as it is now, so dropping it here would silently
+        # turn a guarded step into an unguarded one.
         if name == "undo":
-            return _ok(_call(instance, "undo"))
+            params = {}
+            if "expected_revision" in arguments:
+                params["expected_revision"] = int(arguments["expected_revision"])
+            return _ok(_call(instance, "undo", params))
 
         if name == "redo":
-            return _ok(_call(instance, "redo"))
+            params = {}
+            if "expected_revision" in arguments:
+                params["expected_revision"] = int(arguments["expected_revision"])
+            return _ok(_call(instance, "redo", params))
 
         # ---- Export management ----
         if name == "export_poll":

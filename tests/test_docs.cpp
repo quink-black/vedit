@@ -2,7 +2,9 @@
 
 #include <cctype>
 #include <fstream>
+#include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -65,6 +67,130 @@ std::set<std::string> bridge_called_methods(const std::string& path) {
 }
 
 } // namespace
+
+namespace {
+
+// The keys of a tool's inputSchema properties block. A declaration runs from
+// `name="<tool>"` to the next `Tool(`, and the block is delimited by counting
+// braces from the `{` that follows `"properties":`; the keys inside it are the
+// parameters the bridge is expected to forward.
+std::map<std::string, std::set<std::string>> tool_parameters(
+    const std::string& path) {
+    std::map<std::string, std::set<std::string>> found;
+    std::ifstream in(path);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string text = ss.str();
+
+    size_t cursor = 0;
+    while (true) {
+        size_t at = text.find("name=\"", cursor);
+        if (at == std::string::npos) break;
+        at += 6;
+        size_t end = text.find('"', at);
+        if (end == std::string::npos) break;
+        const std::string tool = text.substr(at, end - at);
+        const size_t next = text.find("Tool(", end);
+        const std::string body =
+            text.substr(end, next == std::string::npos ? std::string::npos
+                                                       : next - end);
+        cursor = next == std::string::npos ? text.size() : next;
+
+        const size_t props = body.find("\"properties\"");
+        if (props == std::string::npos) {
+            found[tool];  // declares no parameters
+            continue;
+        }
+        const size_t open = body.find('{', props + 11);
+        if (open == std::string::npos) continue;
+
+        std::set<std::string> names;
+        int depth = 0;
+        for (size_t i = open; i < body.size(); ++i) {
+            if (body[i] == '{') {
+                ++depth;
+                continue;
+            }
+            if (body[i] == '}') {
+                --depth;
+                if (depth == 0) break;
+                continue;
+            }
+            if (depth != 1 || body[i] != '"') continue;
+            const size_t key_end = body.find('"', i + 1);
+            if (key_end == std::string::npos) break;
+            size_t after = key_end + 1;
+            while (after < body.size() &&
+                   (body[after] == ' ' || body[after] == '\n'))
+                ++after;
+            if (after < body.size() && body[after] == ':')
+                names.insert(body.substr(i + 1, key_end - i - 1));
+            i = key_end;
+        }
+        found[tool] = names;
+    }
+    return found;
+}
+
+// The bridge's dispatch code split by tool: each branch runs from
+// `if name == "<tool>":` to the next such line.
+std::map<std::string, std::string> tool_branches(const std::string& path) {
+    const std::string marker = "if name == \"";
+    std::map<std::string, std::string> found;
+    std::ifstream in(path);
+    std::string line;
+    std::string tool;
+    std::string body;
+    while (std::getline(in, line)) {
+        size_t at = line.find(marker);
+        // Only a line that opens a dispatch branch counts: an expression such
+        // as `x = "undo" if name == "undo" else ...` mentions the same marker
+        // and would cut the branch in the middle.
+        if (at != std::string::npos && line.find_first_not_of(" \t") != at)
+            at = std::string::npos;
+        if (at != std::string::npos) {
+            if (!tool.empty()) found[tool] = body;
+            at += marker.size();
+            const size_t end = line.find('"', at);
+            tool = end == std::string::npos ? std::string()
+                                            : line.substr(at, end - at);
+            body.clear();
+        }
+        if (!tool.empty()) body += line + "\n";
+    }
+    if (!tool.empty()) found[tool] = body;
+    return found;
+}
+
+}  // namespace
+
+TEST_CASE("every MCP tool parameter reaches the RPC call", "[docs][mcp]") {
+    const std::string file =
+        std::string(VEDIT_SOURCE_DIR) + "/tools/vedit-mcp/vedit_mcp_server.py";
+    const auto parameters = tool_parameters(file);
+    const auto branches = tool_branches(file);
+    // A parse that finds nothing would let every tool pass by having nothing
+    // to check.
+    REQUIRE(parameters.size() > 20);
+    REQUIRE(branches.size() > 20);
+
+    std::string problems;
+    for (const auto& tool : parameters) {
+        const auto branch = branches.find(tool.first);
+        if (branch == branches.end()) {
+            problems += "\n  no dispatch branch for tool: " + tool.first;
+            continue;
+        }
+        for (const auto& parameter : tool.second) {
+            if (branch->second.find("\"" + parameter + "\"") ==
+                std::string::npos)
+                problems += "\n  " + tool.first + " declares " + parameter +
+                            " but never forwards it";
+        }
+    }
+    if (!problems.empty())
+        FAIL("MCP tool declarations and the bridge disagree:" + problems);
+}
 
 TEST_CASE("README documents every registered RPC method", "[docs]") {
     vedit::AppController app;
