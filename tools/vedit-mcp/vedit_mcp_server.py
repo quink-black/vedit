@@ -192,8 +192,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_state",
             description=(
-                "Snapshot the active vedit instance: identity, revision, "
-                "profile, library (imported media with width/height/" 
+                "Snapshot the active vedit instance: its revision, profile, "
+                "library (imported media with width/height/"
                 "frames), tracks, clips per track, transitions, and the "
                 "filters attached to clips and tracks. Always start here "
                 "before issuing any modifying call -- clip ids and track "
