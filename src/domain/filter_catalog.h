@@ -35,8 +35,7 @@ struct FilterDef {
 
 // Builds the filter catalog from the MLT repository at init time.
 // The catalog is populated once (read-only after construction) and
-// drives the filter.list RPC, the state.get filters.available array,
-// and the GUI filter picker. Adding a new MLT filter requires zero
+// drives the filter.list RPC and the GUI filter picker. Adding a new MLT filter requires zero
 // control-plane code — the yml metadata is read generically (P1).
 class FilterCatalog {
 public:

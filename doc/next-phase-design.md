@@ -20,7 +20,7 @@ earlier documents claim was done.
 | Check | Command / basis | Result (2026-09-30) |
 |---|---|---|
 | Build | `cmake --build build` | passes |
-| Tests | `cd build && ctest -N \| tail -1`, then `VEDIT_AUDIO_CONSUMER=null ctest` | 131 cases, none failing; 4 report skipped (retimed audio on export, three `analysis.track`) |
+| Tests | `cd build && ctest -N \| tail -1` for the count, then `VEDIT_AUDIO_CONSUMER=null ctest` | none failing; the count is whatever the first command reports, because a quoted figure stops being true the moment a case is added. Every skipped case names its reason: retimed audio on export, three `analysis.track`, the reopened project's composite geometry |
 | RPC surface | `grep -c register_method src/rpc/rpc_methods.cpp` | 57 methods |
 | MCP surface | `grep -c '^        Tool(' tools/vedit-mcp/vedit_mcp_server.py` | 57 tools, every registered method reachable (enforced by `tests/test_docs.cpp`) |
 | Filters | `FilterCatalog` startup log | 440 |
