@@ -69,7 +69,7 @@ percentage without one cannot be re-measured (R6).
 | G1 editing complete | **90%** | 10 steps of a typical chain, 8 fully usable. Partial: speed change (video correct, retimed audio export is the skipped case) and captions (Core Text, so nothing is drawn on other platforms). Still absent: ripple, snapping, drag & drop |
 | G2 lossless persistence | **19 of 20** | 20 state items, 19 survive a save and open and are pinned by cases in `tests/test_app_controller.cpp` -- including the media library's per-item stream selection, the media a project imported but never placed, and the track hidden flag, which shares its property with muted. The library counts twice because `clip.append` addresses media by its position in the library: what is listed and what is reachable are two different properties. Lost: per-track composite geometry (the document carries the rect and compositing uses it; a reopened project has no handle to its composite transitions, because MLT 7 exports no transition enumeration, and the next track change resets the rect) |
 | G3 channel equality | **80% GUI/RPC**, **100% RPC/MCP** | 61 capability methods in `AppController` (public members minus 5 accessors); 49 reachable from both channels, 3 RPC-only, 3 GUI-only, 6 from neither. All 57 registered methods now have a route from MCP |
-| G4 undoable | **90%** | 39 operations change project state, 35 enter history. Outside it: `profile_set`, `clip_analyze_track`, `library_import`, `library_remove`, none of which reach the refresh history is recorded from |
+| G4 undoable | **95%** | 39 operations change project state, 37 enter history. Outside it: `profile_set` and `clip_analyze_track`, neither of which reaches the refresh history is recorded from |
 | G5 two clients on one instance | **2 of 4 conditions** | A write by one client is seen by the other's next `state.get`, and a save writes both its files beside their final names and puts them in place only once each is complete, so a save that cannot write publishes nothing; the two moves cannot be made one operation, and the pair a failure can leave behind is detected by the size each record states and skipped rather than misapplied. Conditional: an `undo` naming `expected_revision` is refused before it steps over a change it has not seen, an `undo` naming nothing is not. Unmet: no mutation names who made it, so no client can be told whose work a step touches |
 
 ### 1.3 What has landed since this audit
@@ -146,13 +146,17 @@ with a dated audit note. Each item is a commit on
 - The end-to-end scenario `tools/vedit-mcp/auto_edit.py` was run against a live
   instance at the head of this work and passes: import, two tracks, split,
   trim, save, export, probe.
-- Four operations stay outside undo history for a reason now measured rather
-  than assumed: `library_import` and `library_remove` change only the library,
-  and a restore adds to the index without removing from it, so an undo of a
-  removal could not be honoured as things stand; `profile_set` reaches no
-  refresh, and history is recorded from the refresh -- the profile itself does
-  survive a save and open, measured, so recording the step is what is missing,
-  not the means to restore it; `clip_analyze_track` also reaches no refresh.
+- Two operations stay outside undo history: `profile_set` reaches no refresh, and
+  history is recorded from the refresh -- the profile itself does survive a save
+  and open, measured, so recording the step is what is missing, not the means to
+  restore it; `clip_analyze_track` also reaches no refresh.
+- Importing and removing a source now enter undo history, which took two
+  corrections rather than one call. History decided "nothing changed" from the
+  document alone, and a project with nothing placed has a document that no
+  library change alters; a snapshot is a document and the record beside it, and
+  both are compared now. And a project with no tracks could not be written at
+  all, since MLT emits no document for one, so the state a source sits in before
+  the first cut was placed was not a state history could hold.
 
 ---
 

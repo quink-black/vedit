@@ -110,6 +110,13 @@ int AppController::library_import(const std::string& path,
             project_->profile().set_progressive(1);
         }
     }
+    // A source in the library is a change to the project, and history is
+    // recorded from the refresh hook, so this is what makes an import undoable:
+    // without it, stepping back silently steps over the import and the state the
+    // caller lands on is one the project was never in. The first import also
+    // moves the canvas to the source's size, which a caller could otherwise
+    // never step back over either.
+    if (idx >= 0) player_->refresh();
     return idx;
 }
 
@@ -132,6 +139,11 @@ bool AppController::library_remove(int index) {
     if (!project_->library().remove(index)) return false;
     // Shift remaining clips' stamped media_index down past the hole.
     project_->timeline().on_media_removed(index);
+    // The removal is a change to the project, so it enters history through the
+    // same hook every other mutation uses; the snapshot it writes carries the
+    // library as it was, position for position, which is what puts the source
+    // back where the clips that name it by position expect it.
+    player_->refresh();
     return true;
 }
 

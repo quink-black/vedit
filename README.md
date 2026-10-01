@@ -347,9 +347,8 @@ remaining backlog:
   but a reopened project gives no handle to its composite transitions -- MLT 7
   exports no way to enumerate a tractor's transitions -- so the rect cannot be
   read or changed, and the next track change replants composites and resets it.
-- **Four operations outside undo history**: `profile_set`,
-  `clip_analyze_track`, `library_import` and `library_remove` never reach
-  the refresh that history is recorded from.
+- **Two operations outside undo history**: `profile_set` and `clip_analyze_track`
+  never reach the refresh that history is recorded from.
 - **Caption drawing**: `vedit.text` renders through Core Text, so on other
   platforms the filter attaches and reports success while drawing nothing.
 - **G5, two clients on one instance**: the goal describes the project as

@@ -334,6 +334,37 @@ TEST_CASE("the output profile survives a save and open", "[t10]") {
     REQUIRE(reopened.profile().fps() == 30.0);
 }
 
+TEST_CASE("undo puts the media library back the way it was", "[t10]") {
+    std::string a = vedit::test::make_test_clip("libundo_a");
+    std::string b = vedit::test::make_test_clip("libundo_b");
+    if (a.empty() || b.empty()) { FAIL("could not generate clips"); return; }
+
+    vedit::AppController app;
+    REQUIRE(app.library_import(a) == 0);
+    REQUIRE(app.library_import(b) == 1);
+    REQUIRE(app.library_count() == 2);
+
+    // Importing a source is a change to the project, so stepping back has to
+    // take it away again: an undo that lands on a state the project was never
+    // in is worse than one that reports nothing to do.
+    REQUIRE(app.undo());
+    REQUIRE(app.library_count() == 1);
+    REQUIRE(app.library_item_path(0) == a);
+
+    REQUIRE(app.redo());
+    REQUIRE(app.library_count() == 2);
+    REQUIRE(app.library_item_path(1) == b);
+
+    // Removing an unused source steps back the same way, and the source comes
+    // into the library at the position it had -- the position is what clips and
+    // clip.append name.
+    REQUIRE(app.library_remove(1));
+    REQUIRE(app.library_count() == 1);
+    REQUIRE(app.undo());
+    REQUIRE(app.library_count() == 2);
+    REQUIRE(app.library_item_path(1) == b);
+}
+
 TEST_CASE("a reopened project keeps the position each source had", "[t10]") {
     // A placed source and an unplaced one, in an order where the unplaced one
     // comes first. The position a clip names has to be the position that source
