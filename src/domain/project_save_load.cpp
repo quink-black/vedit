@@ -144,7 +144,7 @@ void restore_ids(const nlohmann::json& doc, TimelineModel& tl) {
 }
 
 void apply_sidecar(const std::string& path, const std::string& xml_path,
-                   TimelineModel& tl) {
+                   TimelineModel& tl, MediaLibrary& library) {
     std::ifstream in(path);
     if (!in) return;
     nlohmann::json doc;
@@ -175,6 +175,24 @@ void apply_sidecar(const std::string& path, const std::string& xml_path,
         }
     }
     restore_ids(doc, tl);
+
+    // Adopt already rebuilt the index from what is placed on the timeline, and
+    // each clip carries the position that import stamped into it, so this only
+    // adds the sources the project had imported but not yet used. Rebuilding
+    // the index in the order this record lists them would move the positions
+    // those clips point at.
+    if (doc.contains("library")) {
+        for (const auto& entry : doc["library"]) {
+            const std::string media_path = entry.value("path", "");
+            if (media_path.empty()) continue;
+            if (library.import(media_path, entry.value("video_index", -1),
+                               entry.value("audio_index", -1)) < 0) {
+                Logger::log(Logger::Level::Warn,
+                            "ProjectSaveLoad: a media item the project had "
+                            "imported could not be imported again");
+            }
+        }
+    }
 
     // Re-mark the restored mixes with the type they were planted with.
     if (doc.contains("transitions")) {
@@ -294,7 +312,23 @@ bool ProjectSaveLoad::save_xml(ProjectModel& project, const std::string& path) {
     // later load notice it is beside some other save's document.
     std::filesystem::remove(sidecar_path(normalized), ec);
     nlohmann::json sidecar = sidecar_for(project.timeline());
-    if (sidecar["clips"].empty() && sidecar["track_ids"].empty()) {
+
+    // What the project has imported, not only what it has placed. Media with no
+    // clip on the timeline appears nowhere in the document, so a reopened
+    // project lost it -- and since clip.append addresses media by its position
+    // in the library, the reopened project could not place that source at all.
+    nlohmann::json media = nlohmann::json::array();
+    for (int i = 0; i < project.library().count(); ++i) {
+        const MediaItem* item = project.library().item(i);
+        if (!item) continue;
+        media.push_back({{"path", item->path},
+                         {"video_index", item->video_index},
+                         {"audio_index", item->audio_index}});
+    }
+    sidecar["library"] = std::move(media);
+
+    if (sidecar["clips"].empty() && sidecar["track_ids"].empty() &&
+        sidecar["library"].empty()) {
         // Nothing to carry now, and a sidecar left from an earlier save to
         // the same path would re-attach filters and ids this project does not
         // have.
@@ -352,7 +386,8 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
         return false;
     }
 
-    apply_sidecar(sidecar_path(normalized), normalized, project.timeline());
+    apply_sidecar(sidecar_path(normalized), normalized, project.timeline(),
+                  project.library());
 
     Logger::log(Logger::Level::Info, "ProjectSaveLoad: loaded XML");
     return true;

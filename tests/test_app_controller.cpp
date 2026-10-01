@@ -204,6 +204,36 @@ TEST_CASE("AppController library_remove reindexes remaining sources", "[t8]") {
     REQUIRE(app.project().library().item(0)->path == clipB);
 }
 
+TEST_CASE("an opened project keeps the media it had imported but not placed", "[t10]") {
+    std::string a = make_test_clip("carry_a");
+    std::string b = make_test_clip("carry_b");
+    if (a.empty() || b.empty()) { FAIL("could not generate test clips"); return; }
+
+    vedit::AppController app;
+    int ia = app.library_import(a);
+    int ib = app.library_import(b);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, ia).valid());
+
+    const std::string path = unique_temp_path("vedit-test", "carry", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    REQUIRE(reopened.library_count() == 2);
+
+    // The point of carrying it: clip.append addresses media by its position in
+    // the library, so a source the reopened project does not list is a source
+    // it cannot place.
+    const auto* item = reopened.project().library().item(ib);
+    REQUIRE(item != nullptr);
+    REQUIRE(item->path == b);
+    const auto tracks = reopened.project().timeline().tracks();
+    REQUIRE(reopened.clip_append(tracks[0].id, ib).valid());
+    REQUIRE(reopened.project().timeline().clip_count() == 2);
+    REQUIRE(ia == 0);
+}
+
 TEST_CASE("a render of an empty timeline says so", "[t9][export]") {
     std::string clip = make_test_clip("export_nothing");
     if (clip.empty()) { FAIL("could not generate test clip"); return; }
