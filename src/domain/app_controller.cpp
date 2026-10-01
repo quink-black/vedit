@@ -30,6 +30,38 @@ void remove_snapshot(const std::string& path) {
     std::remove(ProjectSaveLoad::sidecar_path(path).c_str());
 }
 
+std::string slurp(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in),
+            std::istreambuf_iterator<char>()};
+}
+
+// The record beside a document states the second it was written, which is not
+// part of the state it describes, so that field is dropped before comparing. A
+// record that cannot be parsed is compared as bytes rather than passed over.
+std::string sidecar_content(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return {};
+    nlohmann::json doc;
+    try {
+        in >> doc;
+    } catch (const std::exception&) {
+        return slurp(path);
+    }
+    doc.erase("saved_at");
+    return doc.dump();
+}
+
+// Two snapshots describe the same state only when both halves agree: the
+// document and the record beside it. MLT writes no document at all for a project
+// with no tracks, so what a library change alters is the record alone, and
+// comparing the document called importing a source no change at all.
+bool snapshots_identical(const std::string& a, const std::string& b) {
+    return slurp(a) == slurp(b) &&
+           sidecar_content(ProjectSaveLoad::sidecar_path(a)) ==
+               sidecar_content(ProjectSaveLoad::sidecar_path(b));
+}
+
 inline int current_pid() {
 #ifdef _WIN32
     return ::_getpid();
@@ -100,9 +132,6 @@ bool AppController::library_remove(int index) {
     if (!project_->library().remove(index)) return false;
     // Shift remaining clips' stamped media_index down past the hole.
     project_->timeline().on_media_removed(index);
-    // Library indices are now compact again; the preview producer
-    // holds no per-source state, so no refresh needed unless the
-    // currently selected source was the one removed (GUI's concern).
     return true;
 }
 
@@ -560,16 +589,15 @@ std::string AppController::snapshot_state() {
     return path;
 }
 
-// MLT's XML consumer writes nothing at all for a tractor with no tracks,
-// so a snapshot of an empty project is a missing file rather than a
-// document. Restoring it legitimately means an empty timeline.
+// MLT's XML consumer writes nothing at all for a tractor with no tracks, so a
+// snapshot of a project with an empty timeline is a missing or empty file. Its
+// library is still part of that state, so the restore takes it from the record
+// beside the document.
 bool AppController::restore_snapshot(const std::string& path) {
     std::error_code ec;
     if (!std::filesystem::exists(path, ec) ||
         std::filesystem::file_size(path, ec) == 0) {
-        auto& tl = project_->timeline();
-        while (tl.track_count() > 0)
-            tl.remove_track(tl.tracks()[0].id);
+        ProjectSaveLoad::restore_empty(*project_, path);
         return true;
     }
     return ProjectSaveLoad::load_xml(*project_, path);
@@ -580,20 +608,12 @@ void AppController::record_history() {
     std::string path = snapshot_state();
     if (path.empty()) return;
 
-    // A mutation that changed nothing (a failed call still refreshes)
-    // must not enter history, so compare against the current entry.
-    std::error_code ec;
-    if (history_pos_ >= 0 &&
-        std::filesystem::file_size(history_[history_pos_], ec) ==
-            std::filesystem::file_size(path, ec)) {
-        std::ifstream a(history_[history_pos_], std::ios::binary);
-        std::ifstream b(path, std::ios::binary);
-        if (a && b && std::equal(std::istreambuf_iterator<char>(a),
-                                 std::istreambuf_iterator<char>(),
-                                 std::istreambuf_iterator<char>(b))) {
-            remove_snapshot(path);
-            return;
-        }
+    // A mutation that changed nothing (a failed call still refreshes) must not
+    // enter history, so the new snapshot is compared against the one on screen.
+    // Both halves have to agree, for the reason given on snapshots_identical.
+    if (history_pos_ >= 0 && snapshots_identical(history_[history_pos_], path)) {
+        remove_snapshot(path);
+        return;
     }
 
     // Anything after the current position is a redo tail; a new mutation
