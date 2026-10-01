@@ -242,6 +242,45 @@ TEST_CASE("a save that cannot write its record publishes nothing", "[t10]") {
     REQUIRE(brightness == 1);
 }
 
+TEST_CASE("an opened project reports only its own media", "[t10]") {
+    std::string a = vedit::test::make_test_clip("open_a");
+    std::string b = vedit::test::make_test_clip("open_b");
+    std::string c = vedit::test::make_test_clip("open_c");
+    if (a.empty() || b.empty() || c.empty()) { FAIL("no clips"); return; }
+
+    // First project: two sources, one of them left unplaced.
+    vedit::AppController app;
+    int ia = app.library_import(a);
+    app.library_import(b);
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, ia).valid());
+    const std::string first = vedit::test::unique_temp_path(
+        "vedit-test", "open_a", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), first));
+
+    // Second project, built elsewhere and saved elsewhere.
+    vedit::AppController other;
+    int ic = other.library_import(c);
+    auto w1 = other.track_add(vedit::TrackKind::Video);
+    REQUIRE(other.clip_append(w1, ic).valid());
+    const std::string second = vedit::test::unique_temp_path(
+        "vedit-test", "open_c", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(other.project(), second));
+
+    // Opening the second in the first: the library is the project's, so the two
+    // sources it had must not still be listed, and the position the placed clip
+    // points at has to be the source it plays.
+    REQUIRE(app.project_open(second));
+    REQUIRE(app.library_count() == 1);
+    const auto* item = app.project().library().item(0);
+    REQUIRE(item != nullptr);
+    REQUIRE(item->path == c);
+    for (const auto& t : app.project().timeline().tracks()) {
+        for (const auto& placed : app.project().timeline().clips_on_track(t.id))
+            REQUIRE(placed.media_index == 0);
+    }
+}
+
 TEST_CASE("an opened project keeps the media it had imported but not placed", "[t10]") {
     std::string a = make_test_clip("carry_a");
     std::string b = make_test_clip("carry_b");

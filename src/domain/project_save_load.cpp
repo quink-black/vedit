@@ -390,6 +390,23 @@ bool ProjectSaveLoad::load_xml(ProjectModel& project, const std::string& path) {
     }
 
 
+    // The library describes the project being opened, so what is open now has
+    // to go first: import deduplicates by path and never removes, and
+    // clip.append addresses media by its position in the library, so leaving
+    // the previous project's entries behind both reports media this project
+    // never had and shifts the positions this project's clips point at.
+    // Dropping them is safe while the old clips still exist -- a clip is a cut
+    // with its own reference, and what is released here is the library's.
+    //
+    // The tractor test belongs to adopt and is repeated here because clearing
+    // is the first step that cannot be undone: a file that is not a project has
+    // to leave the open one alone, library included.
+    if (!MLT_TRACTOR(loaded.get_producer())) {
+        Logger::log(Logger::Level::Error,
+                    "ProjectSaveLoad: XML does not contain a tractor");
+        return false;
+    }
+    project.library().clear();
     // Adopt the loaded graph as-is. Rebuilding the tracks from the
     // library instead kept only clip in/out points and dropped every
     // filter, transition, keyframe, per-clip effect and blank.

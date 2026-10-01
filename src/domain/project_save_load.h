@@ -23,15 +23,19 @@ public:
     static bool save_xml(ProjectModel& project, const std::string& path);
 
     // Load an MLT XML file into an existing ProjectModel, replacing what is
-    // open: the parsed graph is adopted in place of the current one, and the
-    // timeline keeps the ids the file carried. Returns true on success; a
-    // file that cannot be parsed leaves the open project untouched.
+    // open: the parsed graph is adopted in place of the current one, the media
+    // library is rebuilt from what the file carries, and the timeline keeps the
+    // ids the file held. Returns true on success; a file that cannot be parsed
+    // leaves the open project untouched, library included.
     static bool load_xml(ProjectModel& project, const std::string& path);
 
     // Path of the file that travels beside the XML and carries what the
     // document cannot: per-clip filters with their parameters and keyframes,
-    // and the ids the timeline held. Anything that deletes a saved project
-    // or snapshot deletes this alongside it.
+    // the ids the timeline held, and the media the project had imported. The
+    // record states the size of the document it was written for, and a load
+    // that finds a different document beside it skips the record rather than
+    // grafting another write's entries onto this project. Anything that deletes
+    // a saved project or snapshot deletes this alongside it.
     static std::string sidecar_path(const std::string& xml_path);
 
     // Build the state.get projection: the project as an agent sees it.
