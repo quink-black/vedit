@@ -1063,7 +1063,21 @@ bool TimelineModel::adopt(Mlt::Producer& loaded) {
                 size_t colon = path.find(':');
                 if (colon != std::string::npos) path = path.substr(colon + 1);
             }
-            int media_index = path.empty() ? -1 : library_.import(path);
+            // The library is an index of the sources the project uses, and a
+            // reopened project has to answer which stream of a multi-stream
+            // file its media plays. An absent property means MLT picked the
+            // stream itself and stays -1; reading an absent property as an
+            // integer would yield 0 and record an explicit choice that was
+            // never made.
+            auto optional_index = [&parent](const char* key) {
+                const char* value = parent.get(key);
+                return value && *value ? std::atoi(value) : -1;
+            };
+            const int video_index = optional_index("video_index");
+            const int audio_index = optional_index("audio_index");
+            int media_index = path.empty() ? -1
+                                           : library_.import(path, video_index,
+                                                             audio_index);
             if (media_index < 0) {
                 Logger::log(Logger::Level::Warn,
                             "TimelineModel::adopt: could not import resource");

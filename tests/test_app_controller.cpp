@@ -1062,6 +1062,40 @@ TEST_CASE("library.set_stream switches audio when in use", "[t15]") {
     REQUIRE(app.project().timeline().count_clips_for_media(mi) == 1);
 }
 
+TEST_CASE("an opened project reports the stream its media plays", "[t15]") {
+    std::string clip = vedit::test::make_test_clip_multistream("stream_save");
+    if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
+
+    vedit::AppController app;
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    const auto* item = app.project().library().item(mi);
+    REQUIRE(item != nullptr);
+    const int orig_audio = item->audio_index;
+    int other = -1;
+    for (const auto& s : item->streams) {
+        if (s.type == "audio" && s.index != orig_audio) { other = s.index; break; }
+    }
+    REQUIRE(other >= 0);
+    REQUIRE(app.library_set_stream(mi, -1, other));
+
+    auto v1 = app.track_add(vedit::TrackKind::Video);
+    REQUIRE(app.clip_append(v1, mi).valid());
+
+    const std::string path = vedit::test::unique_temp_path(
+        "vedit-test", "stream_save", ".xml");
+    REQUIRE(vedit::ProjectSaveLoad::save_xml(app.project(), path));
+
+    vedit::AppController reopened;
+    REQUIRE(vedit::ProjectSaveLoad::load_xml(reopened.project(), path));
+    REQUIRE(reopened.library_count() == 1);
+    const auto* reopened_item = reopened.project().library().item(0);
+    REQUIRE(reopened_item != nullptr);
+    INFO("audio_index after open: " << reopened_item->audio_index << ", wanted "
+                                    << other);
+    REQUIRE(reopened_item->audio_index == other);
+}
+
 TEST_CASE("state.get exposes streams list with stable schema", "[t15]") {
     std::string clip = vedit::test::make_test_clip_multistream("state_streams");
     if (clip.empty()) { FAIL("could not generate multistream test clip"); return; }
