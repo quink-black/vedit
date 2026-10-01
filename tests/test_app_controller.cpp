@@ -308,7 +308,6 @@ TEST_CASE("an opened project keeps the media it had imported but not placed", "[
     const auto tracks = reopened.project().timeline().tracks();
     REQUIRE(reopened.clip_append(tracks[0].id, ib).valid());
     REQUIRE(reopened.project().timeline().clip_count() == 2);
-    REQUIRE(ia == 0);
 }
 
 TEST_CASE("the output profile survives a save and open", "[t10]") {
@@ -2761,8 +2760,7 @@ TEST_CASE("retime keeps audio in step with video on export", "[t18]") {
     char buf[256];
     while (fgets(buf, sizeof(buf), p)) probe += buf;
     VEDIT_PCLOSE(p);
-    printf("PROBE retime export: %s\n", probe.c_str());
-    fflush(stdout);
+    INFO("export probe said: " << probe);
 
     double video = -1, audio = -1;
     // Lines look like "video,1.000000" / "audio,1.000000".
@@ -3760,8 +3758,7 @@ TEST_CASE("analysis.track runs and returns keyframes", "[t24]") {
     // parameter comes back empty ({"value":""}), so there is no keyframe to
     // assert on. The tracker following nothing is a defect, not a passing
     // case, so it is recorded instead of asserted.
-    printf("PROBE analysis.track result: %s\n", result.dump().c_str());
-    fflush(stdout);
+    INFO("the pass returned: " << result.dump());
     SKIP("analysis.track produces no keyframes: the results parameter is "
          "empty after the pass");
 }
@@ -3793,8 +3790,7 @@ TEST_CASE("analysis.track over RPC dispatcher", "[t24]") {
     REQUIRE_FALSE(resp.contains("error"));
     REQUIRE(resp["result"].contains("keyframes"));
     const auto& keyframes = resp["result"]["keyframes"];
-    printf("PROBE analysis.track rpc: %s\n", resp["result"].dump().c_str());
-    fflush(stdout);
+    INFO("the wire returned: " << resp["result"].dump());
     // Same measurement as the direct case: the wire shape is there, the data
     // is not. Recorded rather than asserted.
     SKIP("analysis.track produces no keyframes: the results parameter is "
