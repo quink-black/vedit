@@ -7,6 +7,44 @@
 
 namespace vedit {
 
+namespace {
+
+// MLT hands back the format it can produce, not the format asked for:
+// mlt_frame_get_image() converts only when the frame carries a
+// converter (mlt_frame.c: mlt_frame_get_image() -> self->convert_image),
+// and once the get_image stack is empty it returns the cached image in
+// whatever format that image holds. So requesting mlt_image_rgba can
+// still deliver mlt_image_rgb, which is 3 bytes per pixel.
+//
+// Every consumer of this class uploads the buffer as tightly packed
+// 32-bit RGBA -- the GUI passes it to SDL_UpdateTexture() as
+// ABGR8888, which reads width * height * 4 bytes. Publishing a 24-bit
+// frame made that read run off the end of the buffer and crash in the
+// Metal backend. Copy `src` into `out` as RGBA: pass rgba through,
+// expand rgb with an opaque alpha, and report false for anything we
+// cannot express as RGBA so the caller drops the frame.
+bool pack_rgba(const uint8_t* src, mlt_image_format format,
+               int width, int height, std::vector<uint8_t>& out) {
+    const size_t pixels = static_cast<size_t>(width) * height;
+    if (format == mlt_image_rgba) {
+        out.assign(src, src + pixels * 4);
+        return true;
+    }
+    if (format == mlt_image_rgb) {
+        out.resize(pixels * 4);
+        for (size_t i = 0; i < pixels; ++i) {
+            out[i * 4 + 0] = src[i * 3 + 0];
+            out[i * 4 + 1] = src[i * 3 + 1];
+            out[i * 4 + 2] = src[i * 3 + 2];
+            out[i * 4 + 3] = 0xff;
+        }
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
 PreviewRenderer::PreviewRenderer() = default;
 
 PreviewRenderer::~PreviewRenderer() {
@@ -125,18 +163,25 @@ void PreviewRenderer::handle_frame(Mlt::Frame& frame) {
     uint8_t* image = frame.get_image(format, width, height);
     if (!image || width <= 0 || height <= 0) return;
 
-    const size_t bytes = static_cast<size_t>(width) * height *
-                         (format == mlt_image_rgba ? 4 : 3);
-
     std::lock_guard<std::mutex> lk(frame_mutex_);
     // Drop-on-overflow: if the main thread hasn't consumed the previous
     // pending frame, we simply overwrite it. This is the correct policy
     // for a live preview -- newest frame wins, latency stays bounded.
-    pending_format_ = format;
+    if (!pack_rgba(image, format, width, height, pending_buffer_)) {
+        // Not something we can publish as RGBA. Keep the previous frame
+        // on screen rather than handing out a buffer shorter than the
+        // width * height * 4 bytes the GUI reads from it.
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "PreviewRenderer: dropped a preview frame in format %d "
+                      "(%dx%d)", static_cast<int>(format), width, height);
+        Logger::log(Logger::Level::Warn, buf);
+        return;
+    }
+    pending_format_ = mlt_image_rgba;
     pending_width_ = width;
     pending_height_ = height;
     pending_position_ = frame.get_position();
-    pending_buffer_.assign(image, image + bytes);
     has_pending_ = true;
 
     // First-frame + periodic progress logging so the preview path is
@@ -159,6 +204,7 @@ void PreviewRenderer::handle_frame(Mlt::Frame& frame) {
 bool PreviewRenderer::pull_latest_frame(mlt_image_format& out_format,
                                         int& out_width, int& out_height,
                                         const uint8_t*& out_image,
+                                        size_t& out_bytes,
                                         int64_t& out_position) {
     std::lock_guard<std::mutex> lk(frame_mutex_);
     if (!has_pending_) return false;
@@ -173,12 +219,14 @@ bool PreviewRenderer::pull_latest_frame(mlt_image_format& out_format,
     out_height = pending_height_;
     out_position = pending_position_;
     out_image = delivered_buffer_.data();
+    out_bytes = delivered_buffer_.size();
     return true;
 }
 
 bool PreviewRenderer::render_frame_at(Mlt::Producer& producer, int64_t position,
                                       int& out_width, int& out_height,
-                                      const uint8_t*& out_image) {
+                                      const uint8_t*& out_image,
+                                      size_t& out_bytes) {
     if (!producer.is_valid()) return false;
     // Pull one frame directly from the producer at the requested
     // position. No realtime consumer involved.
@@ -192,17 +240,27 @@ bool PreviewRenderer::render_frame_at(Mlt::Producer& producer, int64_t position,
     mlt_image_format fmt = mlt_image_rgba;
     int w = 0, h = 0;
     uint8_t* image = frame->get_image(fmt, w, h);
-    if (!image || w <= 0 || h <= 0) {
+    // Same contract as handle_frame(): the buffer has to be RGBA of
+    // w * h * 4 bytes, because that is what the caller uploads.
+    if (!image || w <= 0 || h <= 0 ||
+        !pack_rgba(image, fmt, w, h, sync_buffer_)) {
+        if (image && w > 0 && h > 0) {
+            char buf[160];
+            std::snprintf(buf, sizeof(buf),
+                          "PreviewRenderer: freeze frame at %lld came back in "
+                          "format %d (%dx%d)", static_cast<long long>(position),
+                          static_cast<int>(fmt), w, h);
+            Logger::log(Logger::Level::Warn, buf);
+        }
         delete frame;
         return false;
     }
-    const size_t bytes = static_cast<size_t>(w) * h * 4;
-    sync_buffer_.assign(image, image + bytes);
     delete frame;
 
     out_width = w;
     out_height = h;
     out_image = sync_buffer_.data();
+    out_bytes = sync_buffer_.size();
     return true;
 }
 

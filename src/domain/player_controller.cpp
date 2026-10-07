@@ -148,10 +148,12 @@ void PlayerController::render_freeze() {
     if (pos >= dur) pos = dur - 1;
     if (pos < 0) pos = 0;
     int w = 0, h = 0;
+    size_t bytes = 0;
     const uint8_t* img = nullptr;
-    if (renderer_.render_frame_at(*producer, pos, w, h, img)) {
+    if (renderer_.render_frame_at(*producer, pos, w, h, img, bytes)) {
         freeze_w_ = w;
         freeze_h_ = h;
+        freeze_bytes_ = bytes;
         freeze_image_ = img;
         freeze_valid_ = true;
         freeze_dirty_ = false;
@@ -160,16 +162,18 @@ void PlayerController::render_freeze() {
     }
 }
 
-bool PlayerController::current_frame(int& w, int& h, const uint8_t*& image) {
+bool PlayerController::current_frame(int& w, int& h, const uint8_t*& image,
+                                     size_t& bytes) {
     if (playing_) {
         // Prefer a fresh realtime frame; if none arrived this tick, keep
         // showing whatever the texture already holds (caller decides).
         mlt_image_format fmt = mlt_image_none;
         int fw = 0, fh = 0;
+        size_t fbytes = 0;
         const uint8_t* fimg = nullptr;
         int64_t fpos = 0;
-        if (renderer_.pull_latest_frame(fmt, fw, fh, fimg, fpos)) {
-            w = fw; h = fh; image = fimg;
+        if (renderer_.pull_latest_frame(fmt, fw, fh, fimg, fbytes, fpos)) {
+            w = fw; h = fh; image = fimg; bytes = fbytes;
             position_ = fpos;  // keep playhead roughly in sync for UI
             return true;
         }
@@ -179,6 +183,7 @@ bool PlayerController::current_frame(int& w, int& h, const uint8_t*& image) {
     if (freeze_dirty_) render_freeze();
     if (freeze_valid_) {
         w = freeze_w_; h = freeze_h_; image = freeze_image_;
+        bytes = freeze_bytes_;
         return true;
     }
     return false;

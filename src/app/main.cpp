@@ -2399,17 +2399,27 @@ int main(int, char**) {
         }
 
         int fw = 0, fh = 0;
+        size_t fbytes = 0;
         const uint8_t* fimg = nullptr;
-        if (app.player().current_frame(fw, fh, fimg) && fimg && fw > 0 && fh > 0) {
+        if (app.player().current_frame(fw, fh, fimg, fbytes) && fimg &&
+            fw > 0 && fh > 0) {
             if (!preview_tex || fw != tex_w || fh != tex_h) {
                 if (preview_tex) SDL_DestroyTexture(preview_tex);
-    for (auto& kv : thumb_tex) SDL_DestroyTexture(kv.second);
+                // The media panel rebuilds thumbnails from its cache, so
+                // drop the entries along with the textures: leaving them
+                // would keep freed handles in the map.
+                for (auto& kv : thumb_tex) SDL_DestroyTexture(kv.second);
+                thumb_tex.clear();
                 preview_tex = SDL_CreateTexture(
                     renderer, SDL_PIXELFORMAT_ABGR8888,
                     SDL_TEXTUREACCESS_STREAMING, fw, fh);
                 tex_w = fw; tex_h = fh;
             }
-            if (preview_tex) {
+            // The renderer publishes tightly packed RGBA only and reports
+            // how much it holds. SDL reads fw * fh * 4 bytes, so check
+            // instead of assuming: an under-sized buffer used to make the
+            // Metal backend read past its end and crash the app here.
+            if (preview_tex && fbytes == static_cast<size_t>(fw) * fh * 4) {
                 // MLT delivers tightly packed RGBA; pitch is width * 4.
                 SDL_UpdateTexture(preview_tex, nullptr, fimg, fw * 4);
             }

@@ -74,15 +74,22 @@ public:
     // last call, copies it into out_* and returns true. The image
     // buffer referenced by out_image is owned by the renderer and
     // remains valid only until the next pull_latest_frame() call.
+    //
+    // The buffer is always tightly packed 32-bit RGBA, so out_bytes is
+    // out_width * out_height * 4. Callers that upload it (the GUI hands
+    // it to SDL_UpdateTexture as ABGR8888) read exactly that many bytes
+    // and nothing else is safe to publish.
     bool pull_latest_frame(mlt_image_format& out_format,
                            int& out_width, int& out_height,
                            const uint8_t*& out_image,
+                           size_t& out_bytes,
                            int64_t& out_position);
 
-    // Synchronously render a single frame at `position` from `producer`,
-    // converted to RGBA. Returns false on failure. The returned buffer
-    // is owned by the renderer and valid until the next
-    // render_frame_at() or pull_latest_frame() call.
+    // Synchronously render a single frame at `position` from `producer`.
+    // Returns false on failure, including when MLT answers in a format
+    // that is not RGBA. The returned buffer is owned by the renderer and
+    // valid until the next render_frame_at() or pull_latest_frame()
+    // call; out_bytes is out_width * out_height * 4.
     //
     // This does NOT use the realtime consumer — it pulls one frame
     // directly from the producer. Used for paused preview, scrubbing,
@@ -91,7 +98,8 @@ public:
     // and not while the realtime consumer is running.
     bool render_frame_at(Mlt::Producer& producer, int64_t position,
                          int& out_width, int& out_height,
-                         const uint8_t*& out_image);
+                         const uint8_t*& out_image,
+                         size_t& out_bytes);
 
 private:
     // MLT consumer-thread callback. Static because mlt_listener is a C
