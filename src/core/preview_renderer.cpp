@@ -7,6 +7,24 @@
 
 namespace vedit {
 
+// Documented on the declaration; the caller-facing contract is that a
+// published buffer holds exactly width * height * bytes_per_pixel
+// bytes of the format MLT produced.
+int preview_bytes_per_pixel(mlt_image_format format) {
+    if (format == mlt_image_rgba) return 4;
+    if (format == mlt_image_rgb) return 3;
+    return 0;
+}
+
+bool copy_preview_frame(const uint8_t* src, mlt_image_format format,
+                        int width, int height, std::vector<uint8_t>& out) {
+    const int bpp = preview_bytes_per_pixel(format);
+    if (bpp == 0) return false;
+    const size_t bytes = static_cast<size_t>(width) * height * bpp;
+    out.assign(src, src + bytes);
+    return true;
+}
+
 PreviewRenderer::PreviewRenderer() = default;
 
 PreviewRenderer::~PreviewRenderer() {
@@ -125,18 +143,25 @@ void PreviewRenderer::handle_frame(Mlt::Frame& frame) {
     uint8_t* image = frame.get_image(format, width, height);
     if (!image || width <= 0 || height <= 0) return;
 
-    const size_t bytes = static_cast<size_t>(width) * height *
-                         (format == mlt_image_rgba ? 4 : 3);
-
     std::lock_guard<std::mutex> lk(frame_mutex_);
     // Drop-on-overflow: if the main thread hasn't consumed the previous
     // pending frame, we simply overwrite it. This is the correct policy
     // for a live preview -- newest frame wins, latency stays bounded.
+    if (!copy_preview_frame(image, format, width, height, pending_buffer_)) {
+        // Not a format the GUI can upload. Keep the previous frame on
+        // screen rather than handing out a buffer the upload would have
+        // to guess the size of.
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "PreviewRenderer: dropped a preview frame in format %d "
+                      "(%dx%d)", static_cast<int>(format), width, height);
+        Logger::log(Logger::Level::Warn, buf);
+        return;
+    }
     pending_format_ = format;
     pending_width_ = width;
     pending_height_ = height;
     pending_position_ = frame.get_position();
-    pending_buffer_.assign(image, image + bytes);
     has_pending_ = true;
 
     // First-frame + periodic progress logging so the preview path is
@@ -159,6 +184,7 @@ void PreviewRenderer::handle_frame(Mlt::Frame& frame) {
 bool PreviewRenderer::pull_latest_frame(mlt_image_format& out_format,
                                         int& out_width, int& out_height,
                                         const uint8_t*& out_image,
+                                        size_t& out_bytes,
                                         int64_t& out_position) {
     std::lock_guard<std::mutex> lk(frame_mutex_);
     if (!has_pending_) return false;
@@ -173,12 +199,14 @@ bool PreviewRenderer::pull_latest_frame(mlt_image_format& out_format,
     out_height = pending_height_;
     out_position = pending_position_;
     out_image = delivered_buffer_.data();
+    out_bytes = delivered_buffer_.size();
     return true;
 }
 
 bool PreviewRenderer::render_frame_at(Mlt::Producer& producer, int64_t position,
                                       int& out_width, int& out_height,
-                                      const uint8_t*& out_image) {
+                                      const uint8_t*& out_image,
+                                      size_t& out_bytes) {
     if (!producer.is_valid()) return false;
     // Pull one frame directly from the producer at the requested
     // position. No realtime consumer involved.
@@ -188,21 +216,33 @@ bool PreviewRenderer::render_frame_at(Mlt::Producer& producer, int64_t position,
         delete frame;
         return false;
     }
-    // Force RGBA so the GUI can upload it as a GL texture directly.
+    // Ask for RGBA, but publish whatever MLT answers with: the GUI
+    // sizes its upload from the byte count reported alongside the
+    // frame, so a 24-bit answer is uploaded as 24-bit.
     mlt_image_format fmt = mlt_image_rgba;
     int w = 0, h = 0;
     uint8_t* image = frame->get_image(fmt, w, h);
-    if (!image || w <= 0 || h <= 0) {
+    // Same contract as handle_frame(): the buffer holds w * h pixels of
+    // the format MLT produced, and the caller uploads that many bytes.
+    if (!image || w <= 0 || h <= 0 ||
+        !copy_preview_frame(image, fmt, w, h, sync_buffer_)) {
+        if (image && w > 0 && h > 0) {
+            char buf[160];
+            std::snprintf(buf, sizeof(buf),
+                          "PreviewRenderer: freeze frame at %lld came back in "
+                          "format %d (%dx%d)", static_cast<long long>(position),
+                          static_cast<int>(fmt), w, h);
+            Logger::log(Logger::Level::Warn, buf);
+        }
         delete frame;
         return false;
     }
-    const size_t bytes = static_cast<size_t>(w) * h * 4;
-    sync_buffer_.assign(image, image + bytes);
     delete frame;
 
     out_width = w;
     out_height = h;
     out_image = sync_buffer_.data();
+    out_bytes = sync_buffer_.size();
     return true;
 }
 

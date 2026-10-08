@@ -655,11 +655,17 @@ TEST_CASE("Preview shows a frame while paused (no playback)", "[t13][preview]") 
     // Not playing — but a preview frame must still be available.
     REQUIRE_FALSE(app.is_playing());
     int w = 0, h = 0;
+    size_t bytes = 0;
     const uint8_t* img = nullptr;
-    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(app.player().current_frame(w, h, img, bytes));
     REQUIRE(w > 0);
     REQUIRE(h > 0);
     REQUIRE(img != nullptr);
+    // The GUI derives its upload size from `bytes`, so the buffer has to
+    // hold a whole number of pixels in a format it can upload: three
+    // bytes a pixel for RGB, four for RGBA.
+    REQUIRE((bytes == static_cast<size_t>(w) * h * 3 ||
+             bytes == static_cast<size_t>(w) * h * 4));
 }
 
 TEST_CASE("Scrubbing while paused updates the preview", "[t13][preview]") {
@@ -673,16 +679,21 @@ TEST_CASE("Scrubbing while paused updates the preview", "[t13][preview]") {
     app.clip_append(track, mi);
 
     int w = 0, h = 0;
+    size_t bytes = 0;
     const uint8_t* img = nullptr;
 
     app.seek(0);
-    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(app.player().current_frame(w, h, img, bytes));
     REQUIRE(app.position() == 0);
+    REQUIRE((bytes == static_cast<size_t>(w) * h * 3 ||
+             bytes == static_cast<size_t>(w) * h * 4));
 
     app.seek(20);
     REQUIRE(app.position() == 20);
-    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(app.player().current_frame(w, h, img, bytes));
     REQUIRE(img != nullptr);
+    REQUIRE((bytes == static_cast<size_t>(w) * h * 3 ||
+             bytes == static_cast<size_t>(w) * h * 4));
 }
 
 TEST_CASE("Adding a second clip refreshes the paused preview", "[t13][preview]") {
@@ -702,9 +713,53 @@ TEST_CASE("Adding a second clip refreshes the paused preview", "[t13][preview]")
 
     // Preview still works after the edit (refresh() was called).
     int w = 0, h = 0;
+    size_t bytes = 0;
     const uint8_t* img = nullptr;
-    REQUIRE(app.player().current_frame(w, h, img));
+    REQUIRE(app.player().current_frame(w, h, img, bytes));
     REQUIRE(img != nullptr);
+    REQUIRE((bytes == static_cast<size_t>(w) * h * 3 ||
+             bytes == static_cast<size_t>(w) * h * 4));
+}
+
+// Regression: the byte count reported for a preview frame has to match
+// a format the GUI can upload -- three bytes a pixel for RGB, four for
+// RGBA -- because the GUI sizes its SDL_UpdateTexture() call from it.
+// MLT answers get_image() with the format it can produce
+// (mlt_frame_get_image() converts only when the chain installed a
+// converter), so a 24-bit frame is reachable at runtime; publishing one
+// at four bytes a pixel made that upload read past the end of the
+// buffer and crash the app in the Metal backend (main.cpp's
+// SDL_UpdateTexture call, 1376x768 preview).
+TEST_CASE("Playback frames report a byte count the upload can read",
+          "[t13][preview]") {
+    std::string clip = make_test_clip("preview_playback_rgba");
+    if (clip.empty()) { FAIL("could not generate test clip"); return; }
+
+    vedit::AppController app;
+    app.player().set_audio_consumer("null");
+    int mi = app.library_import(clip);
+    REQUIRE(mi >= 0);
+    auto track = app.track_add(vedit::TrackKind::Video, "V1");
+    REQUIRE(app.clip_append(track, mi).valid());
+
+    REQUIRE(app.play());
+    int w = 0, h = 0;
+    size_t bytes = 0;
+    const uint8_t* img = nullptr;
+    int frames = 0;
+    for (int i = 0; i < 200 && frames < 5; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (app.player().current_frame(w, h, img, bytes)) {
+            REQUIRE(img != nullptr);
+            REQUIRE(w > 0);
+            REQUIRE(h > 0);
+            REQUIRE((bytes == static_cast<size_t>(w) * h * 3 ||
+                     bytes == static_cast<size_t>(w) * h * 4));
+            ++frames;
+        }
+    }
+    app.pause();
+    REQUIRE(frames > 0);
 }
 
 // Regression: after playback reached EOF (consumer self-stopped with

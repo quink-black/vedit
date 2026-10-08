@@ -2260,12 +2260,14 @@ int main(int, char**) {
     GuiState gui;
 
     // Preview frame texture. Created lazily / recreated when the frame
-    // size changes; streaming so per-frame pixel updates are cheap.
+    // size or pixel format changes; streaming so per-frame pixel
+    // updates are cheap.
     SDL_Texture* preview_tex = nullptr;
     ThumbnailCache thumbs;
     WaveformCache waveforms;
     std::map<int, SDL_Texture*> thumb_tex;
     int tex_w = 0, tex_h = 0;
+    Uint32 tex_fmt = 0;
 
     bool running = true;
     while (running) {
@@ -2399,19 +2401,46 @@ int main(int, char**) {
         }
 
         int fw = 0, fh = 0;
+        size_t fbytes = 0;
         const uint8_t* fimg = nullptr;
-        if (app.player().current_frame(fw, fh, fimg) && fimg && fw > 0 && fh > 0) {
-            if (!preview_tex || fw != tex_w || fh != tex_h) {
-                if (preview_tex) SDL_DestroyTexture(preview_tex);
-    for (auto& kv : thumb_tex) SDL_DestroyTexture(kv.second);
-                preview_tex = SDL_CreateTexture(
-                    renderer, SDL_PIXELFORMAT_ABGR8888,
-                    SDL_TEXTUREACCESS_STREAMING, fw, fh);
-                tex_w = fw; tex_h = fh;
+        if (app.player().current_frame(fw, fh, fimg, fbytes) && fimg &&
+            fw > 0 && fh > 0) {
+            // MLT is free to answer in 24-bit RGB as well as 32-bit
+            // RGBA, so the renderer publishes the format it got and
+            // reports how many bytes it holds. Derive the bytes per
+            // pixel from that count and upload with the SDL format and
+            // pitch that match: SDL then reads exactly as many bytes as
+            // the buffer has. Assuming four bytes per pixel is what made
+            // the Metal backend read past the end and crash the app.
+            const size_t fpixels = static_cast<size_t>(fw) * fh;
+            Uint32 want_fmt = 0;
+            int want_pitch = 0;
+            if (fbytes == fpixels * 4) {
+                // MLT lays RGBA out as R,G,B,A in memory, which is what
+                // SDL calls ABGR8888.
+                want_fmt = SDL_PIXELFORMAT_ABGR8888;
+                want_pitch = fw * 4;
+            } else if (fbytes == fpixels * 3) {
+                // ...and RGB as R,G,B, which SDL calls BGR24: its RGB24
+                // is B,G,R in memory and swaps red with blue.
+                want_fmt = SDL_PIXELFORMAT_BGR24;
+                want_pitch = fw * 3;
             }
-            if (preview_tex) {
-                // MLT delivers tightly packed RGBA; pitch is width * 4.
-                SDL_UpdateTexture(preview_tex, nullptr, fimg, fw * 4);
+            if (want_fmt &&
+                (!preview_tex || fw != tex_w || fh != tex_h ||
+                 want_fmt != tex_fmt)) {
+                if (preview_tex) SDL_DestroyTexture(preview_tex);
+                // The media panel rebuilds thumbnails from its cache, so
+                // drop the entries along with the textures: leaving them
+                // would keep freed handles in the map.
+                for (auto& kv : thumb_tex) SDL_DestroyTexture(kv.second);
+                thumb_tex.clear();
+                preview_tex = SDL_CreateTexture(
+                    renderer, want_fmt, SDL_TEXTUREACCESS_STREAMING, fw, fh);
+                tex_w = fw; tex_h = fh; tex_fmt = want_fmt;
+            }
+            if (preview_tex && want_pitch) {
+                SDL_UpdateTexture(preview_tex, nullptr, fimg, want_pitch);
             }
         }
 

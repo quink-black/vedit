@@ -12,6 +12,36 @@
 
 namespace vedit {
 
+// MLT hands back the format it can produce, not the format asked for:
+// mlt_frame_get_image() converts only when the frame carries a
+// converter, and once the get_image stack is empty it returns the
+// cached image in whatever format that image holds. Requesting
+// mlt_image_rgba can therefore still deliver mlt_image_rgb, which is
+// 3 bytes per pixel.
+//
+// A frame is published in the format MLT produced it in -- 24-bit RGB
+// or 32-bit RGBA -- never converted. The GUI picks the SDL pixel
+// format that matches the buffer it was handed, so SDL_UpdateTexture()
+// reads exactly as many bytes as the buffer holds. Publishing a 24-bit
+// frame as if it were 32-bit made that read run off the end of the
+// buffer and crash the app in the Metal backend.
+//
+// Copies `src` into `out` when `format` is one the GUI can upload, and
+// reports false for anything else -- YUV, for instance -- without
+// touching `out`, so the caller keeps showing the last frame it could
+// publish.
+//
+// Byte order, measured on this machine against MLT 7.38: both a
+// "colour:red" producer and a decoded H.264 clip deliver rgba as
+// R,G,B,A and rgb as R,G,B, so the two formats differ only in whether
+// the alpha byte is present.
+bool copy_preview_frame(const uint8_t* src, mlt_image_format format,
+                        int width, int height, std::vector<uint8_t>& out);
+
+// Bytes per pixel of a format copy_preview_frame() will publish, or 0
+// for one it rejects. The GUI uses this to size the upload.
+int preview_bytes_per_pixel(mlt_image_format format);
+
 // Owns the realtime preview path over an MLT tractor/producer:
 //   - audio goes to an rtaudio consumer (which carries the A/V master
 //     clock and the real-time frame-drop heuristic);
@@ -74,15 +104,24 @@ public:
     // last call, copies it into out_* and returns true. The image
     // buffer referenced by out_image is owned by the renderer and
     // remains valid only until the next pull_latest_frame() call.
+    //
+    // The frame keeps the format MLT produced it in -- out_format is
+    // mlt_image_rgb or mlt_image_rgba -- and out_bytes is out_width *
+    // out_height * preview_bytes_per_pixel(out_format). A caller that
+    // uploads the buffer sizes the upload from out_bytes, so it can
+    // never read past the end of it.
     bool pull_latest_frame(mlt_image_format& out_format,
                            int& out_width, int& out_height,
                            const uint8_t*& out_image,
+                           size_t& out_bytes,
                            int64_t& out_position);
 
-    // Synchronously render a single frame at `position` from `producer`,
-    // converted to RGBA. Returns false on failure. The returned buffer
-    // is owned by the renderer and valid until the next
-    // render_frame_at() or pull_latest_frame() call.
+    // Synchronously render a single frame at `position` from `producer`.
+    // Returns false on failure, including when MLT answers in a format
+    // the GUI cannot upload. The returned buffer is owned by the
+    // renderer and valid until the next render_frame_at() or
+    // pull_latest_frame() call; it holds out_width * out_height pixels
+    // in the format MLT produced.
     //
     // This does NOT use the realtime consumer — it pulls one frame
     // directly from the producer. Used for paused preview, scrubbing,
@@ -91,7 +130,8 @@ public:
     // and not while the realtime consumer is running.
     bool render_frame_at(Mlt::Producer& producer, int64_t position,
                          int& out_width, int& out_height,
-                         const uint8_t*& out_image);
+                         const uint8_t*& out_image,
+                         size_t& out_bytes);
 
 private:
     // MLT consumer-thread callback. Static because mlt_listener is a C

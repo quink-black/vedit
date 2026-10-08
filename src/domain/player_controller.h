@@ -66,9 +66,13 @@ public:
     // Get the frame to display this UI tick. Handles both modes:
     //   - playing: returns the latest realtime frame if one arrived;
     //   - paused: returns the freeze frame (re-rendering if needed).
-    // Returns false if there's nothing to show (empty timeline).
+    // Returns false if there's nothing to show (empty timeline, or a
+    // frame MLT delivered in a format the GUI cannot upload).
     // out_image is owned by the renderer; valid until the next call.
-    bool current_frame(int& w, int& h, const uint8_t*& image);
+    // MLT may answer with 24-bit RGB as well as 32-bit RGBA, so
+    // out_bytes -- how much of out_image is readable -- is w * h * 3 or
+    // w * h * 4; the GUI picks the SDL format and pitch that match it.
+    bool current_frame(int& w, int& h, const uint8_t*& image, size_t& bytes);
 
     // Select the audio consumer ("sdl2_audio" default, "rtaudio",
     // "null" for headless). Must be called before play().
@@ -94,6 +98,7 @@ private:
     bool freeze_dirty_ = true;  // needs re-render at current position
     int freeze_w_ = 0;
     int freeze_h_ = 0;
+    size_t freeze_bytes_ = 0;
     const uint8_t* freeze_image_ = nullptr;
 
     // Invoked from refresh(); see set_state_changed_listener.

@@ -10,6 +10,7 @@ endif()
 
 add_executable(vedit_tests
     test_main.cpp
+    test_preview_renderer.cpp
     test_smoke.cpp
     test_domain.cpp
     test_app_controller.cpp
